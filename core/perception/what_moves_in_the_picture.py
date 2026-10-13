@@ -619,10 +619,14 @@ class WhatMoves:
         from core.perception.parts_when_things_touch import parts_when_things_touch
         from core.perception.picture_arithmetic import pieces
         from core.perception.texture_that_continues_when_outlines_join import (
+            could_continue,
             parts_from_continuing_texture,
         )
 
         strict, mask = masks
+        # Whose texture could go on in this picture is a question of the thing, asked once a picture, not once a part.
+        everyone = [*self.things.values(), *self.pending.values()]
+        may_continue = [thing for thing in everyone if could_continue(thing, self._point_motion, self._now)]
         count, labels, stats, _centres = pieces(mask)
         area_of_all = mask.shape[0] * mask.shape[1]
         found = []
@@ -639,7 +643,7 @@ class WhatMoves:
             if int(inside.sum()) < SMALLEST:
                 continue
             continuing = parts_from_continuing_texture(small[y:y + h, x:x + w], inside, left=x, top=y,
-                                                       things=[*self.things.values(), *self.pending.values()],
+                                                       things=may_continue,
                                                        motions=self._point_motion, at=self._now, difference=DIFFERENT_ENOUGH)
             parts = [piece for part in continuing for piece in parts_when_things_touch(
                 small[y:y + h, x:x + w], part, left=x, top=y,

@@ -53,3 +53,19 @@ def test_what_the_eyes_keep_of_when_things_were_seen_is_a_plain_time():
         eyes.see(picture, MeasuredFrameTime(at, lower=at, upper=at + 0.01, arrived=at + 0.01, source="browser-wall",
                                             source_at=at, epoch=0))
     assert eyes.things and all(type(thing.born) is float for thing in eyes.things.values())
+
+
+def test_whose_texture_could_go_on_is_what_a_part_would_ask_of_the_thing():
+    """Asked once a picture instead of once for every part of it: a thing it turns away, every part would."""
+    from types import SimpleNamespace
+
+    from core.perception.texture_that_continues_when_outlines_join import could_continue
+
+    motion = SimpleNamespace(before=1.0, at=1.1, support=3, points=(1, 2, 3), locations=((1, 1), (2, 2), (3, 1)),
+                             dx=1.0, dy=0.0, error=0.5)
+    patch, support = np.zeros((4, 4, 3), np.uint8), np.ones((4, 4), bool)
+    thing = SimpleNamespace(number=7, born=0.5, seen=1.0, patch=patch, support=support)
+    assert could_continue(thing, {7: motion}, 1.1)
+    assert not could_continue(thing, {}, 1.1)                                  # no measured motion
+    assert not could_continue(thing, {7: motion}, 1.5)                         # not this picture's
+    assert not could_continue(SimpleNamespace(**{**vars(thing), "support": np.zeros((4, 4), bool)}), {7: motion}, 1.1)

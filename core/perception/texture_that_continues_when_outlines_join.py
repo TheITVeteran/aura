@@ -46,6 +46,25 @@ def parts_from_continuing_texture(picture: np.ndarray, inside: np.ndarray, *, le
     return parts + ([remaining] if remaining.any() else [])
 
 
+def could_continue(thing: Any, motions: dict, at: float) -> bool:
+    """Whether a thing's texture could be found going on in any part of this picture: what ``_supported_part`` asks of
+    the thing and its measured motion alone, before any part is looked at. Asked once a picture instead of once for
+    every part of it, it changes nothing that is found (offline 2026-10-13: four thousand times a picture, a busy
+    scene's things against its parts)."""
+    motion = motions.get(thing.number)
+    born = getattr(thing, "born", None)
+    if (born is None or not math.isfinite(born) or motion is None or born > motion.before
+            or motion.before != thing.seen or motion.at != at
+            or not 0 < at - thing.seen <= .25 or motion.support < 3
+            or len(motion.points) != motion.support or len(set(motion.points)) != motion.support
+            or len(motion.locations) != motion.support
+            or not all(math.isfinite(v) for v in (motion.before, motion.dx, motion.dy, motion.error)) or motion.error < 0):
+        return False
+    old, support = thing.patch, thing.support
+    return (isinstance(old, np.ndarray) and isinstance(support, np.ndarray) and old.ndim == 3
+            and support.ndim == 2 and old.shape[:2] == support.shape and old.shape[2] == 3 and bool(support.any()))
+
+
 def _supported_part(picture: np.ndarray, inside: np.ndarray, thing: Any, motion: Any,
                     left: int, top: int, at: float, difference: float) -> np.ndarray | None:
     born = getattr(thing, "born", None)
