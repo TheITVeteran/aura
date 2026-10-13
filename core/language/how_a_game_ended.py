@@ -96,8 +96,9 @@ def _plain(text: str) -> str:
     # ("Computer o", "You Ø"); standing alone where a score stands, it is one.
     value = re.sub(r"(?<=\s)[oOØø](?=\s|$)", "0", str(text or ""))
     # "Won't" is "will not", not "won": offline 2026-10-13 a game's instructions, "you won't score as well", were read
-    # as the game saying she had won it, on its first screen.
-    value = re.sub(r"\bwon\s?['’`]\s?t\b", "will not", value, flags=re.IGNORECASE)
+    # as the game saying she had won it, on its first screen. However its apostrophe is read: as another mark, as a
+    # space, or not at all ("won´t", "won t", "wont"), as it was again on the same screen in a later pass.
+    value = re.sub(r"\bwon(?:\s*[^\w\s]\s*|\s+)?t\b", "will not", value, flags=re.IGNORECASE)
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     return " ".join(value.casefold().split())
 

@@ -66,4 +66,7 @@ def test_wont_is_will_not_and_says_nobody_won():
 
     rules = "If your supply runs out, you'll have to retry the level, and you won't score as well."
     assert what_says_the_game_is_over(rules) == "" and how_it_ended(rules) == ""
+    for read_as in ("won´t", "won t", "wont", "won ’ t", "WON'T"):
+        assert what_says_the_game_is_over(rules.replace("won't", read_as)) == "", read_as
     assert what_says_the_game_is_over("YOU WON!") == "you won" and how_it_ended("YOU WON!") == "won"
+    assert what_says_the_game_is_over("You won the cup! Play again?") == "you won"
