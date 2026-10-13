@@ -690,7 +690,8 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         if math.hypot(*way) <= REALLY_MOVES or self._pinned_toward(thing, way):
             return
         heard = self._answered.setdefault(key, [])
-        heard.append((thing.vx * way[0] + thing.vy * way[1]) / (way[0] ** 2 + way[1] ** 2))
+        vx, vy, _uncertainty = measured_velocity(thing, at)
+        heard.append((vx * way[0] + vy * way[1]) / (way[0] ** 2 + way[1] ** 2))
         del heard[:-ANSWERING_OVER]
         # Judged key by key: a thing none of her keys moves is not hers, but one
         # key taken wrongly for hers is not every key. LIVE 2026-10-05 "left"
@@ -995,7 +996,8 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
             self.last_seen = (mine.x, mine.y)
             if at is not None:
                 self.last_seen_at = mine.seen
-            self.last_velocity = (mine.vx, mine.vy)
+            vx, vy, _uncertainty = measured_velocity(mine, at)
+            self.last_velocity = (vx, vy)
             self.last_size = mine.size
             self.last_shape = (mine.w, mine.h)
             self.last_look = tuple(getattr(mine, "look", ())) or None
