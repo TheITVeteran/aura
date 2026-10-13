@@ -47,3 +47,25 @@ All nine gates passed on the e41895d27 base. Smoke passed 165 tests with one
 skip in 58.04 seconds. The gate log is
 /private/tmp/codex-steer/fresh-heading-gates.log. The related run remains the
 144-case result above. The full chunked suite has not been run.
+
+## Original-program result at the pushed checkpoint
+
+A clean detached proof checkout loaded
+2590e77133f5900147af683eb88be3642a8ea6a3. The assigned original program 9
+ran through the normal archived-program harness with the existing model
+service. No desktop runtime or model service was restarted.
+
+The owned process completed after 251.85628820897546 seconds with exit zero
+and no timeout. won was false; the last words were time's up and QUIT.
+The harness reported 11 lost runs. Its later entries repeatedly read the
+ending screen, so they are not evidence of 11 independently started rounds.
+
+The 388 bounded heading snapshots contain no identified body, no current
+heading and no qualified steering model. The offline repairs have not
+produced an original-program win or presentation qualification.
+
+Evidence root: /private/tmp/codex-steer/run-9-reference-heading-1013.
+owner.json and completion.json retain process custody and the exact source
+revision. results.json retains the outcome; heading-models.jsonl retains the
+bounded learner observations. Frame captures and input receipts remain in
+that root. No continuous body identity was independently established.
