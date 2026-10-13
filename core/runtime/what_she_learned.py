@@ -546,11 +546,28 @@ def remember(world: str, what: dict[str, Any], *, indexed_tables: Sequence[Mappi
         return False
 
 
+#: Records already read and checked, by where they are kept, when they were last written and how big, and the tables
+#: they were checked against: each one's checked state, as text to read afresh. Every decision looked across all she
+#: had kept and read and checked each again: offline 2026-10-12 a game's decisions spent a thirtieth of its play doing so.
+_RECALLED: dict[tuple[str, int, int, str], str] = {}
+_MOST_RECALLED = 256
+
+
 def recall(world: str, *, indexed_tables: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
-    """What she worked out about this thing last time, if she has been here."""
+    """What she worked out about this thing last time, if she has been here. A record read and checked before, and not
+    written since, is not read and checked again; what comes back is always her own copy."""
     key = named(world)
+    path = _kept_in() / f"{key}.json"
     try:
-        held = json.loads((_kept_in() / f"{key}.json").read_text())
+        stat = path.stat()
+        tables = json.dumps(list(indexed_tables), sort_keys=True, default=str)
+    except (OSError, ValueError, TypeError):
+        return {}
+    known = (str(path), stat.st_mtime_ns, stat.st_size, tables)
+    if known in _RECALLED:
+        return json.loads(_RECALLED[known])
+    try:
+        held = json.loads(path.read_text())
     except (OSError, ValueError, TypeError):
         return {}
     if not isinstance(held, dict):
@@ -560,7 +577,14 @@ def recall(world: str, *, indexed_tables: Sequence[Mapping[str, Any]] = ()) -> d
     # is not a model, and every reader of it already refuses a string, so it
     # is left alone rather than guessed at.
     held.pop("_kept_for", None)
-    return validate_indexed_state(held, indexed_tables=indexed_tables)
+    checked = validate_indexed_state(held, indexed_tables=indexed_tables)
+    try:
+        _RECALLED[known] = json.dumps(checked)
+    except (TypeError, ValueError):
+        return checked
+    while len(_RECALLED) > _MOST_RECALLED:
+        del _RECALLED[next(iter(_RECALLED))]
+    return json.loads(_RECALLED[known])
 
 
 def kept_worlds() -> list[str]:
