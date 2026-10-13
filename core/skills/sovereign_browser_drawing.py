@@ -1133,6 +1133,14 @@ def _the_best_of(runs: list[dict[str, Any]]) -> str:
         return (f"That's {len(runs)} run{'s' if len(runs) != 1 else ''}. No score was drawn; by my own count my best was "
                 f"run {which}, with {best}" + (f", rated {rated}" if rated else "")
                 + (f"; the others: {'; '.join(others)}." if others else "."))
+    # No number drawn and none counted: what the game itself rated each run, in its own words, before how long each was.
+    from core.language.how_a_game_ended import the_rating_in
+
+    rated = [the_rating_in(str(r.get("words") or "")) for r in runs]
+    if any(rated):
+        told = (f"each was rated {rated[0]}" if len(set(rated)) == 1 and all(rated)
+                else "; ".join(f"run {i} was rated {r}" for i, r in enumerate(rated, 1) if r))
+        return f"That's {len(runs)} run{'s' if len(runs) != 1 else ''}. No score was drawn; {told}."
     longest = max(range(len(runs)), key=lambda i: float(runs[i].get("took_s") or 0.0))
     return f"That's {len(runs)} run{'s' if len(runs) != 1 else ''}. No score was shown; my longest was run {longest + 1}, at {float(runs[longest].get('took_s') or 0.0):.0f} seconds."
 

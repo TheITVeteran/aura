@@ -55,3 +55,11 @@ def test_a_number_drawn_is_still_what_the_best_is_told_by():
     runs = [{"words": "GAME OVER YOUR SCORE: 120", "score": 120, "gains": 3, "took_s": 30.0},
             {"words": "GAME OVER YOUR SCORE: 90", "score": 90, "gains": 8, "took_s": 30.0}]
     assert _the_best_of(runs).startswith("That's 2 runs. My best was run 1, with 120")
+
+
+def test_runs_with_no_score_drawn_or_counted_are_told_by_what_the_game_rated_them():
+    runs = [{"words": BLANK, "score": None, "took_s": 40.0}, {"words": "Game Over Your score: Your rating: LONG SHOT",
+             "score": None, "took_s": 30.0}]
+    assert _the_best_of(runs) == "That's 2 runs. No score was drawn; run 1 was rated CRACKED UP; run 2 was rated LONG SHOT."
+    same = [{"words": BLANK, "score": None}, {"words": BLANK, "score": None}]
+    assert _the_best_of(same) == "That's 2 runs. No score was drawn; each was rated CRACKED UP."
