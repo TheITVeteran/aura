@@ -1224,6 +1224,58 @@ def what_a_reading_says(reading: dict[str, Any]) -> tuple:
     return (grids, words)
 
 
+#: How much of its writing an earlier reading in one look must share with the last, of the fewer either has, for the
+#: two to be of one screen; and how near, as a share of the picture, writing read where other writing stands is to be
+#: the same writing read another way.
+SAME_WRITING = 0.6
+ONE_PLACE = 0.03
+
+
+def _layout_of(reading: Any) -> list[dict[str, Any]]:
+    return [r for r in (reading.get("layout") or []) if isinstance(r, dict)] if isinstance(reading, dict) else []
+
+
+def _writing(region: dict[str, Any]) -> str:
+    return " ".join(str(region.get("text") or "").lower().split())
+
+
+def _with_what_blinked(reading: Any, earlier: list[list[dict[str, Any]]]) -> None:
+    """The last reading of a look, given the writing an earlier reading of the same screen in that look had and it has
+    not. A label that blinks to be noticed (PRESS START, CONTINUE) is on the screen though one picture caught it dark,
+    as a person sees it there between its flashes. Offline 2026-10-13 a game's CONTINUE blinked, was read in every
+    other picture, and the picture each look ended on was mostly a dark one: she pressed keys at the page for four
+    minutes. Only from a reading of the same screen (most of its writing the same), and not where other writing is
+    read in its place; marked as having blinked."""
+    if not isinstance(reading, dict) or not earlier:
+        return
+    now = _layout_of(reading)
+    have = {_writing(r) for r in now} - {""}
+    if not have:
+        return
+    added: list[dict[str, Any]] = []
+    for layout in earlier:
+        texts = {_writing(r) for r in layout} - {""}
+        if not texts or len(texts & have) < SAME_WRITING * min(len(texts), len(have)):
+            continue
+        for region in layout:
+            said = _writing(region)
+            if not said or said in have or any(_in_one_place(region, other) for other in [*now, *added]):
+                continue
+            added.append({**region, "blinked": True})
+            have.add(said)
+    if added:
+        reading["layout"] = [*now, *added]
+        reading["text"] = " ".join([str(reading.get("text") or ""), *(str(r.get("text") or "") for r in added)]).strip()
+
+
+def _in_one_place(one: dict[str, Any], other: dict[str, Any]) -> bool:
+    try:
+        return (abs(float(one["center_x"]) - float(other["center_x"])) <= ONE_PLACE
+                and abs(float(one["center_y"]) - float(other["center_y"])) <= ONE_PLACE)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def settled_reading(
     take: Any, looker: Looker, *, wait: bool, within_s: float, began: float
 ) -> tuple[Any, dict[str, Any] | None, bool]:
@@ -1249,6 +1301,7 @@ def settled_reading(
     pictures = 1
     still = not wait
     agreed = False
+    layouts = [_layout_of(reading)]
     while not still and time.monotonic() - began < within_s:
         again = take()
         taken_at = time.time()
@@ -1270,6 +1323,8 @@ def settled_reading(
             waiting_on=tuple(spot for spot in unread if spot not in looker.would_not_read),
         )
         reading, said, looks = reading_again, said_again, looks_again
+        layouts.append(_layout_of(reading))
+    _with_what_blinked(reading, layouts[:-1])
     # How many pictures it took to agree with the one before: two is a world
     # already at rest, more is one still moving. The caller's wait is set
     # from this rather than from the clock.
@@ -1520,6 +1575,7 @@ async def _read_until_settled(
     snapshot = await asyncio.to_thread(make_snapshot, picture)
     reading = await asyncio.to_thread(looker.read, picture, learn=not wait_for_stillness)
     said, looks = what_a_reading_says(reading), looker.last_looks
+    layouts = [_layout_of(reading)]
     unread = _places_unread(reading)
     pictures = 1
     still = not wait_for_stillness
@@ -1546,6 +1602,8 @@ async def _read_until_settled(
             waiting_on=tuple(spot for spot in unread if spot not in looker.would_not_read),
         )
         reading, said, looks = reading_again, said_again, looks_again
+        layouts.append(_layout_of(reading))
+    _with_what_blinked(reading, layouts[:-1])
     at_rest_but_unread = still_but_unread(still, agreed, unread)
     if wait_for_stillness and (still or at_rest_but_unread):
         looker.learn_what_was_read()
