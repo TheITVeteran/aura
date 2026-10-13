@@ -384,3 +384,55 @@ def test_a_place_of_questions_she_has_answered_by_typing_is_not_played_with_keys
     # What play showed outweighs what its words were taken to say.
     assert worked_by_typing({"typed": "Aura", "asked_a_question": True}, a_game, []) == "typing what it asks"
     assert worked_by_typing({"typed": "Aura", "answered": "DEEP ORANGE"}, None, []) == "typing what it asks"
+
+
+def test_an_ask_is_counted_by_its_own_numbering_and_what_it_answered_is_not_typed_over():
+    """Offline 2026-10-12 stray numbers read off a name machine's screen made each reading another ask, and her name was
+    typed into it eight times while what it answered stood on the screen."""
+    import asyncio
+
+    import core.skills.screen_pursuit_as_it_happens as reflexes_module
+
+    typed: list[str] = []
+
+    async def type_it(asked, look, read, reflexes, **kw):
+        typed.append(asked.asked_by)
+        return {"typed": "Maple", "kind": "a name"}
+
+    import core.agency.typing_what_is_asked as typing
+
+    original = typing.type_what_is_asked
+    typing.type_what_is_asked = type_it
+    try:
+        reflexes = reflexes_module.PlayingAsItHappens(page=None, band=(0, 0, 1, 1), goal="play it", ends_at=1e12)
+        reflexes.words = ["TYPE YOUR NAME HERE GO 7"]
+        assert asyncio.run(reflexes._typed_what_it_asks())
+        reflexes.words = ["TYPE YOUR NAME HERE GO 3 TRY AGAIN DEEP ORANGE YOUR LUCKY COLOUR 12"]
+        assert not asyncio.run(reflexes._typed_what_it_asks())          # it answered: not typed over
+        assert reflexes.keep.get("answered") and len(typed) == 1
+    finally:
+        typing.type_what_is_asked = original
+
+
+def test_a_second_players_name_is_another_ask_and_stray_numbers_are_not():
+    import asyncio
+
+    import core.agency.typing_what_is_asked as typing
+    import core.skills.screen_pursuit_as_it_happens as reflexes_module
+
+    typed: list[str] = []
+
+    async def type_it(asked, look, read, reflexes, **kw):
+        typed.append(asked.asked_by)
+        return {"typed": "Maple", "kind": "a name"}
+
+    original = typing.type_what_is_asked
+    typing.type_what_is_asked = type_it
+    try:
+        reflexes = reflexes_module.PlayingAsItHappens(page=None, band=(0, 0, 1, 1), goal="play it", ends_at=1e12)
+        for screen in ("PLAYER 1 ENTER YOUR NAME OK 7", "PLAYER 1 ENTER YOUR NAME OK 12", "PLAYER 2 ENTER YOUR NAME OK 7"):
+            reflexes.words = [screen]
+            asyncio.run(reflexes._typed_what_it_asks())
+        assert len(typed) == 2 and typed[1].startswith("PLAYER 2")
+    finally:
+        typing.type_what_is_asked = original

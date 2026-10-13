@@ -1204,12 +1204,21 @@ class PlayingAsItHappens:
         asked = words_asked_for(self.words[-1]) if self.words else None
         if asked is None:
             return False
+        # What she typed before and the place answered is not typed again: the answer is what she came for.
+        if self.keep.get("typed") and self.words:
+            answered = _answered_since_typed(self.keep, {"text": self.words[-1]})
+            if answered:
+                self.keep["answered"] = self.keep.get("answered") or answered
+                return False
         # Counted by what is asked for, not by how the screen happened to be read: a name asked for is typed twice at
         # most, however many misreadings of its heading there are.
         tries = self.keep.setdefault("typed_for", {})
         # One ask however its words are misread, but the screen's own numbering makes another ("Player 2" after "Player
         # 1"): offline 2026-10-11 a golf game asked the second player's name, and OK was pressed thirty times with none.
-        numbered = " ".join(re.findall(r"\d+", asked.said or asked.asked_by))
+        # The numbering is the ask's own, in the words that asked, not every number on the screen: offline 2026-10-12
+        # the stray numbers read off a name machine's screen made each reading another ask, and her name was typed into
+        # it eight times while what it answered stood on the screen.
+        numbered = " ".join(re.findall(r"\b(?:player|p|no\.?|number|#)\s*(\d+)\b", asked.asked_by, re.I))
         which = f"{asked.kind}:{numbered}"
         if tries.get(which, 0) >= 2:
             return False
