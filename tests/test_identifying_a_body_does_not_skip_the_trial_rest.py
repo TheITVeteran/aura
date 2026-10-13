@@ -20,7 +20,8 @@ pytestmark = pytest.mark.unit
 @pytest.mark.asyncio
 @pytest.mark.parametrize('hz', [10., 30.])
 @pytest.mark.parametrize('angle', [0., 1.2])
-async def test_the_actual_actor_finishes_its_motion_probe_and_learns_the_turning_controls(monkeypatch, hz, angle):
+@pytest.mark.parametrize('rolling', [False, True])
+async def test_the_actual_actor_finishes_its_motion_probe_and_learns_the_turning_controls(monkeypatch, hz, angle, rolling):
     now, actions = [0.], []
     monkeypatch.setattr(play.time, 'monotonic', lambda: now[0])
 
@@ -43,14 +44,18 @@ async def test_the_actual_actor_finishes_its_motion_probe_and_learns_the_turning
     hers, meeting = WhichIsHers(), WhatMeetingDoes()
     run = play._Run(keys=['drive', 'back', 'yaw-a', 'yaw-b'], began=0., faces=WhichWaySheFaces(),
                     pressures=Pressures(), comes=WhatComesForHer(), gone_for=GoneFor())
+    speed = 0.
     for step in range(1, int(20 * hz) + 1):
         now[0] = step / hz
         run.intervals.append(1 / hz)
-        if run.held == 'yaw-a':
+        if run.held == 'yaw-a' and (not rolling or speed):
             angle -= 2.8 / hz
-        if run.held == 'yaw-b':
+        if run.held == 'yaw-b' and (not rolling or speed):
             angle += 2.8 / hz
-        speed = 120. if run.held == 'drive' else -60. if run.held == 'back' else 0.
+        speed = (120. if run.held == 'drive' else -60. if run.held == 'back'
+                 else speed * math.exp(-.7 / hz) if rolling else 0.)
+        if rolling and abs(speed) < 5.:
+            speed = 0.
         body.vx, body.vy = speed * math.cos(angle), speed * math.sin(angle)
         body.x, body.y = body.x + body.vx / hz, body.y + body.vy / hz
         body.seen = now[0]

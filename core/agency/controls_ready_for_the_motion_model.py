@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from core.agency.response_in_the_body_frame import bound_facing_response, response_is_known
 from core.verify import invariant
 
 
@@ -11,6 +12,10 @@ def has_a_measured_response(hers: Any, key: str) -> bool:
     """Settled pace for a direct control; repeated pulse and rest for an accelerated body."""
     if hers.kind is None:
         return False
+    if getattr(hers, "facing_controls", None) is not None:
+        faces = bound_facing_response(hers)
+        if faces is not None and response_is_known(faces, key):
+            return True
     if hers.carried:
         measured = (hers.push_of(key), hers.push_of(""))
     else:

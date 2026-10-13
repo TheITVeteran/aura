@@ -80,6 +80,7 @@ def install_realtime_control_claims(suite: Any) -> None:
         *_visual_motion_claims(),
         *_control_discovery_claims(),
         *_bounded_pixel_claims(),
+        *_travel_turn_claims(),
         ("pixel_control_requires_resolved_displacement", "core/agency/controls_measured_on_one_thing.py",
          "tests/test_which_thing_answers_to_her.py", lambda: _resolved_motion_invariant() == (),
          "Pixel-derived control evidence requires observed displacement beyond the tracker resolution before assigning a new body identity."),
@@ -398,6 +399,20 @@ def install_realtime_control_claims(suite: Any) -> None:
         test=name, owner=owner, asserted_in=owner, evidence=Evidence.MEASURED_SYNTHETIC,
         evidence_note="Lane ownership measured; autonomous repair and use require separate live evidence.",
     ))
+
+
+def _travel_turn_claims() -> tuple:
+    from core.agency.response_in_the_body_frame import _body_heading_invariant
+    from core.agency.turning_while_travelling import _travel_turns_invariant
+
+    return (
+        ("travel_turns_require_repeated_observed_input_contrasts", "core/agency/turning_while_travelling.py",
+         "tests/test_turning_while_travelling.py", lambda: _travel_turns_invariant() == (),
+         "Turning during travel requires two coherent measured input intervals and two neutral contrasts; its rate cannot establish turning at rest."),
+        ("heading_response_belongs_to_its_body_and_experiment", "core/agency/response_in_the_body_frame.py",
+         "tests/test_body_heading_measurements_keep_their_owner.py", lambda: _body_heading_invariant() == (),
+         "A heading response belongs to its current body and identification experiment; predicting a travel tangent requires fresh observed travel."),
+    )
 
 
 def _bounded_pixel_claims() -> tuple:

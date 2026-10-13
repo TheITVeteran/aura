@@ -15,6 +15,7 @@ pytestmark = pytest.mark.unit
 
 def _place():
     faces, hers = WhichWaySheFaces(), WhichIsHers()
+    hers.number, hers.kind = 1, 1
     mine = Namespace(number=1, x=20., y=20., vx=0., vy=0., seen=0.,
               motion_evidence="pixels", motion_measured_at=None)
     pressures = Namespace(saw=lambda **_kw: None, urgency=lambda: 0.,

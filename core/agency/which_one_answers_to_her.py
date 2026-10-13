@@ -40,6 +40,7 @@ from core.agency.causal_identification import (
 from core.agency.controls_measured_on_one_thing import motion_is_resolved, own_control_witness
 from core.agency.controls_ready_for_the_motion_model import has_a_measured_response
 from core.agency.finding_her_another_way import FoundAnotherWay
+from core.agency.response_in_the_body_frame import bound_facing_response, expected_travel
 from core.agency.what_follows_the_pointer import FollowsThePointer
 from core.perception.parts_when_things_touch import same_colour_mix
 from core.perception.position_from_the_same_points import measured_position
@@ -606,7 +607,7 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         self.last_shape: tuple[float, float] | None = None
         self.last_look: tuple[float, ...] | None = None
         self._answered: dict[str, list[float]] = {}
-        self._answered_by: int | None = None
+        self._answered_by: tuple | None = None
         self._expecting: dict[str, tuple[float, float]] = {}
         #: Whether her thing is carried on by its own going and pushed by her keys (see `_Speeds.pushes`), and when that
         #: was last looked at.
@@ -660,12 +661,16 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         # What the key was known to do before this thing was taken for hers:
         # its own pictures go into what she knows of her keys, and a thing
         # that never moves would soon teach her that no key moves her.
-        if self._answered_by != thing.number:
-            self._answered, self._answered_by, self._expecting = {}, thing.number, {}
-        way = self._expecting.get(key) or self._hers.typical(key)
+        faces = bound_facing_response(self)
+        faces = faces if faces is not None and faces.turns_her() else None
+        model = thing.number, faces.body_epoch if faces is not None else None
+        if self._answered_by != model:
+            self._answered, self._answered_by, self._expecting = {}, model, {}
+        way = expected_travel(faces, key, at) if faces is not None else self._expecting.get(key) or self._hers.typical(key)
         if way is None:
             return
-        self._expecting[key] = way
+        if faces is None:
+            self._expecting[key] = way
         if math.hypot(*way) <= REALLY_MOVES or self._pinned_toward(thing, way):
             return
         heard = self._answered.setdefault(key, [])
@@ -678,8 +683,10 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         # moved her and do not move it are enough: LIVE 2026-10-07 her hero's
         # track was handed to a vent on the wall, she held up and down at it for
         # a minute, and left and right, never pressed, were never judged.
-        moving_keys = {k for k in self._hers.free
-                       if (v := self._expecting.get(k) or self._hers.typical(k)) is not None
+        keys = (set(faces.along) | set(faces.turning_keys())) if faces is not None else self._hers.free
+        moving_keys = {k for k in keys
+                       if (v := expected_travel(faces, k, at) if faces is not None else
+                           self._expecting.get(k) or self._hers.typical(k)) is not None
                        and math.hypot(*v) > REALLY_MOVES}
         judged = [statistics.median(self._answered[k]) for k in moving_keys
                   if len(self._answered.get(k, [])) >= 3]
@@ -1125,6 +1132,10 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
 
     def axes(self, keys: list[str]) -> tuple[bool | None, bool | None]:
         """Measured motion axes; missing control models leave absence unknown."""
+        faces = bound_facing_response(self)
+        if (faces is not None and faces.turns_her() and faces.ahead_key() in keys
+                and any(key in keys for key in faces.turning_keys())):
+            return True, True
         ways = list(self.keys_that_move_her(keys).values())
         absent = False if self.keys_known(keys) else None
         return (

@@ -20,6 +20,7 @@ import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from core.agency.turning_while_travelling import TurningWhileTravelling
 from core.verify import invariant
 
 __all__ = ["WhichWaySheFaces"]
@@ -87,6 +88,8 @@ class WhichWaySheFaces:
     """What her keys do to where she faces, learned from her going; and the key that takes her toward a place."""
 
     facing: float | None = None
+    body_epoch: tuple | None = None
+    heading_dependent: bool = False
     #: Each key that moves her: the ways on the screen it took her, press by press, and its speed along her facing.
     ways: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
     along: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
@@ -109,6 +112,8 @@ class WhichWaySheFaces:
     last_tried: str = ""
     now: float = 0.0
     last_picture_at: float | None = None
+    travel_turns: TurningWhileTravelling = field(default_factory=lambda: TurningWhileTravelling(
+        moving=MOVING, settle_s=SETTLE_S, gap_s=OBSERVATION_GAP_S, turns=TURNS))
 
     def saw(self, vx: float, vy: float, held: str, at: float, *, measured: bool = True,
             began: float | None = None) -> None:
@@ -127,6 +132,7 @@ class WhichWaySheFaces:
             self.settled_pictures = 0
             if held:
                 self.pressed.add(held)
+        self.travel_turns.saw(held, self.held_since, at, vx, vy, measured=measured)
         if gap or not measured or not all(math.isfinite(v) for v in (vx, vy)):
             self.going = []
             self.settled_pictures = 0
@@ -177,7 +183,7 @@ class WhichWaySheFaces:
 
     def _turned_since(self) -> float:
         """How far the turning keys pressed since she last went are known to have turned her."""
-        rates = self.turning_keys()
+        rates = self._stationary_turning_keys()
         return sum(rates.get(key, 0.0) * seconds for key, seconds in self.turned_by)
 
     def _sign(self, key: str) -> float | None:
@@ -192,6 +198,7 @@ class WhichWaySheFaces:
             vx = statistics.fmean(v[0] for v in self.going)
             vy = statistics.fmean(v[1] for v in self.going)
             self.ways[key].append(math.atan2(vy, vx))
+            self.heading_dependent |= self.spread()
             del self.ways[key][:-20]
             if self.sign is not None:
                 self.along[key].append(self.sign * math.hypot(vx, vy))
@@ -212,9 +219,13 @@ class WhichWaySheFaces:
 
     def turns_her(self) -> bool:
         """Whether this place turns her: a key that has taken her ways far apart, and a key that turned her."""
-        return self.spread() and bool(self.turning_keys())
+        return bool(self.turning_keys()) and (self.heading_dependent or self.spread()
+                                             or bool(self.travel_turns.rates()) and self.ahead_key() is not None)
 
     def turning_keys(self) -> dict[str, float]:
+        return {**self._stationary_turning_keys(), **self.travel_turns.rates()}
+
+    def _stationary_turning_keys(self) -> dict[str, float]:
         """Each key that turns her, and how fast: radians a second, positive the way angles grow (down the screen from
         right, so clockwise as the screen is seen). Found from every run of presses between two goings together, by
         least squares: how far each run turned her is each key's rate times how long it was held."""
@@ -234,7 +245,8 @@ class WhichWaySheFaces:
 
     def ahead_key(self, least: int = PRESSES) -> str | None:
         """The key that takes her along where she faces fastest, ahead or back, from ``least`` presses of it or more."""
-        along = {key: statistics.median(speeds) for key, speeds in self.along.items() if len(speeds) >= least}
+        along = {key: statistics.median(speeds) for key, speeds in self.along.items()
+                 if len(speeds) >= least and not self.travel_turns.curved(key)}
         best = max(along.items(), key=lambda item: abs(item[1]), default=None)
         return best[0] if best is not None and abs(best[1]) >= MOVING else None
 
@@ -244,7 +256,7 @@ class WhichWaySheFaces:
         sailor's is between sightings: steered by where she last went, she turned and turned (offline 2026-10-11)."""
         if self.facing is None:
             return None
-        rates = self.turning_keys()
+        rates = self._stationary_turning_keys()
         held_now = rates.get(self.held, 0.0) * max(0.0, self.now - self.held_since) if not self.going else 0.0
         return _wrap(self.facing + self._turned_since() + held_now)
 
@@ -259,7 +271,8 @@ class WhichWaySheFaces:
         off = _wrap(math.atan2(to_y - y, to_x - x) - goes)
         if abs(off) <= NEAR_ENOUGH:
             return ahead
-        return max(turners.items(), key=lambda item: item[1] * off)[0]
+        key = max(turners.items(), key=lambda item: item[1] * off)[0]
+        return ahead if key in self.travel_turns.rates() and not self.travel_turns.travelling else key
 
     def trial(self, keys: list[str]) -> str | None:
         """The key to try next to learn what turns her, where trying keys in turn cannot tell: two keys that move her
@@ -271,22 +284,36 @@ class WhichWaySheFaces:
         # her (turn left, turn right): in a place whose keys move her one way, one key that moves her nowhere is a shot
         # or a jump, and needs no trial. Two that turn her, tried in turn, cancel, and she never turns to show it.
         nowhere = {key for key in self.pressed if key not in self.along and key not in self.ways}
-        if ahead is None or self.facing is None or not (self.spread() or len(nowhere) >= 2):
+        curved = {key for key in keys if self.travel_turns.curved(key)}
+        if ahead is None or self.facing is None or not (self.spread() or len(nowhere) >= 2 or curved):
             return None
+        if curved and self.travel_turns.needs_neutral_travel():
+            # Build motion, then observe it released. A stationary rest cannot
+            # tell whether the travel would have curved without the input.
+            self.last_tried = '' if self.last_tried == ahead else ahead
+            return self.last_tried
         alone = defaultdict(int)
         for held_for, _turned in self.turns:
             if len(held_for) == 1:
                 alone[next(iter(held_for))] += 1
-        still = [key for key in keys if key and key not in self.along and key in self.pressed and alone[key] < PRESSES]
+        observed = {key: self.travel_turns.repeats(key) if key in curved else alone[key] for key in keys}
+        still = [key for key in keys if key and (key not in self.along or key in curved)
+                 and key in self.pressed and observed[key] < PRESSES]
         if not still:
+            if not self.turns_her() and (rates := self.turning_keys()):
+                # A new body can have measured turns before enough separate
+                # goings establish its driver and heading dependence.
+                turn = max(rates, key=lambda key: abs(rates[key]))
+                self.last_tried = turn if self.last_tried == ahead else ahead
+                return self.last_tried
             return None
         # Ahead, then a still key on its own, then ahead again: her facing read before and after each.
-        self.last_tried = min(still, key=lambda key: alone[key]) if self.last_tried == ahead else ahead
+        self.last_tried = min(still, key=lambda key: observed[key]) if self.last_tried == ahead else ahead
         return self.last_tried
 
     def way_of(self, key: str) -> tuple[float, float] | None:
         """How a key takes her now, where it takes her along her facing; None for a key that turns her or is not known."""
-        if self.facing is None or key not in self.along or len(self.along[key]) < PRESSES:
+        if self.facing is None or key in self.turning_keys() or key not in self.along or len(self.along[key]) < PRESSES:
             return None
         speed = statistics.median(self.along[key])
         return speed * math.cos(self.facing), speed * math.sin(self.facing)
