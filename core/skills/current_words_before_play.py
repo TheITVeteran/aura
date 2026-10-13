@@ -82,25 +82,35 @@ async def read_current_words(reflexes: Any, *, goes_on: bool) -> dict | None:
         return None
     # The word reader takes BGR; the control stream supplies RGB.
     bgr = pixels[:, :, 2::-1].copy()
+    # The old menu's own pixels are held against this frame before its words are read: that takes no reading, and
+    # offline 2026-10-12 reading took longer than a frame stays current, the menu just left was still what the reflexes
+    # went by, and a round was lost on it.
+    confirmed_at = await _old_menu_changed(reflexes, bgr, at)
+    if confirmed_at is not None:
+        # This retires a contradicted reading. It says nothing about what the
+        # new view means; her known controls are tried on what its pixels show.
+        reflexes.said_now, reflexes.way_on_shown, reflexes.menu_pixels = "", False, None
+        reflexes.words.append("")
+        del reflexes.words[:-12]
     regions = await asyncio.to_thread(recognize_text, bgr)
     from core.skills.visible_words_from_their_pixels import verified_fast_labels
 
     regions = await verified_fast_labels(reflexes, regions, bgr, at)
+    kept = words_with_their_pixels(ScreenReading({"layout": regions}, picture_snapshot=make_snapshot(bgr)))
     observed = words_of_this_frame(regions, at=at, now=time.monotonic(), band=reflexes.band)
+    if observed is None and kept is not None:
+        # The reading took longer than a frame stays current. Its words still stand where their own pixels are in the
+        # frame before her now: offline 2026-10-12 a screen that asked her to choose was not known for one, an arrow
+        # that slid beside its choices was taken for a sign to be followed, and a key was held to it for 22 seconds.
+        again = await reflexes.look()
+        if again is not None and kept.still_in(np.asarray(again[0])[:, :, 2::-1]) is True:
+            observed = words_of_this_frame(regions, at=again[1], now=time.monotonic(), band=reflexes.band)
     if observed is not None:
         observed = ScreenReading(observed)
         observed.label_recovery_done = True
-        observed.word_pixels = words_with_their_pixels(ScreenReading({"layout": regions}, picture_snapshot=make_snapshot(bgr)))
+        observed.word_pixels = kept
         reflexes.read(observed)
-    elif 0 <= time.monotonic() - at <= .25:
-        confirmed_at = await _old_menu_changed(reflexes, bgr, at)
-        if confirmed_at is None:
-            return None
-        # This retires a contradicted reading. It says nothing about what the
-        # new view means; her known controls are tried on what its pixels show.
-        reflexes.said_now, reflexes.way_on_shown = "", False
-        reflexes.words.append("")
-        del reflexes.words[:-12]
+    elif confirmed_at is not None:
         observed = {"ok": True, "text": "", "layout": [], "captured_at": confirmed_at, "prior_words_changed": True}
     return observed
 

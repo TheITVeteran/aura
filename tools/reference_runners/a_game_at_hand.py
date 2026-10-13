@@ -60,6 +60,10 @@ _THE_PLAYER = """
 """
 
 
+#: Whether the movie is playing, as the emulator itself says.
+_IS_PLAYING = "(() => { const p = document.querySelector('ruffle-player'); return !!(p && p.isPlaying); })()"
+
+
 def _served(bundle: Path) -> tuple[ThreadingHTTPServer, str, dict[int, dict]]:
     from tools.serve_offline_flash_bundle import BundleHandler, check_bundle
 
@@ -143,8 +147,15 @@ class GameAtHand:
         if not player:
             raise RuntimeError("the emulator never showed a player")
         left, top, wide, tall = player["box"]
-        await self._page.mouse.click(left + wide / 2, top + tall / 2)
-        await asyncio.sleep(0.5)
+        # The emulator's own splash is pressed until the movie is playing: one press made as the splash was still
+        # coming up took nothing, and the runner watched a play button for a minute.
+        for _press in range(12):
+            await self._page.mouse.move(left + wide / 2 - 9, top + tall / 2 - 7)
+            await self._page.mouse.move(left + wide / 2, top + tall / 2, steps=4)
+            await self._page.mouse.click(left + wide / 2, top + tall / 2)
+            await asyncio.sleep(0.6)
+            if await self._page.evaluate(_IS_PLAYING):
+                break
         player = await self._page.evaluate(_THE_PLAYER) or player
         left, top, wide, tall = player["box"]
         movie_wide, movie_tall = player.get("wide"), player.get("tall")

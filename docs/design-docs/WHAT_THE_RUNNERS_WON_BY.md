@@ -15,6 +15,16 @@ canvas reads back blank and the devtools screencast is used), and a hand and key
 
     python -m tools.reference_runners.look_around 2 --out /tmp/rr/g2 word:START wait:2 key:Space
     python -m tools.reference_runners.a_throw_at_someone_across_a_room --seconds 120 --out /tmp/rr/food
+    python -m tools.reference_runners.signs_coming_along_a_strip --seconds 300 --out /tmp/rr/zap
+
+## Read first, then run
+
+A game's program and artwork say what it will show and ask before anything plays it: every sign it draws, what is
+shaded like what, where and by what each thing is judged, and every rate. Each of the faults the second runner met
+was readable there (the pad's shading is artwork; the colour change on the pad and the two-key signs are in the
+program). So the order of work for a game is: its sheet from the program and artwork; the abilities that sheet asks
+of her, each with a test on the real artwork; the runner, to confirm the sheet; her own run, to confirm the build.
+A runner that finds something the sheet did not say has found a gap in the sheet.
 
 ## Found by every runner
 
@@ -49,6 +59,102 @@ What wins:
   scaled up by a steady amount each picture, and tau read from it said 0.1 s while it landed 0.6 s later.
 
 What it still lacks: the second opponent throws without stopping first, and was dodged by nothing.
+
+## Signs coming along a strip to a mark, each one a key (Zap to It!, case 15)
+
+Words: "Follow the arrow keys in Grim's Magic Book to cast the correct clean-up spell. Be careful! A mistake could
+create an even bigger mess!"
+
+What its program says, read before the runner was written: the stage is 432 units wide; arrows are made 100 units
+apart and go 5, 6 or 7 units a frame; the front arrow is judged over the last 60 units before 420 by exactly which
+arrow keys are down then; an arrow that passes 420 unanswered costs one of three lives, which come back at each new
+spell; from the second spell a sign may be two arrows, asking for two keys at once; twenty spells in three rooms.
+
+The runner cleans all three rooms in 3 minutes 37 seconds (371 signs judged, pairs among them) and reaches the game's
+last line, "thanks to Billy the kitchen is a mess again". What it took, each thing a lost game before it was done:
+
+- **Ink that stays is the strip's, however like a sign it reads.** The pad at the end is shaded with a shape in the
+  arrows' colour that reads by its outline as a down arrow, and the strip's edges are that colour too. The runner
+  held "down" for a whole game. A sign is ink that comes along.
+- **A sign is not to be seen while it is judged.** On the pad it swells and changes colour. Its keys stay down for a
+  moment after it goes from sight, timed from the signs' pace, and what shows beyond where the front ones go from
+  sight is one already judged.
+- **Order, not following.** Matching each mark to the nearest mark of the last picture took the two halves of a
+  double sign for one mark read two ways, and lost the thread at twenty pictures a second. Only their order along the
+  strip is used: the front one has changed when the furthest sign is suddenly further back.
+- **A sign made of signs she knows.** The pairs are two arrows drawn over one another, the lower one lying on the
+  strip's edge and losing its foot with it. Read by outline a pair is one of its halves. Laid over by the four single
+  arrows learned in the first spell, and scored by intersection over union, every pair reads as both
+  (`core/perception/signs_made_of_signs.py`).
+- **The emulator's splash is pressed until the movie plays.** One press as it came up took nothing.
+
+Where it went in her: `core/perception/signs_along_a_strip.py` reads the line whole once its ink and size are seen,
+`core/agency/each_sign_in_its_turn.py` holds each sign's keys until it is judged, and
+`core/agency/signs_that_come_along.py` finds the line in the first place and hands over to them. None of them has a
+colour, a place or a pace of this game in it: the ink, the size, the pace and where signs go from sight are all seen
+in play. Proven on an invented strip with pairs, an edge in the signs' ink, a pad shaded like an arrow and signs that
+change colour where they are judged (`tests/test_a_sign_made_of_signs_is_answered_with_all_its_keys_in_its_turn.py`).
+
+What her own run needed that the runner did not, each a round lost offline on 12 October before it was built:
+
+- **A loop that does only this.** Read inside the loop that plays everything else as it happens, the line was seen
+  three to ten times a second, and a sign crosses the place it is judged in a third of a second. A loop that looks,
+  reads the line and holds (`answer_signs_as_they_come`) sees twenty-nine.
+- **The menu she just left is not the screen she is on.** After the NEXT of the instructions, that NEXT was still
+  what her reflexes went by, and the round was over before the screen was read again. The old menu's own pixels are
+  held against the frame before anything is read (`core/skills/current_words_before_play.py`), and a place whose
+  words ask for signs to be followed is taken to go on without her until a line is seen or ruled out.
+- **A reading slower than a frame still stands where its words still are.** Reading a frame's words took longer
+  than the frame stayed current and was thrown away, so a screen that asked her to choose a character was not known
+  for one, and an arrow sliding beside the choices was held to for 22 seconds.
+- **Ink by agreement, kept while it answers.** The line's ink is what four readings agree on, and what is known of
+  a line is forgotten when two stretches running judge nothing on it. One run took its ink from another screen and
+  read an empty line for the rest of the game.
+
+With these she cleaned the first room on her own from a frozen copy: 61 seconds of play at 29 pictures a second,
+72 signs held for, and the game's "Excellent! This place is clean as a whistle". She lost the second.
+
+What the frames before each life lost then showed, her general loop driven straight against the game with the
+pictures kept (the runner left some signs unread too, and got through on the two spare lives each spell gives):
+
+- **A sign is ink that has come along since the look before.** The book the arrows come out of shows arrows in
+  their ink whirling on its page, in line with the strip, and they were read as signs for the whole game. The ink
+  of the last look, moved on by some distance a sign may have come, lies under a sign on its way and under nothing
+  else (`StripOfSigns._came_along`).
+- **Only what has come along the line is answered, and what shows ahead of the front one came from nowhere.** A
+  sign that was not answered is drawn on, bigger, past where the others went from sight, and one crossing the rim
+  of the pad goes from sight and comes back. Each put the order out by one, and every sign after it was answered
+  with its neighbour's key until the line was empty.
+- **Keys stay down until midway to the next sign's going from sight.** A sign goes from sight at the pad's rim
+  and is judged a twentieth of the picture further on. Keys let go a moment after it went were let go too soon
+  about one time in six.
+- **A look that misses every sign is a look that missed them.** Pictures do not come as evenly as their times say,
+  and one comes again now and then. A front sign goes from sight alone; where the one behind it is gone too, the
+  look is forgiven.
+- **Each sign is read again once it is the front one.** What it was read as while behind counts for two readings
+  of the four, so a reading handed on by a mistake of order is outvoted.
+- **Whatever reads the line is loaded before the first look.** The first sign of a game was read 0.7 seconds late,
+  the time its reader took to load.
+
+Driven so, the same code cleans all three rooms in 224 seconds without losing a life. Before these it lost
+fifteen, and the game in the third room.
+Each of these is in the invented strip now: a page of whirling arrows, a sign drawn again bigger on the pad, and a
+place of judging well onto it.
+
+Then her own run, from a frozen copy, the prompt's terms and her pursuit around the loop: all three rooms
+cleaned, 61, 72 and 81 seconds of play at 30 pictures a second, 46, 63 and 75 signs held for. Two more things it
+took: a thing has come some way in a straight line before it is one of a stream (one run took a whirling arrow for
+the first sign and looked for the line on the book's page), and signs being answered are not left to go by while
+the round is looked at (a round's four minutes were up twelve signs from the end of the last room, and the game
+was lost in the ten seconds the looking took).
+
+Still open: after its third room the game says the kitchen is a mess again and begins again from the kitchen,
+faster. Nothing on any screen says she has won, and she does not yet take coming round to the first room for
+having done all of it.
+
+Still open: a sign made of one single she knows and one she has not yet seen alone. It is fitted well enough by the
+known one and another laid over the same part of it, and both their keys are held. The game shows every single
+many times before its first pair, so it never meets this; the invented strip does when pairs start early.
 
 ## Timing, from the programs and people that do it well
 

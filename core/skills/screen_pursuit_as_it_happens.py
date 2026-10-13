@@ -292,6 +292,11 @@ def _made_by_placing(can_do: Any) -> bool:
 def _it_goes_on_without_her(reflexes: Any) -> bool:
     """Whether, as she understands the place (core/agency/how_a_game_works.py), it goes on without her: from all its
     guide has read and what is on the screens before her, and what her play there has shown."""
+    # Signs to be followed may be coming along a line whether she is ready or not (core/agency/signs_that_come_along.py):
+    # until that is seen or ruled out, the place is taken to go on. Offline 2026-10-12 a book of arrows was waited on to
+    # come to rest after its NEXT, and its first round was lost before she looked at it.
+    if _signs_may_come(reflexes):
+        return True
     said = " ".join([*reflexes.words[-6:], str(reflexes.keep.get("counsel") or "")])
     from core.cognition.a_guide_to_a_place import THE_GUIDE
 
@@ -301,6 +306,15 @@ def _it_goes_on_without_her(reflexes: Any) -> bool:
     from core.agency.how_a_game_works import understood
 
     return understood(guide, also=said).goes_on_without_her()
+
+
+def _signs_may_come(reflexes: Any) -> bool:
+    """Whether signs to be followed may be coming along a line in this place: its words ask for signs to be followed,
+    and a line has been seen here or has not yet been looked for and ruled out."""
+    keep = reflexes.keep
+    return bool(keep.get("signs_going") or keep.get("signs_seen")
+                or keep.get("signs_told") and not keep.get("signs_shown_in_turn")
+                and int(keep.get("signs_none") or 0) < A_LINE_LOOKED_FOR)
 
 
 def a_screen_of_play_in_time(reflexes: Any, labels: Any = None) -> bool:
@@ -767,7 +781,7 @@ class PlayingAsItHappens:
             from core.agency.doing_again_what_was_shown import asks_to_follow
 
             if asks_to_follow(said):
-                self.keep["asked_to_follow"] = True
+                self.keep["asked_to_follow"] = self.keep["signs_told"] = True
         if self.first_ways_back is None and observation.get("ok", True):
             self.first_ways_back = restart_controls(observation)
 
@@ -966,6 +980,7 @@ class PlayingAsItHappens:
         # led from an animated menu into a boat game, which played itself to GAME OVER in the quiet left on the menu.
         if now < self.quiet_until and self.said_now != self.quiet_on and _a_different_screen(self.said_now, self.quiet_on):
             self.quiet_until = 0.0
+        from core.agency.signs_that_come_along import told_to_follow_signs
         from core.agency.the_controls_a_game_names import the_pointer_only_clicks, tried_in_turn
         from core.cognition.a_guide_to_a_place import THE_GUIDE as _THE_GUIDE
 
@@ -1010,15 +1025,20 @@ class PlayingAsItHappens:
         # a book of arrows sent them down a strip; she watched for a showing to end, pressed a key to have it shown
         # again, and the three arrows that went by in the meantime were her three lives.
         # Seen once in a game, it is known for the game: the next screen of play is played from its first moment.
-        known = bool(self.keep.get("signs_going"))
-        if not known and self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
-            return
+        # And where its words ask for signs to be followed, the loop that only answers signs has the screen once it is no
+        # menu, and finds the line itself: offline 2026-10-12 the watch for a showing went first, saw nothing in order
+        # for ten seconds, and the first round was lost before a key was held.
+        signs_here = self.keep["signs_told"] = bool(self.keep.get("signs_told")) or told_to_follow_signs(said)
         if not self.under_her_hand and self._a_menu_first():
+            # Past a menu is another screen: a line not found before it may be looked for again.
+            self.keep["signs_none"] = 0
+            return
+        if (signs_here or self.keep.get("signs_going")) and await _answered_the_signs(self, now):
             return
         # A screen whose words ask for what it shows to be done again is watched, and followed, before it is played.
-        # Asked afresh: the watch just made may have found signs coming.
-        if not self.keep.get("signs_going") and not self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
+        if not self.keep.get("signs_going") and await self._did_again_what_it_showed():
             return
+        # Asked afresh: the watch just made may have found signs coming.
         coming = bool(self.keep.get("signs_going"))
         in_time = in_time or coming
         # A board of two sides in turns is searched, not steered (core/agency/playing_a_board.py); a well with a piece
@@ -1183,13 +1203,14 @@ class PlayingAsItHappens:
             # Taken up as the way this place is played, so play goes on with it from look to look, and the pursuit does
             # not press keys to see what they do between one showing and the next.
             self.stretches.append(record)
+            self.keep["signs_shown_in_turn"] = True         # its signs are lit and done again: no line of them to look for
             self.held_to().choose([FOLLOW], " ".join(self.words[-6:]))
             self._judge(FOLLOW, record)
 
         from core.agency.signs_that_come_along import SignsAreComing, watching_for_signs
 
         try:
-            rounds = await follow(watching_for_signs(self.look), self, lights, keys=keys,
+            rounds = await follow(watching_for_signs(self.look, told=False), self, lights, keys=keys,
                                   clicks=bool(_CLICKED.search(said)), rounds_at_most=FOLLOW_AT_MOST,
                                   watch_s=WATCH_A_SHOWING_S, read_words=recognize_text, say=_said_while_playing,
                                   each_round=a_round)
@@ -1408,6 +1429,49 @@ async def _chose_what_it_asks(reflexes: PlayingAsItHappens) -> bool:
     reflexes.keep["chose"] = {"colour": taken.colour, "label": taken.label, "asked": said[:120]}
     reflexes.played_at = time.monotonic()
     await asyncio.sleep(AFTER_A_CHOICE_S)
+    return True
+
+
+#: How many times a line of signs is looked for in a place whose words ask for signs to be followed and none has yet
+#: been seen coming along one: after that its signs are taken to be shown some other way (lit in turn, say).
+A_LINE_LOOKED_FOR = 2
+
+
+async def _answered_the_signs(reflexes: PlayingAsItHappens, now: float) -> bool:
+    """A stretch of answering the signs that come along a line, by the loop that does only that
+    (core/agency/signs_that_come_along.py). Whether the screen was hers to answer signs on.
+
+    Where none came, a line known from before is waited on once more; after that the screen is left to whatever else
+    may play it. What is known of a line is kept while signs on it are judged: offline 2026-10-12 a line's ink was
+    taken from another screen, nothing was seen on it afterwards, and it was read that way for the rest of the game."""
+    from core.agency.signs_that_come_along import answer_signs_as_they_come
+
+    keep = reflexes.keep
+    none = int(keep.get("signs_none") or 0)
+    if not _signs_may_come(reflexes):
+        return False
+    before = keep.get("signs_going")
+    # Signs being answered are not left to go by while the round is looked at: offline 2026-10-12 a round's four
+    # minutes were up twelve signs from the end of a game's last room, and the game was lost in the ten seconds the
+    # looking took. The loop gives the screen back by itself when none are coming.
+    ends = max(reflexes.ends_at, float(keep.get("all_of_it_ends") or 0.0))
+    stretch = await answer_signs_as_they_come(reflexes.look, reflexes, seconds=min(STRETCH_S, ends - now),
+                                              known=before, say=_said_while_playing)
+    learned = stretch.pop("known")
+    logger.info("signs answered as they came: %s", stretch)
+    if not stretch.get("judged"):
+        keep["signs_none"] = none + 1
+        if before and not none:
+            return True
+        keep["signs_going"] = None
+        return False
+    keep["signs_going"], keep["signs_none"], keep["signs_seen"] = learned or before, 0, True
+    # A sign answered and judged is getting somewhere, whether or not the place counts it in sight.
+    stretch["gains"], stretch["losses"] = int(stretch.get("judged") or 0), 0
+    reflexes.stretches.append(stretch)
+    reflexes.played_at = time.monotonic()
+    reflexes._judge(AS_IT_HAPPENS_WAY, stretch)
+    _keep_what_she_learned(reflexes.page, keep)
     return True
 
 
@@ -1855,7 +1919,11 @@ async def looked_at_as_it_happens(look: Any) -> dict[str, Any]:
     # A screen of play in a place played in time is played the moment it is seen, not after a move has been decided on
     # it and made: offline 2026-10-11 the pursuit clicked a food fight's corner to see what it did, two seconds of a
     # ten-second round, before play began.
-    if reflexes.played_at <= played_before and a_screen_of_play_in_time(reflexes) and not reflexes.run_is_over(seen):
+    # Where signs may be coming along a line, so is the screen that a choice just made led to: offline 2026-10-12 a
+    # game went from its choice of who to be straight into play, the choice counted as having played, a key was
+    # pressed to see what it did, and the round was lost six seconds on with no sign answered.
+    if ((reflexes.played_at <= played_before or _signs_may_come(reflexes)) and a_screen_of_play_in_time(reflexes)
+            and not reflexes.run_is_over(seen)):
         await reflexes.while_it_moves()
         if reflexes.played_at > played_before:
             seen = await look()

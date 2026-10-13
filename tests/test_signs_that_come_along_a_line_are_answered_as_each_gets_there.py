@@ -167,7 +167,8 @@ def test_a_watch_made_for_something_else_notices_signs_coming():
         return None
 
     known = asyncio.run(watch())
-    assert known is not None and known[0][0] > 0.2 and abs(known[0][1]) < 0.05, known       # going right, on a level line
+    going = known["going"]
+    assert going[0] > 0.2 and abs(going[1]) < 0.05, known                                   # going right, on a level line
 
 
 def test_only_a_place_that_asks_for_keys_shown_to_be_followed_has_them_followed():

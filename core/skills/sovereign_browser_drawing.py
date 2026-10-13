@@ -373,7 +373,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     share = PLAY_UNTIL_WON_S if terms.until_the_end else max(LEAST_SHARE_S, PLAY_UNTIL_WON_S / _how_many_asked(goal))
     deadline = _the_share_ends(url, share, share if until_won or limit > 1 else _one_run_s())
     contract = step.get("runtime_contract") or {}
-    keep: dict[str, Any] = {"required_edges": contract.get("required_edges") or [],
+    keep: dict[str, Any] = {"required_edges": contract.get("required_edges") or [], "all_of_it_ends": deadline,
                             "edge_provenance": contract.get("provenance") or "", "stock": await _a_stocktaking(goal, page)}
     runs: list[dict[str, Any]] = []
     moves: list[Any] = []
