@@ -21,6 +21,9 @@ def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: fl
     if model is None:
         model = faces.steering_model = ProvisionalSteeringBank()
     owner = _owner(hers, mine)
+    if owner is None:
+        model.saw(None, '', at, at, 0., 0., 0., 0., measured=False)
+        return
     receipt = hers._held_at(at)
     measured = (owner is not None and receipt is not None and motion_was_measured(mine, at)
                 and at >= hers._beside_until)
@@ -40,7 +43,7 @@ def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: fl
 
 
 def _owner(hers: Any, mine: Any) -> tuple | None:
-    if mine is None or hers.number is None or hers.kind is None or mine.number != hers.number:
+    if mine is None or hers.number is None or hers.kind is None or getattr(mine, 'number', None) != hers.number:
         return None
     born = getattr(mine, 'born', None)
     epoch = getattr(hers.identification, 'epoch', None)

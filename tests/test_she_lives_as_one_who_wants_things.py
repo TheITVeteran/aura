@@ -13,7 +13,7 @@ import pytest
 
 from core.conation import what_she_wants
 from core.conation.engine import ConationEngine
-from core.conation.what_she_wants import REACHABLE_KINDS
+from core.conation.what_she_wants import REACHABLE_KINDS, _conation
 from core.runtime.autonomy_conductor import AutonomyConductor
 from core.runtime.overt_action_loop import OvertActionLoop, OvertActionResult
 
@@ -29,7 +29,7 @@ def record(tmp_path):
 
 
 def _rested(record) -> None:
-    for held in record._conation().dynamics._satiation.values():
+    for held in _conation(record).dynamics._satiation.values():
         held.last_update -= 600.0
 
 

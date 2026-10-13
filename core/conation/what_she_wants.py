@@ -75,10 +75,10 @@ import math
 import re
 import time
 from collections import Counter
-from statistics import NormalDist
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from statistics import NormalDist
 from typing import Any
 
 from core.conation.state import Incentive
@@ -365,93 +365,10 @@ class WhatSheWants:
         self._standing: list[Want] = []
         self._engine = engine
         self._path = Path(path) if path is not None else None
-        self._load()
+        _load(self)
 
     # ── where it is kept ─────────────────────────────────────────────────
 
-    def _file(self) -> Path:
-        if self._path is None:
-            self._path = state_root() / "data" / "conation" / "what_she_wants.json"
-        return self._path
-
-    def _load(self) -> None:
-        try:
-            stored = json.loads(self._file().read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return
-        except (OSError, ValueError) as exc:
-            record_degradation(
-                "what_she_wants", exc, severity="warning",
-                action="started with nothing met; the stored record did not read back",
-            )
-            return
-        try:
-            if int(stored.get("schema", 0)) != SCHEMA:
-                return
-            self._turns = max(0, int(stored.get("turns", 0)))
-            self._good_turns = max(0, min(self._turns, int(stored.get("good_turns", 0))))
-            self._noise = max(1e-9, float(stored.get("noise", _UNKNOWN)))
-            self._read = max(0, int(stored.get("read", 0)))
-            self._going = max(0.0, min(1.0, float(stored.get("going", 0.5))))
-            for row in stored.get("things", []):
-                thing = Thing.from_dict(row)
-                self._things[thing.key] = thing
-            self._said = Counter({str(k): int(v) for k, v in dict(stored.get("said", {})).items()})
-            self._said_total = max(0, int(stored.get("said_total", 0)))
-            self._said_in = Counter({str(k): int(v) for k, v in dict(stored.get("said_in", {})).items()})
-            self._exchanges = max(0, int(stored.get("exchanges", 0)))
-            decided = stored.get("decided")
-            self._decided = dict(decided) if isinstance(decided, dict) and decided.get("thing") else None
-            self._forecasts = max(0, int(stored.get("forecasts", 0)))
-            self._miss = max(0.0, min(2.0, float(stored.get("miss", 0.0))))
-        except (AttributeError, KeyError, TypeError, ValueError) as exc:
-            self._things.clear()
-            self._turns = self._good_turns = self._read = 0
-            self._noise = _UNKNOWN
-            record_degradation(
-                "what_she_wants", exc, severity="warning",
-                action="started with nothing met; the stored record had another shape",
-            )
-
-    def _held(self) -> dict[str, Any]:
-        """Everything kept, copied while the lock is held."""
-        return {
-            "schema": SCHEMA,
-            "turns": self._turns,
-            "good_turns": self._good_turns,
-            "noise": self._noise,
-            "read": self._read,
-            "going": self._going,
-            "saved_at": time.time(),
-            "things": [thing.to_dict() for thing in self._things.values()],
-            "said": dict(self._said),
-            "said_total": self._said_total,
-            "said_in": dict(self._said_in),
-            "exchanges": self._exchanges,
-            "decided": self._decided,
-            "forecasts": self._forecasts,
-            "miss": self._miss,
-        }
-
-    def _save(self, payload: dict[str, Any]) -> None:
-        """Written after the lock is let go: a write can wait on the disk."""
-        try:
-            path = self._file()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            # Behind the loop: a turn ends inside the kernel's async tick.
-            atomic_write_text_behind(path, json.dumps(payload), encoding="utf-8")
-        except (OSError, TypeError, ValueError) as exc:
-            record_degradation(
-                "what_she_wants", exc, severity="warning",
-                action="kept what she met this turn in memory only",
-            )
-
-    def _conation(self) -> Any:
-        if self._engine is None:
-            from core.conation.engine import get_conation
-
-            self._engine = get_conation()
-        return self._engine
 
     # ── what a turn was about ────────────────────────────────────────────
 
@@ -466,8 +383,8 @@ class WhatSheWants:
         if sum(here.values()) <= 0:
             return []
         with self._lock:
-            found = self._subjects(here)
-            self._count_exchange(here)
+            found = _subjects(self, here)
+            _count_exchange(self, here)
         return found
 
     def subjects_of(self, *texts: str) -> list[str]:
@@ -480,66 +397,14 @@ class WhatSheWants:
         if sum(here.values()) <= 0:
             return []
         with self._lock:
-            return self._subjects(here)
+            return _subjects(self, here)
 
-    def _subjects(self, here: Counter[str]) -> list[str]:
-        """The subjects among an exchange's terms. Lock held."""
-        total = sum(here.values())
-        before, before_total = self._said, self._said_total
-        scored: list[tuple[float, str]] = []
-        if before_total > 0:
-            # One test per term offered, so the level each is held to is the
-            # conventional one divided by how many there are.
-            critical = NormalDist().inv_cdf(1.0 - _WRONG / len(here) / 2.0) ** 2
-            exchanges = self._exchanges + 1
-            for term, count in here.items():
-                past = before.get(term, 0)
-                if count / total <= past / before_total:
-                    continue
-                pooled = (count + past) / (total + before_total)
-                ratio = 2.0 * count * math.log(count / (total * pooled))
-                if past:
-                    ratio += 2.0 * past * math.log(past / (before_total * pooled))
-                if ratio <= critical:
-                    continue
-                # Dwelt on: with this exchange counted, the exchanges it is in
-                # are fewer than half of those a term used this often would be
-                # in by chance.
-                by_chance = exchanges * (1.0 - math.exp(-(past + count) / exchanges))
-                if math.log2(by_chance / (self._said_in.get(term, 0) + 1)) > 1.0:
-                    scored.append((ratio, term))
-        # A pair is one thing when neither word is there without the other.
-        # Then the words are the pair, and a pair one of whose words also
-        # stands alone is that word beside something else.
-        pairs = {
-            term
-            for _ratio, term in scored
-            if " " in term and all(here[word] <= here[term] for word in term.split())
-        }
-        inside = {word for term in pairs for word in term.split()}
-        kept = [
-            (ratio, term)
-            for ratio, term in sorted(scored, key=lambda row: (-row[0], row[1]))
-            if (term in pairs) or (" " not in term and term not in inside)
-        ]
-        whole = sum(ratio for ratio, _term in kept)
-        self._shares = {term: ratio / whole for ratio, term in kept} if whole > 0.0 else {}
-        return [term for _ratio, term in kept]
 
     def shares(self) -> dict[str, float]:
         """Each subject's share of what the last exchange read dwelt on."""
         with self._lock:
             return dict(self._shares)
 
-    def _count_exchange(self, here: Counter[str]) -> None:
-        """Add one exchange to what later ones are set against. Lock held."""
-        self._said.update(here)
-        self._said_total += sum(here.values())
-        self._said_in.update(here.keys())
-        self._exchanges += 1
-        if len(self._said) > MAX_TERMS:
-            self._said = Counter(dict(self._said.most_common(MAX_TERMS // 2)))
-            self._said_in = Counter({term: self._said_in[term] for term in self._said})
 
     def talked_before(self) -> bool:
         """Whether there is anything yet to set an exchange against."""
@@ -555,26 +420,14 @@ class WhatSheWants:
         added = 0
         with self._lock:
             for exchange in exchanges:
-                self._count_exchange(terms_of(*exchange))
+                _count_exchange(self, terms_of(*exchange))
                 added += 1
-            held = self._held()
-        self._save(held)
+            held = _held(self)
+        _save(self, held)
         return added
 
     # ── a turn ───────────────────────────────────────────────────────────
 
-    def _touch(self, key: str, label: str, reachable: bool) -> Thing:
-        thing = self._things.get(key)
-        if thing is None:
-            if len(self._things) >= MAX_THINGS:
-                oldest = min(self._things.values(), key=lambda t: (t.contacts, t.last))
-                self._things.pop(oldest.key, None)
-            thing = Thing(key=key, first=self._turns)
-            self._things[key] = thing
-        if label and not thing.label:
-            thing.label = label[:160]
-        thing.reachable = thing.reachable or reachable
-        return thing
 
     def met(
         self,
@@ -617,7 +470,7 @@ class WhatSheWants:
             self._read += 1
             self._good_turns += liking > 0.0
             self._going += ((1.0 if liking > 0.0 else 0.0) - self._going) / min(self._read, _WINDOW)
-            things = [self._touch(key, labels.get(key, ""), key in can_reach) for key in keys]
+            things = [_touch(self, key, labels.get(key, ""), key in can_reach) for key in keys]
             predicted = max(-1.0, min(1.0, sum(thing.liking for thing in things)))
             error = liking - predicted
             total = sum(thing.unsure for thing in things) + self._noise
@@ -665,35 +518,11 @@ class WhatSheWants:
                     thing.stood_out += (max(0.0, min(1.0, float(share))) - thing.stood_out) / min(thing.named, _WINDOW)
             self._noise += (error * error - self._noise) / min(self._read, _WINDOW)
             self._noise = max(1e-9, self._noise)
-            held = self._held()
-        self._save(held)
-        self._teach(things, liking, error, shares)
+            held = _held(self)
+        _save(self, held)
+        _teach(self, things, liking, error, shares)
         return {"read": True, "predicted": predicted, "error": error, "shares": shares}
 
-    def _teach(self, things: list[Thing], liking: float, error: float, shares: Mapping[str, float]) -> None:
-        """Fold the contact into the valuation that prices her wants.
-
-        Having had a thing holds the want for it down by as much as the
-        contact paid, and what she expected against what she got is the error
-        her curiosity about it learns from.
-        """
-        try:
-            engine = self._conation()
-            for thing in things:
-                if not thing.reachable:
-                    continue
-                engine.learn(
-                    thing.key,
-                    experienced_liking=liking,
-                    realised_pull=max(0.0, thing.liking),
-                    completeness=max(0.0, liking),
-                    prediction_error=min(1.0, abs(error) * shares.get(thing.key, 0.0)),
-                )
-        except (ImportError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation(
-                "what_she_wants", exc, severity="warning",
-                action="kept the contact on her record; the valuation was not taught by it",
-            )
 
     # ── where she went, and what she started and did not finish ─────────
 
@@ -707,7 +536,7 @@ class WhatSheWants:
             return
         pictured = self.imagine(key, way=way)
         with self._lock:
-            thing = self._touch(key, label, True)
+            thing = _touch(self, key, label, True)
             if where:
                 thing.where = where[:500]
             self._went.append((key, way))
@@ -724,12 +553,12 @@ class WhatSheWants:
         if not key or not item:
             return
         with self._lock:
-            thing = self._touch(key, label, True)
+            thing = _touch(self, key, label, True)
             if where:
                 thing.where = where[:500]
             thing.under_way.setdefault(item, self._turns)
-            held = self._held()
-        self._save(held)
+            held = _held(self)
+        _save(self, held)
 
     def stopped(self, item: str, key: str | None = None) -> int:
         """What was under way by that name has stopped, with one thing or with all."""
@@ -738,9 +567,9 @@ class WhatSheWants:
             for thing in self._things.values():
                 if (key is None or thing.key == key) and thing.under_way.pop(item, None) is not None:
                     closed += 1
-            held = self._held() if closed else None
+            held = _held(self) if closed else None
         if held is not None:
-            self._save(held)
+            _save(self, held)
         return closed
 
     # ── what she pictures ────────────────────────────────────────────────
@@ -833,12 +662,12 @@ class WhatSheWants:
         if not key or not item or not words.strip():
             return
         with self._lock:
-            thing = self._touch(key, label, True)
+            thing = _touch(self, key, label, True)
             if item not in thing.open and len(thing.open) >= MAX_OPEN:
                 thing.open.pop(next(iter(thing.open)))
             thing.open[item] = " ".join(words.split())[:500]
-            held = self._held()
-        self._save(held)
+            held = _held(self)
+        _save(self, held)
 
     def ended(self, key: str, item: str, *, finished: bool) -> None:
         """What she started with a thing came to an end, done or given up."""
@@ -847,8 +676,8 @@ class WhatSheWants:
             if thing is None or item not in thing.open:
                 return
             thing.open.pop(item, None)
-            held = self._held()
-        self._save(held)
+            held = _held(self)
+        _save(self, held)
         if not finished:
             self.failed(key)
 
@@ -860,7 +689,7 @@ class WhatSheWants:
         stops wanting it for now.
         """
         try:
-            engine = self._conation()
+            engine = _conation(self)
             record = engine.salience._records.get(key)
             wanting = float(getattr(record, "last_wanting", 0.0) or 0.0)
             engine.dynamics.observe_attempt(key, wanting=wanting, succeeded=False)
@@ -998,37 +827,6 @@ class WhatSheWants:
 
     # ── what she wants ───────────────────────────────────────────────────
 
-    def _way_for(self, thing: Thing, offered: Iterable[str]) -> str:
-        """The way to go to it, from the ways she has gone to things.
-
-        Each way's worth is its mean with the optimism of UCB1 (Auer,
-        Cesa-Bianchi and Fischer 2002) over the times she has gone to this
-        thing, so a way never tried on it comes first. Untried ways are
-        ordered by what they have been worth on other things of its kind.
-        """
-        ways = set(thing.ways) | set(offered)
-        elsewhere: dict[str, list[float]] = {}
-        for other in self._things.values():
-            if other.kind != thing.kind or other.key == thing.key:
-                continue
-            for name, way in other.ways.items():
-                elsewhere.setdefault(name, []).append(way.liking)
-                ways.add(name)
-        if not ways:
-            return FIND_OUT
-        went = sum(way.times for way in thing.ways.values())
-
-        def score(name: str) -> tuple[float, float, str]:
-            pooled = elsewhere.get(name, [])
-            prior = sum(pooled) / len(pooled) if pooled else 0.0
-            tried = thing.ways.get(name)
-            if tried is None or tried.times <= 0 or went <= 0:
-                return (math.inf, prior, name)
-            # Liking spans two units, so the bound does.
-            bound = tried.liking + 2.0 * math.sqrt(2.0 * math.log(went) / tried.times)
-            return (bound, prior, name)
-
-        return max(sorted(ways), key=score)
 
     def wants(self, *, ways: Iterable[str] = (), limit: int | None = None) -> list[Want]:
         """What she wants now, most wanted first."""
@@ -1037,7 +835,7 @@ class WhatSheWants:
             candidates = [thing for thing in self._things.values() if thing.reachable and thing.label]
             noise = self._noise
         try:
-            engine = self._conation()
+            engine = _conation(self)
         except (ImportError, AttributeError) as exc:
             record_degradation(
                 "what_she_wants", exc, severity="warning",
@@ -1048,7 +846,7 @@ class WhatSheWants:
         candidates.sort(key=lambda t: (-(max(0.0, t.liking) + math.sqrt(t.unsure)), t.key))
         found: list[Want] = []
         for thing in candidates[:cap]:
-            way = self._way_for(thing, offered)
+            way = _way_for(self, thing, offered)
             # A person is reached by a way she has taken with them. There is
             # no looking somebody up to find out what they are to her.
             if thing.kind == "person" and way == FIND_OUT:
@@ -1146,9 +944,9 @@ class WhatSheWants:
             return None
         with self._lock:
             self._decided = {**wanted[0].as_dict(), "decided_turn": self._turns}
-            held = self._held()
+            held = _held(self)
             decided = dict(self._decided)
-        self._save(held)
+        _save(self, held)
         return decided
 
     def decided(self) -> dict[str, Any] | None:
@@ -1165,7 +963,7 @@ class WhatSheWants:
         key = str(held.get("thing") or "")
         gone = self.known(key) is False
         try:
-            gone = gone or self._conation().dynamics.frustration(key).should_disengage()
+            gone = gone or _conation(self).dynamics.frustration(key).should_disengage()
         except (ImportError, AttributeError, TypeError, ValueError) as exc:
             record_degradation(
                 "what_she_wants", exc, severity="debug",
@@ -1182,8 +980,8 @@ class WhatSheWants:
             if self._decided is None or str(self._decided.get("thing")) != key:
                 return
             self._decided = None
-            held = self._held()
-        self._save(held)
+            held = _held(self)
+        _save(self, held)
 
     def standing(self) -> list[Want]:
         """What she wanted the last time it was asked, without asking again.
@@ -1248,6 +1046,224 @@ def read_turn(
 
 _RECORD: WhatSheWants | None = None
 _RECORD_LOCK = checked_lock("conation.what_she_wants.singleton")
+
+
+def _file(self) -> Path:
+    if self._path is None:
+        self._path = state_root() / "data" / "conation" / "what_she_wants.json"
+    return self._path
+
+
+def _load(self) -> None:
+    try:
+        stored = json.loads(_file(self).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError) as exc:
+        record_degradation(
+            "what_she_wants", exc, severity="warning",
+            action="started with nothing met; the stored record did not read back",
+        )
+        return
+    try:
+        if int(stored.get("schema", 0)) != SCHEMA:
+            return
+        self._turns = max(0, int(stored.get("turns", 0)))
+        self._good_turns = max(0, min(self._turns, int(stored.get("good_turns", 0))))
+        self._noise = max(1e-9, float(stored.get("noise", _UNKNOWN)))
+        self._read = max(0, int(stored.get("read", 0)))
+        self._going = max(0.0, min(1.0, float(stored.get("going", 0.5))))
+        for row in stored.get("things", []):
+            thing = Thing.from_dict(row)
+            self._things[thing.key] = thing
+        self._said = Counter({str(k): int(v) for k, v in dict(stored.get("said", {})).items()})
+        self._said_total = max(0, int(stored.get("said_total", 0)))
+        self._said_in = Counter({str(k): int(v) for k, v in dict(stored.get("said_in", {})).items()})
+        self._exchanges = max(0, int(stored.get("exchanges", 0)))
+        decided = stored.get("decided")
+        self._decided = dict(decided) if isinstance(decided, dict) and decided.get("thing") else None
+        self._forecasts = max(0, int(stored.get("forecasts", 0)))
+        self._miss = max(0.0, min(2.0, float(stored.get("miss", 0.0))))
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        self._things.clear()
+        self._turns = self._good_turns = self._read = 0
+        self._noise = _UNKNOWN
+        record_degradation(
+            "what_she_wants", exc, severity="warning",
+            action="started with nothing met; the stored record had another shape",
+        )
+
+
+def _held(self) -> dict[str, Any]:
+    """Everything kept, copied while the lock is held."""
+    return {
+        "schema": SCHEMA,
+        "turns": self._turns,
+        "good_turns": self._good_turns,
+        "noise": self._noise,
+        "read": self._read,
+        "going": self._going,
+        "saved_at": time.time(),
+        "things": [thing.to_dict() for thing in self._things.values()],
+        "said": dict(self._said),
+        "said_total": self._said_total,
+        "said_in": dict(self._said_in),
+        "exchanges": self._exchanges,
+        "decided": self._decided,
+        "forecasts": self._forecasts,
+        "miss": self._miss,
+    }
+
+
+def _save(self, payload: dict[str, Any]) -> None:
+    """Written after the lock is let go: a write can wait on the disk."""
+    try:
+        path = _file(self)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Behind the loop: a turn ends inside the kernel's async tick.
+        atomic_write_text_behind(path, json.dumps(payload), encoding="utf-8")
+    except (OSError, TypeError, ValueError) as exc:
+        record_degradation(
+            "what_she_wants", exc, severity="warning",
+            action="kept what she met this turn in memory only",
+        )
+
+
+def _conation(self) -> Any:
+    if self._engine is None:
+        from core.conation.engine import get_conation
+
+        self._engine = get_conation()
+    return self._engine
+
+
+def _subjects(self, here: Counter[str]) -> list[str]:
+    """The subjects among an exchange's terms. Lock held."""
+    total = sum(here.values())
+    before, before_total = self._said, self._said_total
+    scored: list[tuple[float, str]] = []
+    if before_total > 0:
+        # One test per term offered, so the level each is held to is the
+        # conventional one divided by how many there are.
+        critical = NormalDist().inv_cdf(1.0 - _WRONG / len(here) / 2.0) ** 2
+        exchanges = self._exchanges + 1
+        for term, count in here.items():
+            past = before.get(term, 0)
+            if count / total <= past / before_total:
+                continue
+            pooled = (count + past) / (total + before_total)
+            ratio = 2.0 * count * math.log(count / (total * pooled))
+            if past:
+                ratio += 2.0 * past * math.log(past / (before_total * pooled))
+            if ratio <= critical:
+                continue
+            # Dwelt on: with this exchange counted, the exchanges it is in
+            # are fewer than half of those a term used this often would be
+            # in by chance.
+            by_chance = exchanges * (1.0 - math.exp(-(past + count) / exchanges))
+            if math.log2(by_chance / (self._said_in.get(term, 0) + 1)) > 1.0:
+                scored.append((ratio, term))
+    # A pair is one thing when neither word is there without the other.
+    # Then the words are the pair, and a pair one of whose words also
+    # stands alone is that word beside something else.
+    pairs = {
+        term
+        for _ratio, term in scored
+        if " " in term and all(here[word] <= here[term] for word in term.split())
+    }
+    inside = {word for term in pairs for word in term.split()}
+    kept = [
+        (ratio, term)
+        for ratio, term in sorted(scored, key=lambda row: (-row[0], row[1]))
+        if (term in pairs) or (" " not in term and term not in inside)
+    ]
+    whole = sum(ratio for ratio, _term in kept)
+    self._shares = {term: ratio / whole for ratio, term in kept} if whole > 0.0 else {}
+    return [term for _ratio, term in kept]
+
+
+def _count_exchange(self, here: Counter[str]) -> None:
+    """Add one exchange to what later ones are set against. Lock held."""
+    self._said.update(here)
+    self._said_total += sum(here.values())
+    self._said_in.update(here.keys())
+    self._exchanges += 1
+    if len(self._said) > MAX_TERMS:
+        self._said = Counter(dict(self._said.most_common(MAX_TERMS // 2)))
+        self._said_in = Counter({term: self._said_in[term] for term in self._said})
+
+
+def _touch(self, key: str, label: str, reachable: bool) -> Thing:
+    thing = self._things.get(key)
+    if thing is None:
+        if len(self._things) >= MAX_THINGS:
+            oldest = min(self._things.values(), key=lambda t: (t.contacts, t.last))
+            self._things.pop(oldest.key, None)
+        thing = Thing(key=key, first=self._turns)
+        self._things[key] = thing
+    if label and not thing.label:
+        thing.label = label[:160]
+    thing.reachable = thing.reachable or reachable
+    return thing
+
+
+def _teach(self, things: list[Thing], liking: float, error: float, shares: Mapping[str, float]) -> None:
+    """Fold the contact into the valuation that prices her wants.
+
+    Having had a thing holds the want for it down by as much as the
+    contact paid, and what she expected against what she got is the error
+    her curiosity about it learns from.
+    """
+    try:
+        engine = _conation(self)
+        for thing in things:
+            if not thing.reachable:
+                continue
+            engine.learn(
+                thing.key,
+                experienced_liking=liking,
+                realised_pull=max(0.0, thing.liking),
+                completeness=max(0.0, liking),
+                prediction_error=min(1.0, abs(error) * shares.get(thing.key, 0.0)),
+            )
+    except (ImportError, AttributeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "what_she_wants", exc, severity="warning",
+            action="kept the contact on her record; the valuation was not taught by it",
+        )
+
+
+def _way_for(self, thing: Thing, offered: Iterable[str]) -> str:
+    """The way to go to it, from the ways she has gone to things.
+
+    Each way's worth is its mean with the optimism of UCB1 (Auer,
+    Cesa-Bianchi and Fischer 2002) over the times she has gone to this
+    thing, so a way never tried on it comes first. Untried ways are
+    ordered by what they have been worth on other things of its kind.
+    """
+    ways = set(thing.ways) | set(offered)
+    elsewhere: dict[str, list[float]] = {}
+    for other in self._things.values():
+        if other.kind != thing.kind or other.key == thing.key:
+            continue
+        for name, way in other.ways.items():
+            elsewhere.setdefault(name, []).append(way.liking)
+            ways.add(name)
+    if not ways:
+        return FIND_OUT
+    went = sum(way.times for way in thing.ways.values())
+
+    def score(name: str) -> tuple[float, float, str]:
+        pooled = elsewhere.get(name, [])
+        prior = sum(pooled) / len(pooled) if pooled else 0.0
+        tried = thing.ways.get(name)
+        if tried is None or tried.times <= 0 or went <= 0:
+            return (math.inf, prior, name)
+        # Liking spans two units, so the bound does.
+        bound = tried.liking + 2.0 * math.sqrt(2.0 * math.log(went) / tried.times)
+        return (bound, prior, name)
+
+    return max(sorted(ways), key=score)
 
 
 def get_what_she_wants() -> WhatSheWants:

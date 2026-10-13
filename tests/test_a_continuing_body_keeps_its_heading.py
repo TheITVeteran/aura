@@ -98,6 +98,14 @@ def test_without_a_continuing_birth_the_earlier_kind_boundary_remains_in_force()
     assert not faces.along
 
 
+def test_an_absent_body_description_cannot_feed_or_arm_a_steering_model():
+    hers, faces, body = _body()
+    observed_steering_model(faces, body, hers, SimpleNamespace(), .3)
+    assert faces.steering_model.owner is not None
+    observed_steering_model(faces, object(), hers, SimpleNamespace(), .4, run=SimpleNamespace())
+    assert faces.steering_model.owner is None and faces.steering_model._pose is None
+
+
 @pytest.mark.asyncio
 async def test_observed_slow_motion_survives_changing_looks_and_reaches_the_actor(monkeypatch):
     hers, _earlier, body = _body()

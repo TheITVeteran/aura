@@ -27,6 +27,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.runtime.what_stops_it import current
+from core.skills.games_on_her_record import (
+    _keep_what_she_learned,
+    _what_she_kept_of,
+)
+from core.skills.games_on_her_record import (
+    _this_game as _this_game,
+)
 
 logger = logging.getLogger("Aura.ScreenPursuit.AsItHappens")
 
@@ -483,7 +490,6 @@ MAKING_STALLED = "no created work was verified before the making attempt's time 
 _RULES = re.compile(r"\b(?:how to (?:play|use|win)|instructions|controls|how do (?:i|you)|tutorial)\b|(?:^|:)\s*1\.\s+[A-Za-z]", re.I)
 
 
-
 def reads_as_rules(said: str) -> bool:
     """Whether a screen's words teach how to play, rather than show the play."""
     return bool(_RULES.search(said or ""))
@@ -506,7 +512,6 @@ LEGEND_WORDS = 6
 
 #: The ways the reflexes play, as core/agency/the_way_it_is_played.py names them.
 SEND_WAY, AS_IT_HAPPENS_WAY = "send", "as it happens"
-
 
 
 def _newly_says_the_game_is_over(observation: dict[str, Any], during: set[str]) -> str:
@@ -1820,65 +1825,6 @@ def _lines_of(regions: list[dict[str, Any]]) -> list[str]:
             lines.append([piece])
     return [" ".join(text for _m, _h, _l, text in sorted(line, key=lambda p: p[2])) for line in lines]
 
-
-def _this_game(page: Any) -> str:
-    """The name her memory keeps this game under: its page, and for a file, that file as it now is.
-
-    A file changed is another game. LIVE 2026-10-06 a Pong she had just
-    mended was played from what she had kept of it broken ("the white bars
-    cost me"), because both were kept under one address.
-    """
-    url = str(getattr(page, "url", "") or "")
-    if url.startswith("file://"):
-        import hashlib
-        from pathlib import Path
-        from urllib.parse import unquote, urlparse
-
-        try:
-            held = Path(unquote(urlparse(url).path)).read_bytes()
-            return f"played as it happens at {url} ({hashlib.sha256(held).hexdigest()[:12]})"
-        except OSError:
-            pass
-    return f"played as it happens at {url}"
-
-
-def _what_she_kept_of(page: Any) -> dict[str, Any]:
-    from core.agency.what_she_keeps_of_a_game import INDEXED_TABLES, kept_from
-    from core.runtime.what_she_learned import recall
-
-    # She is playing it from here until she keeps what she learned of it, and
-    # every turn read in between is a turn of the playing.
-    try:
-        from core.conation.what_she_wants import get_what_she_wants
-
-        where = str(getattr(page, "url", "") or "").strip()
-        if where:
-            get_what_she_wants().started(f"game:{where}", "play", label=where, where=where)
-    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        logger.debug("the game was not marked as under way: %s", exc)
-    held = recall(_this_game(page), indexed_tables=INDEXED_TABLES)
-    if held:
-        logger.info("she has played this game before: starting from what she kept of it")
-    return kept_from(held)
-
-
-def _keep_what_she_learned(page: Any, keep: dict[str, Any]) -> None:
-    from core.agency.what_she_keeps_of_a_game import to_keep
-    from core.runtime.what_she_learned import remember
-
-    remember(_this_game(page), to_keep(keep))
-    # And the game is a thing she went to, on the one record her talk and her
-    # idle hours are on, so what playing it was worth is hers everywhere.
-    try:
-        from core.conation.what_she_wants import get_what_she_wants
-
-        where = str(getattr(page, "url", "") or "").strip()
-        if where:
-            record = get_what_she_wants()
-            record.went(f"game:{where}", "play", label=where, where=where)
-            record.stopped("play", f"game:{where}")
-    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        logger.debug("the game did not reach her record of what she has met: %s", exc)
 
 
 #: How long her model is given to answer a question a place asks where the place waits for her answer.

@@ -10,7 +10,7 @@ import random
 import pytest
 
 from core.conation.engine import ConationEngine
-from core.conation.what_she_wants import FIND_OUT, WhatSheWants, liking_of
+from core.conation.what_she_wants import FIND_OUT, WhatSheWants, _conation, liking_of
 from core.runtime.atomic_writer import flush_writes_behind
 
 TIDE, LOGS, LICHEN = "topic:tide pools", "topic:log files", "topic:lichen"
@@ -35,7 +35,7 @@ def _live(record, paid: dict[str, float], *, turns: int = 24, seed: int = 7, way
 
 def _rested(record) -> None:
     """Ten minutes on, so having just had a thing no longer holds the want down."""
-    for held in record._conation().dynamics._satiation.values():
+    for held in _conation(record).dynamics._satiation.values():
         held.last_update -= 600.0
 
 

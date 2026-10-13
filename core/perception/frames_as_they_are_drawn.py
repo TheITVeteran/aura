@@ -23,6 +23,7 @@ import time
 from typing import Any
 
 from core.perception.a_clock_for_drawn_frames import DrawingClock
+from core.perception.sampling_the_drawings_pace import DrawingCadence
 from core.runtime.executors import run_interactive_cpu
 from core.verify import invariant
 
@@ -47,6 +48,9 @@ class PageFrames:
         self._clock = DrawingClock()
         self._generation = 0
         self.every_nth_frame = max(1, every_nth_frame)
+        self._cadence = DrawingCadence(self.every_nth_frame, STILL_AFTER_S / 2)
+        self._options: dict[str, Any] = {}
+        self._resampling = False
         self.unavailable = False
 
     async def _start(self) -> bool:
@@ -79,10 +83,11 @@ class PageFrames:
             wide, tall = await self.page.evaluate("[innerWidth, innerHeight]")
             if not self._owns_session(session, generation):
                 return False
-            await session.send("Page.startScreencast", {
+            self._options = {
                 "format": "jpeg", "quality": 80, "everyNthFrame": self.every_nth_frame,
                 "maxWidth": int(wide), "maxHeight": int(tall),
-            })
+            }
+            await session.send("Page.startScreencast", self._options)
         except Exception as why:  # noqa: BLE001 - any engine without a screencast: screenshots instead
             logger.info("frames cannot be streamed from this page (%s); taking screenshots", why)
             if generation == self._generation:
@@ -101,6 +106,7 @@ class PageFrames:
             metadata = dict(params.get("metadata") or {})
             captured = self._clock.frame(metadata, time.monotonic())
             if captured is not None:
+                self._cadence.observe(captured)
                 self._latest = (str(params.get("data") or ""), metadata, captured)
                 self._arrived.set()
         if session is not None:
@@ -117,6 +123,8 @@ class PageFrames:
     async def look(self, clip: dict[str, float]) -> tuple[Any, float] | None:
         """The newest frame and its source capture bounds; receipt time where no source clock was given."""
         if not await self._start():
+            return None
+        if not await self._sample_at_the_drawings_pace():
             return None
         generation, session = self._generation, self._session
         if self._latest is None or self._latest[2] <= self._taken_at:
@@ -144,10 +152,43 @@ class PageFrames:
             return None
         return picture, captured
 
+    async def _sample_at_the_drawings_pace(self) -> bool:
+        """Keep the session and capture clock while reducing measured undersampling."""
+        if self._resampling:
+            return self._session is not None
+        stride = self._cadence.next_stride()
+        if stride == self.every_nth_frame:
+            return self._session is not None
+        generation, session = self._generation, self._session
+        if session is None:
+            return False
+        self._resampling = True
+        try:
+            # Chromium requires a stopped screencast before another starts.
+            # The browser's clock and the producing CDP session are unchanged.
+            await session.send('Page.stopScreencast')
+            if not self._owns_session(session, generation):
+                return False
+            options = {**self._options, 'everyNthFrame': stride}
+            await session.send('Page.startScreencast', options)
+            if not self._owns_session(session, generation):
+                return False
+            self.every_nth_frame, self._options = stride, options
+        except Exception as why:  # noqa: BLE001 - unsupported resampling falls back to fresh screenshots
+            logger.info('the drawing stream could not be resampled: %s', why)
+            if self._owns_session(session, generation):
+                self.unavailable = True
+                await self.close()
+            return False
+        finally:
+            self._resampling = False
+        return True
+
     async def close(self) -> None:
         session, self._session = self._session, None
         self._generation += 1
         self._clock.reset()
+        self._cadence = DrawingCadence(self.every_nth_frame, STILL_AFTER_S / 2)
         self._latest, self._taken_at = None, -1.0
         acks = list(self._acks)
         for task in acks:
