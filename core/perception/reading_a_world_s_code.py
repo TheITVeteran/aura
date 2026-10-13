@@ -27,7 +27,7 @@ import logging
 import math
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from core.perception.a_world_as_its_code_makes_it import (
@@ -43,6 +43,7 @@ __all__ = ["read_a_world_s_code"]
 
 #: The names a frame's function and a new game's function go by.
 _A_FRAME = re.compile(r"^(?:step|update|tick|frame|loop|on_?enter_?frame|advance|move)$", re.I)
+_A_DRAWING = re.compile(r"^(?:draw|render|paint|redraw|show|display|backdrop|background|scene)$", re.I)
 _A_BEGINNING = re.compile(r"^(?:reset|init|initiali[sz]e|start|begin|setup|new_?game|restart|spawn|next|home|place|"
                           r"board|ready|serve)$", re.I)
 #: How deep a function's calls of its own world's functions are read into.
@@ -133,6 +134,8 @@ class _Condition:
     compares: tuple[tuple[Poly | None, str, Poly | None], ...] = ()
     negated: bool = False
     words: str = ""
+    #: Quantities of things it tests as true or false (``f.good``, ``!c.hole``), by their references, and which way.
+    flags: tuple[tuple[str, bool], ...] = ()
 
 
 @dataclass
@@ -172,8 +175,12 @@ class _Reading:
     flags: dict[str, str] = field(default_factory=dict)
     loops: dict[str, list[_Event]] = field(default_factory=dict)
     resets: dict[str, list[Poly]] = field(default_factory=dict)
+    #: Things whose place her keys change only where a guard lets them: something in the world stops them.
+    guarded: set[str] = field(default_factory=set)
     statements: int = 0
     read_at: dict[str, str] = field(default_factory=dict)
+    #: What is drawn in which colour: (the thing drawn, by its reference; the colour; the flags in force as it is drawn).
+    drawn: list[tuple[str, str, tuple[tuple[str, bool], ...]]] = field(default_factory=list)
 
 
 class _Reader:
@@ -192,6 +199,9 @@ class _Reader:
         self.in_frame = False
         self.depth = 0
         self.loop_of: str = ""
+        #: Whether the drawing functions are being read, and the colour things are filled in as it stands.
+        self.drawing = False
+        self.colour = ""
 
     # -- text ------------------------------------------------------------------------------------------------------
 
@@ -219,6 +229,14 @@ class _Reader:
         for function in frames:
             self._run_function(function, {}, beginning=False)
         self.in_frame = False
+        frame_state = self.r.current
+        self.drawing, self.colour = True, ""
+        for name, function in list(self.r.functions.items()):
+            if _A_DRAWING.match(name.split(".")[-1]):
+                self.r.current = {}
+                self._run_function(function, {}, beginning=False)
+        self.drawing = False
+        self.r.current = frame_state
         return self.r
 
     def _stage_in(self, node: Any) -> None:
@@ -371,7 +389,8 @@ class _Reader:
                 inner = next((c for c in alternative.children if c.type not in ("else",)), None)
                 if inner is not None:
                     opposite = _Condition(keys=condition.not_keys, not_keys=condition.keys, negated=not condition.negated,
-                                          compares=condition.compares, touches=(), words="not " + condition.words)
+                                          compares=condition.compares, touches=(), words="not " + condition.words,
+                                          flags=tuple((path, not way) for path, way in condition.flags))
                     self._branch(inner, local, conditions, opposite)
         elif kind == "for_in_statement":
             left = node.child_by_field_name("left")
@@ -458,6 +477,10 @@ class _Reader:
                 raised_by: _V | None = None) -> None:
         if left is None:
             return
+        if self.drawing:
+            if left.type == "member_expression" and self.text(left.child_by_field_name("property")) == "fillStyle":
+                self.colour = value.word if value.word and value.word.startswith("#") else ""
+            return
         if left.type == "identifier":
             name = self.text(left)
             if name in local:
@@ -505,11 +528,19 @@ class _Reader:
         if number is None:
             return
         old = self.r.current.get(path, _p(1.0, "@" + path))
-        if re.search(r"(?:^|\.)(?:score|points)$", path) and raised_by is not None:
+        if re.search(r"(?:^|\.)(?:score|points)$", path) and (raised_by is not None or conditions):
+            # Raised, or set under a condition (a tally of landings put on the score where a landing is counted).
             self.r.events.append(_Event("score", path, tuple(conditions)))
         if conditions and (conditions[-1].keys or conditions[-1].not_keys):
             number = self._under(_V(poly=old), _V(poly=number), conditions[-1]).number() or number
         elif conditions and abs(_coefficient(number, "@" + path) - 1.0) > 1e-9 and not _a_quantity_of(number, old):
+            pass
+        if conditions and not (conditions[-1].keys or conditions[-1].not_keys) and not self.loop_of and \
+                path.endswith((".x", ".y")) and _keys_in(number):
+            # Moved by her keys only where a guard lets it (a wall, a floor): something in the world stops her there.
+            self.r.guarded.add(path.rsplit(".", 1)[0])
+        if conditions and not (conditions[-1].keys or conditions[-1].not_keys) and \
+                abs(_coefficient(number, "@" + path) - 1.0) > 1e-9 and not _a_quantity_of(number, old):
             # Set under a guard that is not a key, to something not made from what it was: a reset or a rebound (a
             # thing put back at its start, a going turned round), not how it goes from frame to frame.
             self.r.resets.setdefault(path, []).append(number)
@@ -594,6 +625,11 @@ class _Reader:
                           "!==": "==="}[op]
                 found.compares = (*found.compares, (lhs, op, rhs))
                 return
+        if kind in ("member_expression", "identifier", "subscript_expression"):
+            got = self.value(node, local)
+            if got.ref and ("." in got.ref or got.ref.endswith("[]")):
+                found.flags = (*found.flags, (got.ref, not negated))
+            return
         if kind == "call_expression":
             got = self.value(node, local)
             if got.key:
@@ -763,7 +799,9 @@ class _Reader:
             divisor = _constant(b)
             if divisor:
                 return _V(poly={t: v / divisor for t, v in a.items()})
-            return _UNKNOWN
+            # Over something that is not a number known here (a distance, to make a way toward something of length
+            # one): what it is made of is kept, times a factor that says it was scaled by that.
+            return _V(poly=_times(a, {("~per",): 1.0})) if b else _UNKNOWN
         if op == "%":
             ca, cb = _constant(a), _constant(b)
             return _num(math.fmod(ca, cb)) if ca is not None and cb else _V(poly=_p(1.0, "?mod"))
@@ -775,6 +813,17 @@ class _Reader:
         arg_nodes = [c for c in (node.child_by_field_name("arguments") or node).children if c.type not in ("(", ")", ",")]
         args = [self.value(a, local) for a in arg_nodes]
         last = name.split(".")[-1]
+        if self.drawing and last in ("fillRect", "arc", "ellipse", "roundRect", "drawImage", "rect", "moveTo", "lineTo") \
+                and self.colour:
+            drawn = {f[1:].rsplit(".", 1)[0] for a in args for term in (a.number() or {}) for f in term
+                     if f.startswith("@") and f.endswith((".x", ".y"))}
+            flags = tuple(flag for condition in conditions for flag in condition.flags)
+            for thing in sorted(drawn):
+                self.r.drawn.append((thing, self.colour, flags))
+            # Drawn where a cell of a collection is set (a painted square of the floor): that collection's look.
+            for path, way in flags:
+                if way and path.endswith("[]") and not drawn:
+                    self.r.drawn.append((path, self.colour, flags))
         if name.startswith("Math."):
             return self._math(last, args, arg_nodes, local)
         if last in ("rand", "random"):
@@ -977,9 +1026,10 @@ def _turns(r: _Reading, body: str) -> tuple[dict[str, float], dict[str, float], 
     dx = _delta(r, body + ".x")
     heading = speed = ""
     for term in dx:
-        angles = [f.split(":", 1)[1][1:] for f in term if f.startswith(("~cos:", "~sin:"))]
+        # Its own way and its own speed: a thing pushed along another's way is not turned by the keys.
+        angles = [f.split(":", 1)[1][1:] for f in term if f.startswith(("~cos:@" + body + ".", "~sin:@" + body + "."))]
         paces = [f[1:] for f in term if f.startswith("@" + body + ".")]
-        if angles and paces and "dt" in term:
+        if angles and paces and "dt" in term and len(term) == 3:
             heading, speed = angles[0], paces[0]
             break
     if not heading:
@@ -1172,21 +1222,45 @@ def _things(r: _Reading, body: str) -> list[AKindOfThing]:
     touching; how it moves; how fast at most; and its size."""
     out = []
     collections = {p.split("[]")[0] for p in [*r.current, *r.initial] if "[]" in p}
-    for collection in sorted(collections):
-        element = collection + "[]"
+    # A thing kept on its own (a ball, a grabber, a pad), not in a collection: one whose place is kept, not hers.
+    single = {p.rsplit(".", 1)[0] for p in [*r.current, *r.initial] if p.endswith((".x", ".y")) and "[]" not in p
+              and p.count(".") == 1 and not p.startswith(("world.", "this.")) and p.rsplit(".", 1)[0] != body}
+    for collection in sorted(collections | single):
+        element = collection + "[]" if collection in collections else collection
         if element == body:
             continue
         done = set()
+        by_flag: dict[tuple[str, bool], set[str]] = {}
         for event in r.events:
+            if not any(any(element in pair and (body in pair or "" in pair) for pair in c.touches) for c in event.conditions):
+                continue
+            effect = {"lose": "costs a life", "score": "scores"}.get(event.what, "ends the game")
+            done.add(effect)
             for condition in event.conditions:
-                if any(element in pair and (body in pair or "" in pair) for pair in condition.touches):
-                    done.add({"lose": "costs a life", "score": "scores"}.get(event.what, "ends the game"))
+                for flag in condition.flags:
+                    if flag[0].startswith(element + "."):
+                        by_flag.setdefault(flag, set()).add(effect)
         touching = " or ".join(sorted(done))
         size = (_constant(r.initial.get(element + ".w")), _constant(r.initial.get(element + ".h")))
         speed, moves = _how_it_moves(r, element, body)
         out.append(AKindOfThing(collection, touching, moves, speed,
-                                size if all(v is not None for v in size) else None))
+                                size if all(v is not None for v in size) else None, _looks(r, element, by_flag)))
     return out
+
+
+def _looks(r: _Reading, element: str, by_flag: dict[tuple[str, bool], set[str]]) -> tuple[tuple[str, str], ...]:
+    """Each look a kind of thing is drawn with (the first colour it is filled with under each set of its own flags),
+    and what touching her does when it looks so, where the same flag tells the two apart in its code."""
+    looks: dict[tuple[tuple[str, bool], ...], tuple[str, str]] = {}
+    for thing, colour, flags in r.drawn:
+        if thing != element:
+            continue
+        own = tuple(sorted(f for f in flags if f[0].startswith(element + ".")))
+        if own in looks:
+            continue
+        effects = set().union(*(by_flag.get(flag, set()) for flag in own)) if own else set()
+        looks[own] = (colour, next(iter(effects)) if len(effects) == 1 else "")
+    return tuple(looks.values())
 
 
 #: The range each bounded factor of a sum keeps to.
@@ -1229,12 +1303,34 @@ def _rate(r: _Reading, delta: Poly) -> tuple[float, float] | None:
     return _interval(timed, r.initial)
 
 
+def _sped_up(r: _Reading, element: str) -> bool:
+    """Whether a thing's going is set anew under a condition to more than it was (a ball quickened at each return):
+    then what it starts at is no most."""
+    for path, values in r.resets.items():
+        if not path.startswith(element + ".") or not path.endswith(("vx", "vy", ".v", "speed")):
+            continue
+        own = "@" + path
+        for value in values:
+            if not all(len(term) == 1 and term[0] == own and abs(abs(v) - 1.0) < 1e-9 for term, v in value.items()):
+                return True
+    return False
+
+
 def _how_it_moves(r: _Reading, element: str, body: str) -> tuple[float | None, str]:
     dx, dy = _delta(r, element + ".x"), _delta(r, element + ".y")
+    if _sped_up(r, element):
+        _speed, moves = _how_it_moves_at_first(r, element, body, dx, dy)
+        return None, moves
+    return _how_it_moves_at_first(r, element, body, dx, dy)
+
+
+def _how_it_moves_at_first(r: _Reading, element: str, body: str, dx: Poly, dy: Poly) -> tuple[float | None, str]:
     if not any("dt" in t for t in [*dx, *dy]):
         return None, "stands"
     if any(("@" + body + ".x") in t or ("@" + body + ".y") in t for t in [*dx, *dy]):
-        return None, "chases her"
+        # Toward her along a way of length one, at what it is multiplied by.
+        toward = [abs(v) for t, v in [*dx.items(), *dy.items()] if "~per" in t and "dt" in t]
+        return (max(toward) if toward else None), "chases her"
     # Along a way it faces, by a sine and a cosine of one angle: as fast as the factor the two share.
     cos = [(t, v) for t, v in dx.items() if any(f.startswith("~cos") for f in t) and "dt" in t]
     sin = [(t, v) for t, v in dy.items() if any(f.startswith("~sin") for f in t) and "dt" in t]
@@ -1289,15 +1385,20 @@ def read_a_world_s_code(sources: Iterable[str], stage: tuple[float, float] | Non
         kept_inside = (left, top, right, bottom) if None not in (left, top, right, bottom) else None
         pushes, _keys = _pushes(r, body)
         turns, drives, speeds = _turns(r, body)
+        drawn_in = next((colour for thing, colour, _flags in r.drawn if thing == body), "")
         world.hers = HerBody(name=body, size=size, start=start, paces=paces, kept_inside=kept_inside,
                              pushes=pushes if len(pushes) > 1 else {}, lifts=lifts, pull=pull if lifts else None,
-                             turns=turns, drives=drives, speeds=speeds, follows_pointer=_follows_the_pointer(r, body))
+                             turns=turns, drives=drives, speeds=speeds, follows_pointer=_follows_the_pointer(r, body),
+                             drawn_in=drawn_in, stopped_inside=body in r.guarded)
         world.read_at["hers"] = r.read_at.get(body + ".x", "") or r.read_at.get(body + ".y", "")
         for key in [*paces, *(k for k in pushes if k), *turns, *drives]:
             world.keys[key] = "moves"
         for key in lifts:
             world.keys[key] = "jumps"
         world.ground, where = _ground(r, body, size)
+        if world.ground is not None:
+            marks = next((colour for thing, colour, _flags in r.drawn if thing == world.ground.kept_in + "[]"), "")
+            world.ground = replace(world.ground, drawn_in=marks)
         if where:
             world.read_at["ground"] = where
         world.things = _things(r, body)

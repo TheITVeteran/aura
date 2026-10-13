@@ -113,7 +113,7 @@ class ProgramRead:
     world: Any = None
 
     def __bool__(self) -> bool:
-        return bool(self.text or self.keys or self.words or self.pointer or self.mechanics_found)
+        return bool(self.text or self.keys or self.words or self.pointer or self.mechanics_found or self.world)
 
 
 def key_named(name: str) -> str:

@@ -37,6 +37,8 @@ class GroundToCover:
     #: What the code keeps the marked cells in, and counts them by: where a check against the running world looks.
     kept_in: str = ""
     counted_by: str = ""
+    #: The colour a marked cell is drawn in: what is gone over, to her eyes.
+    drawn_in: str = ""
 
     def cell_of(self, x: float, y: float) -> tuple[int, int] | None:
         """The cell a stage point is in; None outside the grid."""
@@ -86,6 +88,11 @@ class HerBody:
     speeds: tuple[float, float] | None = None
     #: Whether it is put where the pointer is, across and down.
     follows_pointer: tuple[bool, bool] = (False, False)
+    #: The colour it is drawn in ("#f2f2f2"), where its code fills it with one.
+    drawn_in: str = ""
+    #: Whether anything inside where she is kept stops her (a wall, a box she walks into): where not, nothing she meets
+    #: there is in her way, whatever play has made of it.
+    stopped_inside: bool = False
 
     def kept_middle(self) -> tuple[float, float, float, float] | None:
         """Where the middle of her body can be: the rectangle its top-left corner is held to, moved by half her size."""
@@ -107,6 +114,9 @@ class AKindOfThing:
     moves: str = ""
     speed: float | None = None
     size: tuple[float, float] | None = None
+    #: Each look it is drawn with, and what touching her does when it looks so: ("#f2c230", "scores"); the second is ""
+    #: where the code does not tell the looks apart in what touching does.
+    looks: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -194,13 +204,14 @@ def kept(world: AWorldAsItsCodeMakesIt | None) -> dict[str, Any]:
             "paces": {k: list(v) for k, v in hers.paces.items()}, "kept_inside": hers.kept_inside and list(hers.kept_inside),
             "pushes": {k: list(v) for k, v in hers.pushes.items()}, "lifts": dict(hers.lifts), "pull": hers.pull,
             "turns": dict(hers.turns), "drives": dict(hers.drives), "speeds": hers.speeds and list(hers.speeds),
-            "follows_pointer": list(hers.follows_pointer)},
+            "follows_pointer": list(hers.follows_pointer), "drawn_in": hers.drawn_in,
+            "stopped_inside": hers.stopped_inside},
         "ground": None if ground is None else {
             "cell": list(ground.cell), "origin": list(ground.origin), "cells": ground.cells and list(ground.cells),
             "marks_at": ground.marks_at and list(ground.marks_at), "wins_at": ground.wins_at,
-            "kept_in": ground.kept_in, "counted_by": ground.counted_by},
+            "kept_in": ground.kept_in, "counted_by": ground.counted_by, "drawn_in": ground.drawn_in},
         "things": [{"name": t.name, "touching": t.touching, "moves": t.moves, "speed": t.speed,
-                    "size": t.size and list(t.size)} for t in world.things],
+                    "size": t.size and list(t.size), "looks": [list(look) for look in t.looks]} for t in world.things],
         "clock_s": world.clock_s, "lives": world.lives, "keys": dict(world.keys), "read_at": dict(world.read_at)}
 
 
@@ -215,13 +226,15 @@ def unkept(held: Any) -> AWorldAsItsCodeMakesIt | None:
             paces={k: tuple(v) for k, v in (h.get("paces") or {}).items()}, kept_inside=_tuple(h.get("kept_inside")),
             pushes={k: tuple(v) for k, v in (h.get("pushes") or {}).items()}, lifts=dict(h.get("lifts") or {}),
             pull=h.get("pull"), turns=dict(h.get("turns") or {}), drives=dict(h.get("drives") or {}),
-            speeds=_tuple(h.get("speeds")), follows_pointer=tuple(h.get("follows_pointer") or (False, False)))
+            speeds=_tuple(h.get("speeds")), follows_pointer=tuple(h.get("follows_pointer") or (False, False)),
+            drawn_in=str(h.get("drawn_in") or ""), stopped_inside=bool(h.get("stopped_inside")))
         ground = None if not g else GroundToCover(
             cell=tuple(g["cell"]), origin=tuple(g.get("origin") or (0.0, 0.0)), cells=_tuple(g.get("cells")),
             marks_at=_tuple(g.get("marks_at")), wins_at=g.get("wins_at"), kept_in=str(g.get("kept_in") or ""),
-            counted_by=str(g.get("counted_by") or ""))
+            counted_by=str(g.get("counted_by") or ""), drawn_in=str(g.get("drawn_in") or ""))
         things = [AKindOfThing(str(t.get("name") or ""), str(t.get("touching") or ""), str(t.get("moves") or ""),
-                               t.get("speed"), _tuple(t.get("size"))) for t in held.get("things") or []]
+                               t.get("speed"), _tuple(t.get("size")),
+                               tuple(tuple(look) for look in t.get("looks") or [])) for t in held.get("things") or []]
         world = AWorldAsItsCodeMakesIt(stage=tuple(held.get("stage") or (0.0, 0.0)), hers=hers, ground=ground,
                                        things=things, clock_s=held.get("clock_s"), lives=held.get("lives"),
                                        keys=dict(held.get("keys") or {}), read_at=dict(held.get("read_at") or {}))

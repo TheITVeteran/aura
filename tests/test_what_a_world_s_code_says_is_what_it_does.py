@@ -191,15 +191,19 @@ def test_she_has_as_many_lives_as_her_reading_says(world):
                                              if t.touching and READ[world].hers is not None])
 def test_touching_her_does_what_her_reading_says(world, kind):
     """A thing of the kind put on her: a life goes, or the score goes up, as read; where the reading says either, each
-    touch does one of the two and between them both are seen."""
+    touch does one of the two and between them both are seen, met at rest and fast by turns."""
     thing = READ[world].thing(kind)
     said = set(thing.touching.split(" or "))
     seen: set[str] = set()
     with WorldRunFromItsCode(world, seed=5) as w:
         w.value("(__world.lives = 1e9, 0)")
         her = _her(w, READ[world].hers.name)
-        many = f"__world.game.{kind}"
-        for _ in range(40):
+        # One kept on its own is a list of one.
+        many = (f"__world.game.{kind}" if w.value(f"Array.isArray(__world.game.{kind})")
+                else f"[__world.game.{kind}].filter((t) => t)")
+        for trial in range(40):
+            # Met slowly and then fast, by turns, where her body has a going: a pad is landed on or crashed into.
+            w.value(f"({her}.vx !== undefined && ({her}.vx = {her}.vy = {(0 if trial % 2 else 300)}), 0)")
             for _wait in range(80):
                 if w.value(f"{many}.length"):
                     break
@@ -234,7 +238,7 @@ def test_nothing_of_a_kind_goes_faster_than_her_reading_says_and_some_go_near_it
         for frame in range(int(30 / FRAME_S)):
             if makers and frame % 20 == 0:
                 w.hold(*makers) if frame % 40 == 0 else w.hold()
-            now = w.value(f"(__world.game.{kind} || []).map((t) => [t.x, t.y || 0])")
+            now = w.value(f"[].concat(__world.game.{kind} || []).map((t) => [t.x, t.y || 0])")
             if before:
                 for x, y in now:
                     near = min((math.hypot(x - a, y - b) for a, b in before), default=math.inf)

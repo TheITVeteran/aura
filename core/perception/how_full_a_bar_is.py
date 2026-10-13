@@ -105,26 +105,50 @@ class Bar:
         return self.start / wide, (self.row - self.thick / 2) / tall, self.end / wide, (self.row + self.thick / 2) / tall
 
 
+def _median_of_columns(values: np.ndarray) -> np.ndarray:
+    """The median of each column, as ``np.median(values, axis=0)`` gives it, from one partition of the column."""
+    n = values.shape[0]
+    if n % 2:
+        return np.partition(values, n // 2, axis=0)[n // 2].astype(np.float64)
+    middle = np.partition(values, (n // 2 - 1, n // 2), axis=0)
+    return np.mean(middle[n // 2 - 1:n // 2 + 1].astype(np.float64), axis=0)
+
+
+def _mostly_unlike(far: np.ndarray, within: float) -> bool:
+    """Whether the median of ``far`` is more than ``within``, as ``np.median(far) > within`` says, from a count: half or
+    more of the values beyond it, and where exactly half are, the two middle values taken as the median takes them."""
+    n = far.size
+    beyond = int(np.count_nonzero(far > within))
+    if n % 2:
+        return beyond >= (n + 1) // 2
+    if beyond != n // 2:
+        return beyond > n // 2
+    return (float(far[far <= within].max()) + float(far[far > within].min())) / 2 > within
+
+
 def _strips(picture: np.ndarray) -> list[Bar]:
     """Runs of one colour along rows, long and thin, as strips not yet known to be bars."""
     tall, wide = picture.shape[:2]
     rows = picture.astype(np.int16)
     same_as_left = np.zeros((tall, wide), dtype=bool)
     same_as_left[:, 1:] = np.abs(rows[:, 1:] - rows[:, :-1]).max(axis=2) <= ONE_COLOUR // 2
+    # Each row's running sums, so the mean colour of any run along it is two lookups: the same sums the mean adds up.
+    sums = np.zeros((tall, wide + 1, rows.shape[2]), dtype=np.float64)
+    np.cumsum(rows, axis=1, dtype=np.float64, out=sums[:, 1:])
     found: list[Bar] = []
     for y in range(1, tall - 1, 2):
         breaks = np.flatnonzero(~same_as_left[y])
         edges = np.append(breaks, wide)
-        for a, b in _runs_across_dividers(rows[y], list(zip(edges[:-1], edges[1:], strict=True))):
+        for a, b in _runs_across_dividers(rows[y], list(zip(edges[:-1], edges[1:], strict=True)), sums[y]):
             length = int(b - a)
             if not SHORTEST * wide <= length <= LONGEST * wide:
                 continue
-            colour = np.median(rows[y, a:b], axis=0)
+            colour = _median_of_columns(rows[y, a:b])
             thick, reach = 1, {-1: y, 1: y}
             for step in (-1, 1):
                 yy = y + step
                 while 0 <= yy < tall and thick <= THICKEST * tall:
-                    if np.median(np.abs(rows[yy, a:b] - colour).max(axis=1)) > ONE_COLOUR:
+                    if _mostly_unlike(np.abs(rows[yy, a:b] - colour).max(axis=1), ONE_COLOUR):
                         break
                     thick += 1
                     reach[step] = yy
@@ -140,14 +164,19 @@ def _strips(picture: np.ndarray) -> list[Bar]:
     return found
 
 
-def _runs_across_dividers(row: np.ndarray, runs: list[tuple[int, int]]) -> list[tuple[int, int]]:
+def _runs_across_dividers(row: np.ndarray, runs: list[tuple[int, int]], sums: np.ndarray | None = None) -> list[tuple[int, int]]:
     """Each run of one colour along a row, and with them the runs made by joining runs of a colour across the narrow
-    lines between them (DIVIDER): the cells of a bar drawn in cells, read as the bar."""
+    lines between them (DIVIDER): the cells of a bar drawn in cells, read as the bar. ``sums`` is the row's running
+    sums, where they are kept, for the mean colour of a run."""
+
+    def mean(a: int, b: int) -> np.ndarray:
+        return (sums[b] - sums[a]) / (b - a) if sums is not None else row[a:b].mean(axis=0)
+
     out = list(runs)
     i = 0
     while i < len(runs):
         a, b = runs[i]
-        colour = row[a:b].mean(axis=0)
+        colour = mean(a, b)
         j, end = i + 1, b
         while j < len(runs):
             gap_end = j
@@ -156,7 +185,7 @@ def _runs_across_dividers(row: np.ndarray, runs: list[tuple[int, int]]) -> list[
             if gap_end >= len(runs) or runs[gap_end][0] - end > DIVIDER:
                 break
             na, nb = runs[gap_end]
-            if np.abs(row[na:nb].mean(axis=0) - colour).max() > ONE_COLOUR:
+            if np.abs(mean(na, nb) - colour).max() > ONE_COLOUR:
                 break
             end, j = nb, gap_end + 1
         if end != b:

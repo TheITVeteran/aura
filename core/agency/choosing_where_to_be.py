@@ -179,6 +179,10 @@ class _Choosing:
     ground: Any = None
     #: What the place's code says of how fast a kind of thing wanders, by kind, in working pixels a second.
     swerves_told: Any = None
+    #: The kinds that are the marks of ground gone over, and whether its code says nothing inside where she is kept
+    #: stops her (core/agency/what_its_code_says_she_sees.py).
+    ground_marks: Any = frozenset()
+    nothing_stops_her: bool = False
 
     def __init__(self, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes, keys: list[str],
                  physics: HowThingsMoveHere | None = None, *, next_picture_s: float = 1 / 30,
@@ -211,11 +215,35 @@ class _Choosing:
         for lift in self.lifts:
             self.ways.pop(lift, None)
         self.across, self.updown = hers.follows_along if hers.follows_pointer else hers.axes(keys)
+        self._what_its_code_says_of_her_keys(keys)
         self.pointing = hers.follows_pointer
         shots = hers.makes
         self.shot = next(iter(shots.values()), None)
         # Low on what she has left, what costs her is given a wider berth.
         self.caution = 1.0 + 2.0 * max(0.0, CAREFUL_BELOW - getattr(meeting, "vitals", 1.0)) / CAREFUL_BELOW
+
+    def _what_its_code_says_of_her_keys(self, keys: list[str]) -> None:
+        """The paces its code says her keys give her, where her trials have not measured them, and the ways they open
+        (core/agency/what_its_code_says_she_sees.py). What she measured stands."""
+        if self.pointing or getattr(self.hers, "carried", False) or self.mine is None:
+            return
+        from core.agency.what_its_code_says_she_sees import (
+            ground_gone_over,
+            nothing_inside_stops_her,
+            paces_its_code_says,
+        )
+
+        self.ground_marks = ground_gone_over(self.moves)
+        if nothing_inside_stops_her(self.moves, self.mine):
+            # Its code keeps her in by its edges alone: no cell inside is out of her reach, and no wall is there to go round.
+            self.barred, self.nothing_stops_her = None, True
+
+        for key, way in paces_its_code_says(self.moves, self.mine, keys).items():
+            if key in self.ways or key in getattr(self, "lifts", []):
+                continue
+            self.ways[key] = way
+            self.across = True if abs(way[0]) > 0 else self.across
+            self.updown = True if abs(way[1]) > 0 else self.updown
 
     def line(self) -> int | None:
         """The axis she cannot move along, when she moves along only one."""
@@ -239,6 +267,8 @@ class _Choosing:
         ]
 
     def stance(self, thing: Any) -> str:
+        if thing.kind in self.ground_marks:
+            return IGNORE
         # What she has found to be in her way is nothing to go and meet (core/agency/who_is_who.py): a wall she was
         # stopped by is not worth a detour to touch again. Not what is only taken for the place, never met (a door is
         # big and still, and is what she is to go to), nor what has not come near her yet (a foe high above is on its
@@ -278,8 +308,10 @@ class _Choosing:
         (core/agency/how_far_a_thing_could_swerve.py): the most its kind has been seen to, or the place's code says."""
         if not hasattr(self, "_swerves"):
             from core.agency.how_far_a_thing_could_swerve import swerves_of
+            from core.agency.what_its_code_says_she_sees import swerves_its_code_says
 
-            self._swerves = swerves_of(getattr(self.moves, "things", {}), self.swerves_told)
+            told = self.swerves_told if self.swerves_told is not None else swerves_its_code_says(self.moves)
+            self._swerves = swerves_of(getattr(self.moves, "things", {}), told)
         return float(self._swerves.get(int(getattr(thing, "kind", -1)), 0.0))
 
     def answer_s(self) -> float:
@@ -666,6 +698,7 @@ class _Choosing:
         mine = self.mine
         # Round the walls she has met to where she is going, on a floor seen from above: the next place on the way.
         through = self.way_through if self.way_through is not None and self.way_through.a_floor(self.ways) else None
+        through = None if self.nothing_stops_her else through
         if through is not None and why in ("meet", "cover") and gx is not None and gy is not None and not self.pointing:
             tall, wide = self.moves.shape
             step = through.next_step(float(mine.x), float(mine.y), gx, gy, wide, tall)

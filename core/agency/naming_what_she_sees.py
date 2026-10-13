@@ -282,6 +282,10 @@ def seen_in_play(run: Any, moves: Any, hers: Any, meeting: Any, picture: Any, at
         if ask is not None:
             store.ask_about(named, ask)
     seeing.looking.look(picture, moves, at, mine=hers.number, met=list(meeting.evidence))
+    # What the place's code says of what she sees, before her eyes' own guesses (core/agency/what_its_code_says_she_sees.py).
+    from core.agency.what_its_code_says_she_sees import what_its_code_says_she_sees
+
+    what_its_code_says_she_sees(run, moves, hers, meeting, at, tell, guide)
     _who_i_am_to_my_eyes(run, seeing, guide, moves, hers, meeting, picture, at, tell)
     for kind, sighting in seeing.looking.newly():
         # A name her eyes give a thing is its name where the place's words have it: LIVE 2026-10-11 her eyes called

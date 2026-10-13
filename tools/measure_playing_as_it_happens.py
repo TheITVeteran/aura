@@ -113,11 +113,30 @@ async def _random_player(eyes, seconds):
     return {"ended": "out of time"}
 
 
-async def _one(browser, world, seed, seconds, player, observations="pixels", code=False):
+#: A page's clocks run slower by a factor: its frames, its timers and its time all go at a share of the wall's, so a
+#: machine slower than the one she is meant for sees the world as that one would. What she does is at her own speed.
+_SLOWED = """
+(() => {
+  const K = %s, realNow = performance.now.bind(performance), began = realNow(), realDate = Date.now.bind(Date);
+  const dateBegan = realDate(), slow = () => began + (realNow() - began) / K;
+  Object.defineProperty(performance, "now", { value: slow, configurable: true });
+  Date.now = () => dateBegan + (realDate() - dateBegan) / K;
+  const raf = window.requestAnimationFrame.bind(window);
+  window.requestAnimationFrame = (fn) => raf(() => fn(slow()));
+  const later = window.setTimeout.bind(window), every = window.setInterval.bind(window);
+  window.setTimeout = (fn, ms, ...rest) => later(fn, (ms || 0) * K, ...rest);
+  window.setInterval = (fn, ms, ...rest) => every(fn, (ms || 0) * K, ...rest);
+})();
+"""
+
+
+async def _one(browser, world, seed, seconds, player, observations="pixels", code=False, slowed=1.0):
     from core.agency.playing_as_it_happens import play_as_it_happens
     from core.perception.what_the_pixels_show import recognize_text
 
     page = await browser.new_page(viewport={"width": 800, "height": 600})
+    if slowed != 1.0:
+        await page.add_init_script(_SLOWED % float(slowed))
     # A world may carry its own settings after its name: "jump&click=1".
     name, _, extra = world.partition("&")
     await page.goto(f"file://{WORLDS / (name + '.html')}?start=1&seed={seed}" + (f"&{extra}" if extra else ""))
@@ -193,6 +212,8 @@ async def main(argv):
     parser.add_argument("--out", default="")
     parser.add_argument("--observations", choices=["pixels", "drawing"], default="pixels")
     parser.add_argument("--code", action="store_true", help="her guide holds what the page's code says, as her browser reads it")
+    parser.add_argument("--slowed", type=float, default=1.0,
+                        help="the world's clocks run this many times slower than the wall: her machine as that much faster")
     args = parser.parse_args(argv)
     if args.from_the_games:
         worlds = args.worlds or (FROM_THE_GAMES_HELD_OUT if args.held_out else FROM_THE_GAMES)
@@ -206,11 +227,13 @@ async def main(argv):
         for world in worlds:
             for seed in args.seeds:
                 for player in args.players:
-                    result = await _one(browser, world, seed, args.seconds, player, args.observations, args.code)
+                    result = await _one(browser, world, seed, args.seconds, player, args.observations, args.code,
+                                        args.slowed)
                     results.append(result)
                     last = result["stretches"][-1] if result["stretches"] else {}
                     print(json.dumps({
-                        "world": world, "seed": seed, "player": player, "code": args.code, "tally": result["tally"],
+                        "world": world, "seed": seed, "player": player, "code": args.code, "slowed": args.slowed,
+                        "tally": result["tally"],
                         "stretches": len(result["stretches"]),
                         "learned": last.get("learned"), "hers": last.get("hers"),
                         "fires": last.get("fires"), "fps": last.get("pictures_a_second"),
