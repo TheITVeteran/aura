@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
@@ -27,7 +28,8 @@ def body_probe_is_active(run: Any, hers: Any, *, pointer_steps: int, at: float |
     trial = getattr(run, 'body_trial', None)
     epoch = getattr(getattr(hers, 'identification', None), 'epoch', 0)
     if (at is not None and trial is not None and getattr(run, 'held_trying', False)
-            and trial.waits_for_picture(getattr(run, 'held', ''), getattr(run, 'held_since', None), epoch, at)):
+            and trial.belongs_to_input(getattr(run, 'held', ''), getattr(run, 'held_since', None), epoch)
+            and math.isfinite(at) and (at < trial.until or bool(trial.key))):
         return True
     keys = getattr(run, 'keys', ())
     trying = getattr(run, 'trying', None)
@@ -52,6 +54,24 @@ def _body_probe_phase_invariant() -> tuple:
     run.body_trial = ControlTrial('', 1., 1.5, 0)
     assert _still_trying_keys(run, hers, choosing, False, at=1.25)
     assert not _still_trying_keys(run, hers, choosing, False, at=1.5)
+    return ()
+
+
+@invariant("agency.an_observed_body_trial_finishes_with_its_rest", scope="agency",
+           owner="core/agency/inputs_while_measuring_control.py", observational=False)
+def _body_trial_rest_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    from core.agency.giving_a_trial_time import ControlTrial
+
+    hers = SimpleNamespace(number=1, follows_pointer=False, identification=SimpleNamespace(epoch=0),
+                           keys_known=lambda _keys: True)
+    run = SimpleNamespace(keys=['a'], trying=4, held='a', held_since=1., held_trying=True,
+                          body_trial=ControlTrial('a', 1., 1.5, 0))
+    assert body_probe_is_active(run, hers, pointer_steps=6, at=1.6)
+    run.held, run.held_since, run.body_trial = '', 1.6, ControlTrial('', 1.6, 2., 0)
+    assert body_probe_is_active(run, hers, pointer_steps=6, at=1.8)
+    assert not body_probe_is_active(run, hers, pointer_steps=6, at=2.)
     return ()
 
 

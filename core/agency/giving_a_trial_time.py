@@ -33,9 +33,12 @@ class ControlTrial:
 
     def waits_for_picture(self, held: str, since: float, epoch: int, at: float) -> bool:
         """An old picture cannot interrupt the delivered input still waiting to be observed."""
+        return self.belongs_to_input(held, since, epoch) and math.isfinite(at) and at < self.until
+
+    def belongs_to_input(self, held: str, since: float, epoch: int) -> bool:
+        """The delivered trial remains the same input while its phase is being completed."""
         return (self.key == held and self.epoch == epoch and self.began == since
-                and all(math.isfinite(v) for v in (self.began, self.until, since, at))
-                and self.began < self.until and at < self.until)
+                and all(math.isfinite(v) for v in (self.began, self.until, since)) and self.began < self.until)
 
 
 async def try_a_facing_control(hands: Any, run: Any, hers: Any, choosing: Any, at: float, *,
