@@ -60,3 +60,31 @@ def test_a_tick_somebody_is_waiting_on_reads_the_turn_where_it_skips_the_learnin
     after = source[skip : source.index("continue", skip)]
     assert 'phase_name == "LearningPhase"' in after
     assert "await read_what_the_turn_was_worth(state)" in after
+
+
+def test_her_stored_conversations_are_what_a_new_subject_stands_out_against(tmp_path, monkeypatch):
+    from core.conversation import persistence
+    from core.phases import learning_phase
+
+    ordinary = [
+        {"role": "user", "content": "What do you think of the plan, and has the time for a second look come?"},
+        {"role": "aura", "content": "I think the plan is fine. There has been time, and I would rather say so plainly."},
+    ] * 40
+
+    class Stored:
+        def get_recent_history(self, limit=100):
+            return ordinary[:limit]
+
+    monkeypatch.setattr(persistence, "get_persistence", lambda: Stored())
+    record = what_she_wants.reset_for_test(tmp_path / "wants.json", engine=ConationEngine())
+    try:
+        assert not record.talked_before()
+        assert learning_phase._recall_her_talk() == 40
+        assert record.talked_before() and record.thing("topic:plan") is None
+        about = record.about(
+            "The anemone let go of a small shell at the tide pools.",
+            "An anemone in the tide pools holds what smells alive.",
+        )
+        assert "tide pools" in about and "anemone" in about and "the" not in about
+    finally:
+        what_she_wants.reset_for_test(tmp_path / "after.json", engine=ConationEngine())

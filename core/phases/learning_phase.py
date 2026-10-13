@@ -92,6 +92,40 @@ def _record_learning_degradation(
         _mark_learning_degraded(state, stage=stage, error=error, action=action)
 
 
+def _recall_her_talk() -> int:
+    """Give her record of what she has met the conversations she already had.
+
+    A subject stands out against what she has talked about before, and on the
+    day that record is first kept it has nothing behind it. Her stored turns
+    are that history. Read once, off the loop, when the record has none.
+    """
+    import sqlite3
+
+    from core.conation.what_she_wants import get_what_she_wants
+    from core.conversation.persistence import get_persistence
+
+    try:
+        stored = get_persistence().get_recent_history(limit=4096)
+    except (sqlite3.Error, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_learning_degradation(
+            exc,
+            stage="recall_her_talk",
+            action="left her record without her earlier conversations; new subjects stand out only against later ones",
+        )
+        return 0
+    exchanges: list[tuple[str, str]] = []
+    heard = ""
+    for turn in stored:
+        role = str(turn.get("role", "")).lower()
+        content = str(turn.get("content", "") or "")
+        if role == "user":
+            heard = content
+        elif heard and content:
+            exchanges.append((heard, content))
+            heard = ""
+    return get_what_she_wants().remember_talk(exchanges)
+
+
 def _said_this_turn(state: AuraState) -> list[str]:
     """What the last person to speak said and what she answered, once each.
 
@@ -149,8 +183,11 @@ async def read_what_the_turn_was_worth(state: AuraState) -> None:
             # And what it was worth is what the things in it were worth:
             # her likes, dislikes and wants are read off this record.
             # See core/conation/what_she_wants.py.
+            from core.conation.what_she_wants import get_what_she_wants
             from core.conation.what_she_wants import read_turn as met_this_turn
 
+            if not get_what_she_wants().talked_before():
+                await asyncio.to_thread(_recall_her_talk)
             markers = getattr(getattr(state, "affect", None), "markers", None) or {}
             about = (markers.get("feelings_about") or {}).get("present") or []
             met_this_turn(about, reading, said=_said_this_turn(state))

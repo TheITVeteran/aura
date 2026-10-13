@@ -430,6 +430,30 @@ class WhatSheWants:
             if (term in pairs) or (" " not in term and term not in inside)
         ]
 
+    def talked_before(self) -> bool:
+        """Whether there is anything yet to set an exchange against."""
+        with self._lock:
+            return self._said_total > 0
+
+    def remember_talk(self, exchanges: Iterable[Iterable[str]]) -> int:
+        """Exchanges she had before this record was kept, as reference only.
+
+        Nothing in them is read as a thing she met: what they were worth was
+        never measured. They are what a new exchange is set against.
+        """
+        added = 0
+        with self._lock:
+            for exchange in exchanges:
+                here = terms_of(*exchange)
+                self._said.update(here)
+                self._said_total += sum(here.values())
+                added += 1
+            if len(self._said) > MAX_TERMS:
+                self._said = Counter(dict(self._said.most_common(MAX_TERMS // 2)))
+            held = self._held()
+        self._save(held)
+        return added
+
     # ── a turn ───────────────────────────────────────────────────────────
 
     def _touch(self, key: str, label: str, reachable: bool) -> Thing:
