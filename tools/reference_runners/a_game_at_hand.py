@@ -111,6 +111,10 @@ class GameAtHand:
     async def __aenter__(self) -> GameAtHand:
         from playwright.async_api import async_playwright
 
+        from core.runtime import browser_calls_read_no_files
+
+        browser_calls_read_no_files.install()
+
         self._server, origin, cases = await asyncio.to_thread(_served, self.bundle)
         if self.case not in cases:
             raise LookupError(f"the bundle has no playable program numbered {self.case}")

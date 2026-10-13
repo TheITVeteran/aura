@@ -206,3 +206,29 @@ def test_on_a_held_out_variant_what_is_lent_helps_and_a_wrong_loan_is_overturned
     assert held_out["lent_faster"] > held_out["lent_slower"]
     for name in ("held out", "distractor", "misleading"):
         assert report[name]["never_settled_lent"] == 0, f"{name}: a loan stopped her settling"
+
+
+def test_a_remembered_world_is_looked_at_again_only_when_its_record_has_been_written_since():
+    """Measured 2026-10-12 on her own records: 2,510 of them, 37 MB, each read, checked and searched for a shape at
+    every new place she came to, 2.2 seconds on the loop she thinks on, to find the same 469 each time."""
+    from core.agency import the_world_it_is_most_like as most_like_module
+    from core.agency.the_world_it_is_most_like import solved_worlds
+
+    asked: list[str] = []
+
+    def recall(name: str) -> dict:
+        asked.append(name)
+        return {}
+
+    most_like_module._LOOKED_AT.clear()
+    written = {"a": (1, 10), "b": (1, 20)}
+    solved_worlds(["a", "b", "c"], recall, written)
+    assert asked == ["a", "b", "c"]
+    solved_worlds(["a", "b", "c"], recall, written)
+    assert asked == ["a", "b", "c", "c"]                      # "c" has no time of writing known: it is asked again
+    solved_worlds(["a", "b"], recall, {"a": (2, 10), "b": (1, 20)})
+    assert asked[-1] == "a" and len(asked) == 5                # written since: looked at again
+    # A record that holds no shape at all is not recalled to find that out; without being told, every one is.
+    solved_worlds(["d", "e"], recall, {}, lambda name, what: name == "d" and what == "shape")
+    assert asked[-1] == "e" and "d" not in asked
+    most_like_module._LOOKED_AT.clear()

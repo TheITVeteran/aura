@@ -595,6 +595,33 @@ def kept_worlds() -> list[str]:
         return []
 
 
+def says_nothing_of(world: str, what: str) -> bool:
+    """Whether the record kept of a thing has nothing at all under ``what``: told from the record as written, without
+    reading and checking it. For a caller looking across every record for the few that hold one thing. Where the
+    record cannot be looked at this way it is not said to hold nothing: recalling it will tell."""
+    try:
+        return f'"{what}"'.encode() not in (_kept_in() / f"{named(world)}.json").read_bytes()
+    except OSError:
+        return False
+
+
+def when_each_was_written() -> dict[str, tuple[int, int]]:
+    """For every thing she has kept a record of, when the record was last written and how long it is: what tells a
+    record looked at before from one written since, for a caller looking across them all. One pass of the folder."""
+    import os
+
+    written: dict[str, tuple[int, int]] = {}
+    try:
+        with os.scandir(_kept_in()) as kept:
+            for entry in kept:
+                if entry.name.endswith(".json"):
+                    stat = entry.stat()
+                    written[entry.name[:-len(".json")]] = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return {}
+    return written
+
+
 def forget(world: str) -> bool:
     """Drop what she knew about a thing, for a caller that has reason to."""
     from core.runtime.file_write_gateway import get_file_write_gateway

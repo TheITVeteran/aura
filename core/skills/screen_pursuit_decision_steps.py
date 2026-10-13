@@ -398,14 +398,19 @@ def _borrow_from_the_world_it_is_most_like(
     if len(look.relations) <= int(like_it.get("asked_at") or 0):
         return
     like_it["asked_at"] = len(look.relations)
-    from core.runtime.what_she_learned import kept_worlds, recall
+    from core.runtime.what_she_learned import (
+        kept_worlds,
+        recall,
+        says_nothing_of,
+        when_each_was_written,
+    )
 
     from .screen_pursuit import logger
 
     if "solved" not in like_it:
         like_it["solved"] = {
             name: found
-            for name, found in solved_worlds(kept_worlds(), recall).items()
+            for name, found in solved_worlds(kept_worlds(), recall, when_each_was_written(), says_nothing_of).items()
             if name != like_it.get("this_world")
         }
     solved = like_it["solved"]
@@ -416,7 +421,7 @@ def _borrow_from_the_world_it_is_most_like(
     )
     if likeness is None:
         return
-    given = lent(solved[likeness.world][1], likeness)
+    given = lent(recall(likeness.world), likeness)      # her own copy of that one: what is kept is not for changing
     if not lend_to(knows.rules, given, world):
         return
     like_it["lent"] = likeness.world

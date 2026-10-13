@@ -49,6 +49,11 @@ class PageFrames:
     async def _start(self) -> bool:
         if self._session is not None or self.unavailable:
             return self._session is not None
+        # Each frame is acknowledged by a call to the browser, and each such call read its whole stack through the
+        # file system: the same stack is read off the frames (core/runtime/browser_calls_read_no_files.py).
+        from core.runtime import browser_calls_read_no_files
+
+        browser_calls_read_no_files.install()
         try:
             session = await self.page.context.new_cdp_session(self.page)
             self._session = session

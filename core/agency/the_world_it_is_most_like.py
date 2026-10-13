@@ -333,20 +333,42 @@ def lend_to(rules: Any, given: Mapping[str, Any], world: Any = None) -> bool:
     return True
 
 
-def solved_worlds(names: Iterable[str], recall: Any) -> dict[str, tuple[Graph, dict[str, Any]]]:
-    """Every remembered world with a shape kept and a way of moving worked out."""
+#: Each remembered world as it was last looked at for a shape and a way of moving: when its record had been written,
+#: and what was found (nothing, for most of them).
+_LOOKED_AT: dict[str, tuple[Any, tuple[Graph, dict[str, Any]] | None]] = {}
+
+
+def solved_worlds(names: Iterable[str], recall: Any, written: Mapping[str, Any] | None = None,
+                  says_nothing_of: Any = None) -> dict[str, tuple[Graph, dict[str, Any]]]:
+    """Every remembered world with a shape kept and a way of moving worked out.
+
+    ``says_nothing_of(name, "shape")`` tells a world whose record holds no shape without recalling it: four in five
+    of her records hold none, and are not read and checked to find that out.
+
+    ``written`` says when each world's record was last written. A world looked at before and not written since is not
+    recalled and worked through again: measured 2026-10-12 on her own records, 2,510 of them and 37 MB, every one
+    was read, checked and searched for a shape in 2.2 seconds at each new place she came to, on the loop she thinks
+    on, to find the same 469. What comes back for a world not written since is what came back before, and is not
+    for changing."""
     from core.perception.how_it_moves import HowItMoves
 
     found: dict[str, tuple[Graph, dict[str, Any]]] = {}
     for name in names:
-        knew = recall(name)
-        if not isinstance(knew, dict):
+        when = written.get(name) if written is not None else None
+        before = _LOOKED_AT.get(name) if when is not None else None
+        if before is not None and before[0] == when:
+            if before[1] is not None:
+                found[name] = before[1]
             continue
-        graph = graph_from_memory(knew.get("shape"), name)
-        if graph is None:
-            continue
-        rule = HowItMoves.from_memory(knew.get("moves") or {}).rule()
-        if rule is None:
-            continue
-        found[name] = (graph, {**knew, "_teaches": rule.name})
+        solved = None
+        knew = None if says_nothing_of is not None and says_nothing_of(name, "shape") else recall(name)
+        if isinstance(knew, dict):
+            graph = graph_from_memory(knew.get("shape"), name)
+            rule = HowItMoves.from_memory(knew.get("moves") or {}).rule() if graph is not None else None
+            if graph is not None and rule is not None:
+                solved = (graph, {**knew, "_teaches": rule.name})
+        if when is not None:
+            _LOOKED_AT[name] = (when, solved)
+        if solved is not None:
+            found[name] = solved
     return found
