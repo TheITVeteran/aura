@@ -206,6 +206,11 @@ class Thing:
     last: int = 0
     ways: dict[str, Way] = field(default_factory=dict)
     open: dict[str, str] = field(default_factory=dict)
+    #: How much of an exchange's subject it was, on average over the exchanges
+    #: that named it: its share of what the exchange dwelt on. Zero for a
+    #: thing no exchange named.
+    stood_out: float = 0.0
+    named: int = 0
 
     @property
     def kind(self) -> str:
@@ -225,6 +230,8 @@ class Thing:
             "last": self.last,
             "ways": {name: [way.times, way.liking] for name, way in self.ways.items()},
             "open": dict(self.open),
+            "stood_out": self.stood_out,
+            "named": self.named,
         }
 
     @classmethod
@@ -242,6 +249,8 @@ class Thing:
         for name, (times, liking) in dict(data.get("ways", {})).items():
             thing.ways[str(name)] = Way(times=int(times), liking=float(liking))
         thing.open = {str(k): str(v) for k, v in dict(data.get("open", {})).items()}
+        thing.stood_out = max(0.0, min(1.0, float(data.get("stood_out", 0.0))))
+        thing.named = max(0, int(data.get("named", 0)))
         return thing
 
 
@@ -311,6 +320,7 @@ class WhatSheWants:
         #: have been: whether a term is dwelt on or spread thin.
         self._said_in: Counter[str] = Counter()
         self._exchanges = 0
+        self._shares: dict[str, float] = {}
         self._standing: list[Want] = []
         self._engine = engine
         self._path = Path(path) if path is not None else None
@@ -457,11 +467,19 @@ class WhatSheWants:
             if " " in term and all(here[word] <= here[term] for word in term.split())
         }
         inside = {word for term in pairs for word in term.split()}
-        return [
-            term
-            for _ratio, term in sorted(scored, key=lambda row: (-row[0], row[1]))
+        kept = [
+            (ratio, term)
+            for ratio, term in sorted(scored, key=lambda row: (-row[0], row[1]))
             if (term in pairs) or (" " not in term and term not in inside)
         ]
+        whole = sum(ratio for ratio, _term in kept)
+        self._shares = {term: ratio / whole for ratio, term in kept} if whole > 0.0 else {}
+        return [term for _ratio, term in kept]
+
+    def shares(self) -> dict[str, float]:
+        """Each subject's share of what the last exchange read dwelt on."""
+        with self._lock:
+            return dict(self._shares)
 
     def _count_exchange(self, here: Counter[str]) -> None:
         """Add one exchange to what later ones are set against. Lock held."""
@@ -516,6 +534,7 @@ class WhatSheWants:
         reachable: Iterable[str] = (),
         labels: Mapping[str, str] | None = None,
         payoff: Mapping[str, float] | None = None,
+        stood_out: Mapping[str, float] | None = None,
     ) -> dict[str, Any]:
         """One turn's contact with everything it was about.
 
@@ -567,6 +586,10 @@ class WhatSheWants:
                         thing.channels[channel] = held + (paid - held) * rate
                 if went.get(thing.key):
                     thing.ways.setdefault(went[thing.key], Way()).went(liking)
+                share = (stood_out or {}).get(thing.key)
+                if share is not None:
+                    thing.named += 1
+                    thing.stood_out += (max(0.0, min(1.0, float(share))) - thing.stood_out) / min(thing.named, _WINDOW)
             self._noise += (error * error - self._noise) / min(self._read, _WINDOW)
             self._noise = max(1e-9, self._noise)
             held = self._held()
@@ -678,6 +701,28 @@ class WhatSheWants:
             found = [thing for thing in self._things.values() if self.known(thing.key) is False]
         return sorted(found, key=lambda thing: (thing.liking, thing.key))
 
+    def expected_worth(self, goal: str, metadata: Mapping[str, Any] | None = None) -> float | None:
+        """What her record says acting on an option would be worth, in [0, 1].
+
+        One half is a turn worth exactly what she expected. For one of her
+        wants it is her share of what turns with the thing were worth. For
+        anything else it is what turns in which she did that act were worth,
+        the act named as core/affect/feelings_about.py names it. Nothing when
+        she has no turn with it to go on.
+        """
+        want = (metadata or {}).get("want")
+        key = ""
+        if isinstance(want, dict) and want.get("thing"):
+            key = str(want["thing"])
+        else:
+            words = str(goal or "").split()
+            key = f"act:{words[0].lower()}" if words else ""
+        with self._lock:
+            thing = self._things.get(key)
+            if thing is None or thing.contacts <= 0:
+                return None
+            return (thing.liking + 1.0) / 2.0
+
     def regard_for_text(self, text: str) -> float:
         """Her strongest stated like or dislike among the things a text names.
 
@@ -748,15 +793,27 @@ class WhatSheWants:
         candidates.sort(key=lambda t: (-(max(0.0, t.liking) + math.sqrt(t.unsure)), t.key))
         found: list[Want] = []
         for thing in candidates[:cap]:
+            way = self._way_for(thing, offered)
+            # A person is reached by a way she has taken with them. There is
+            # no looking somebody up to find out what they are to her.
+            if thing.kind == "person" and way == FIND_OUT:
+                continue
             gain = thing.unsure / (thing.unsure + noise)
             after = max(noise / _WINDOW, thing.unsure * (1.0 - gain))
+            # What she has to go on. Curiosity needs a foothold: it rises with
+            # how much of an exchange the thing was, and something mentioned
+            # in passing leaves little to be curious about (Loewenstein 1994;
+            # Silvia 2005). A thing no exchange named is one she went to, and
+            # that is a whole foothold.
+            foothold = thing.stood_out if thing.named else 1.0
             state = engine.appraise(
                 Incentive(
                     key=thing.key,
                     description=thing.label,
                     cached_value=max(0.0, thing.liking) if thing.contacts else None,
+                    cue_salience=thing.stood_out,
                 ),
-                epistemic_affordance=1.0,
+                epistemic_affordance=foothold,
                 prior_variance=[thing.unsure],
                 posterior_variance=[after],
             )
@@ -779,7 +836,7 @@ class WhatSheWants:
                 Want(
                     thing=thing.key,
                     label=thing.label,
-                    way=self._way_for(thing, offered),
+                    way=way,
                     kind=kind,
                     wanting=float(state.wanting),
                     utility=utility,
@@ -846,8 +903,10 @@ def read_turn(
     # through a morning about tide pools and on the ticks after it. Subjects
     # come from what was said, and a turn in which nothing was said has none.
     keys = [key for key in keys if not key.startswith("topic:")]
+    stood_out: dict[str, float] = {}
     if words:
         keys.extend(f"topic:{term}" for term in record.about(*words))
+        stood_out = {f"topic:{term}": share for term, share in record.shares().items()}
     reachable = [key for key in keys if ":" in key and key.split(":", 1)[0] in REACHABLE_KINDS]
     labels = {key: key.split(":", 1)[1].strip() for key in reachable}
     return record.met(
@@ -856,6 +915,7 @@ def read_turn(
         reachable=reachable,
         labels=labels,
         payoff=getattr(reading, "payoff", None),
+        stood_out=stood_out,
     )
 
 
