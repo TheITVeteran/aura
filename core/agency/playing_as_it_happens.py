@@ -217,6 +217,9 @@ class _Run:
     held_trying: bool = False
     trying: int = 0
     tried_at: float = 0.0
+    #: Each delivered body trial keeps its deadline; the largest duration used also bounds the search allowance.
+    body_trial: Any = None
+    longest_control_trial_s: float = 0.0
     #: The finite experiment that waits for measured motion before trying to counter it.
     counter_trial: CounteringMotion = field(default_factory=CounteringMotion)
     #: When she last found the thing she took for hers was not.
@@ -832,7 +835,8 @@ def _answers_now(run: _Run, hers: WhichIsHers, moving: dict[str, Any], at: float
 def _nothing_answers(run: _Run, hers: WhichIsHers, meeting: WhatMeetingDoes, at: float) -> str:
     # Allow two complete experiments and their intervening wait before
     # declaring that no control answers. The run's own deadline still bounds it.
-    experiment_time = 8 * len(run.keys) * TRY_A_KEY_S + RECHECK_CONTROLS_S if run.keys else 0.0
+    experiment_time = (8 * len(run.keys) * max(TRY_A_KEY_S, run.longest_control_trial_s)
+                       + RECHECK_CONTROLS_S) if run.keys else 0.0
     # A thing her eyes took for hers that nothing of hers has ever moved answers to nothing: LIVE 2026-10-11 the boy on
     # a game's animated title was taken for her, no key moved him, and she played the title for a minute before START.
     moving = hers.keys_that_move_her(run.keys) if hers.kind is not None else {}

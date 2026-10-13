@@ -42,6 +42,7 @@ class CounteringMotion:
     phase: int = 0
     done: bool = False
     response: Any = None
+    phase_seconds: float = 0.0
 
     def choose(self, keys: Sequence[str], things: Iterable[Any], at: float, *, held: str,
                held_since: float | None, epoch: int, settle_s: float, step_s: float,
@@ -70,7 +71,7 @@ class CounteringMotion:
             if self.response is not None and not any(thing.number == self.response.number and thing.seen == at for thing in things):
                 self.done = True
                 return None
-            return self._continue(at, held, held_since, epoch, step_s, steps)
+            return self._continue(at, held, held_since, epoch, steps)
         if at - self.first_at >= wait_s:
             self.done = True
             return None
@@ -85,16 +86,17 @@ class CounteringMotion:
             return None
         self.response = response
         self.key, self.epoch, self.phase = key, epoch, 0
+        self.phase_seconds = step_s
         self.until = at + 2 * step_s * steps
         return key
 
     def _continue(self, at: float, held: str, held_since: float, epoch: int,
-                  step_s: float, steps: int) -> str | None:
+                  steps: int) -> str | None:
         expected = self.key if self.phase % 2 == 0 else ""
         if epoch != self.epoch or self.until is None or at >= self.until or held != expected:
             self.done = True
             return None
-        if at - held_since < step_s:
+        if at - held_since < self.phase_seconds:
             return expected
         self.phase += 1
         if self.phase >= steps:
