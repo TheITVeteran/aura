@@ -1120,6 +1120,26 @@ def _process_resources() -> tuple[type, ...]:
 
 
 @pytest.fixture(autouse=True)
+def _what_she_has_met_starts_empty_in_each_test():
+    """Her record of what she has met is a file, and a file outlives a test.
+
+    core/conation/what_she_wants.py keeps the record under the state root, and
+    every test shares the test profile's root. A record one test left there
+    put wants on the initiative slate of the next: two governance tests that
+    hand the synthesizer a bare object failed on it on 13 October. The file is
+    removed before each test, after any write still queued for it has landed.
+    """
+    from core.runtime.atomic_writer import flush_writes_behind
+    from core.runtime.state_ownership import state_root
+
+    root = state_root()
+    if root != Path.home() / ".aura":
+        flush_writes_behind(wait_s=2.0)
+        (root / "data" / "conation" / "what_she_wants.json").unlink(missing_ok=True)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _a_singleton_built_in_a_test_ends_with_it(request):
     """A module slot that was empty when a test began is empty when it ends.
 

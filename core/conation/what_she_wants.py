@@ -206,6 +206,11 @@ class Thing:
     last: int = 0
     ways: dict[str, Way] = field(default_factory=dict)
     open: dict[str, str] = field(default_factory=dict)
+    #: How much of an exchange's subject it was, on average over the exchanges
+    #: that named it: its share of what the exchange dwelt on. Zero for a
+    #: thing no exchange named.
+    stood_out: float = 0.0
+    named: int = 0
 
     @property
     def kind(self) -> str:
@@ -225,6 +230,8 @@ class Thing:
             "last": self.last,
             "ways": {name: [way.times, way.liking] for name, way in self.ways.items()},
             "open": dict(self.open),
+            "stood_out": self.stood_out,
+            "named": self.named,
         }
 
     @classmethod
@@ -242,6 +249,8 @@ class Thing:
         for name, (times, liking) in dict(data.get("ways", {})).items():
             thing.ways[str(name)] = Way(times=int(times), liking=float(liking))
         thing.open = {str(k): str(v) for k, v in dict(data.get("open", {})).items()}
+        thing.stood_out = max(0.0, min(1.0, float(data.get("stood_out", 0.0))))
+        thing.named = max(0, int(data.get("named", 0)))
         return thing
 
 
@@ -311,6 +320,10 @@ class WhatSheWants:
         #: have been: whether a term is dwelt on or spread thin.
         self._said_in: Counter[str] = Counter()
         self._exchanges = 0
+        self._shares: dict[str, float] = {}
+        #: What she has decided to do when she next can, if anything: one of
+        #: her wants, as it stood when she decided.
+        self._decided: dict[str, Any] | None = None
         self._standing: list[Want] = []
         self._engine = engine
         self._path = Path(path) if path is not None else None
@@ -348,6 +361,8 @@ class WhatSheWants:
             self._said_total = max(0, int(stored.get("said_total", 0)))
             self._said_in = Counter({str(k): int(v) for k, v in dict(stored.get("said_in", {})).items()})
             self._exchanges = max(0, int(stored.get("exchanges", 0)))
+            decided = stored.get("decided")
+            self._decided = dict(decided) if isinstance(decided, dict) and decided.get("thing") else None
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             self._things.clear()
             self._turns = self._good_turns = self._read = 0
@@ -371,6 +386,7 @@ class WhatSheWants:
             "said_total": self._said_total,
             "said_in": dict(self._said_in),
             "exchanges": self._exchanges,
+            "decided": self._decided,
         }
 
     def _save(self, payload: dict[str, Any]) -> None:
@@ -403,34 +419,51 @@ class WhatSheWants:
         particular.
         """
         here = terms_of(*texts)
-        total = sum(here.values())
-        if total <= 0:
+        if sum(here.values()) <= 0:
             return []
         with self._lock:
-            before, before_total = self._said, self._said_total
-            scored: list[tuple[float, str]] = []
-            if before_total > 0:
-                # One test per term offered, so the level each is held to is
-                # the conventional one divided by how many there are.
-                critical = NormalDist().inv_cdf(1.0 - _WRONG / len(here) / 2.0) ** 2
-                for term, count in here.items():
-                    past = before.get(term, 0)
-                    if count / total <= past / before_total:
-                        continue
-                    pooled = (count + past) / (total + before_total)
-                    ratio = 2.0 * count * math.log(count / (total * pooled))
-                    if past:
-                        ratio += 2.0 * past * math.log(past / (before_total * pooled))
-                    if ratio <= critical:
-                        continue
-                    # Dwelt on: with this exchange counted, the exchanges it
-                    # is in are fewer than half of those a term used this
-                    # often would be in by chance.
-                    exchanges = self._exchanges + 1
-                    by_chance = exchanges * (1.0 - math.exp(-(past + count) / exchanges))
-                    if math.log2(by_chance / (self._said_in.get(term, 0) + 1)) > 1.0:
-                        scored.append((ratio, term))
+            found = self._subjects(here)
             self._count_exchange(here)
+        return found
+
+    def subjects_of(self, *texts: str) -> list[str]:
+        """What `about` would say of this exchange, without counting it.
+
+        For asking what something said is about when it is not one of her
+        exchanges yet, or may never be.
+        """
+        here = terms_of(*texts)
+        if sum(here.values()) <= 0:
+            return []
+        with self._lock:
+            return self._subjects(here)
+
+    def _subjects(self, here: Counter[str]) -> list[str]:
+        """The subjects among an exchange's terms. Lock held."""
+        total = sum(here.values())
+        before, before_total = self._said, self._said_total
+        scored: list[tuple[float, str]] = []
+        if before_total > 0:
+            # One test per term offered, so the level each is held to is the
+            # conventional one divided by how many there are.
+            critical = NormalDist().inv_cdf(1.0 - _WRONG / len(here) / 2.0) ** 2
+            exchanges = self._exchanges + 1
+            for term, count in here.items():
+                past = before.get(term, 0)
+                if count / total <= past / before_total:
+                    continue
+                pooled = (count + past) / (total + before_total)
+                ratio = 2.0 * count * math.log(count / (total * pooled))
+                if past:
+                    ratio += 2.0 * past * math.log(past / (before_total * pooled))
+                if ratio <= critical:
+                    continue
+                # Dwelt on: with this exchange counted, the exchanges it is in
+                # are fewer than half of those a term used this often would be
+                # in by chance.
+                by_chance = exchanges * (1.0 - math.exp(-(past + count) / exchanges))
+                if math.log2(by_chance / (self._said_in.get(term, 0) + 1)) > 1.0:
+                    scored.append((ratio, term))
         # A pair is one thing when neither word is there without the other.
         # Then the words are the pair, and a pair one of whose words also
         # stands alone is that word beside something else.
@@ -440,11 +473,19 @@ class WhatSheWants:
             if " " in term and all(here[word] <= here[term] for word in term.split())
         }
         inside = {word for term in pairs for word in term.split()}
-        return [
-            term
-            for _ratio, term in sorted(scored, key=lambda row: (-row[0], row[1]))
+        kept = [
+            (ratio, term)
+            for ratio, term in sorted(scored, key=lambda row: (-row[0], row[1]))
             if (term in pairs) or (" " not in term and term not in inside)
         ]
+        whole = sum(ratio for ratio, _term in kept)
+        self._shares = {term: ratio / whole for ratio, term in kept} if whole > 0.0 else {}
+        return [term for _ratio, term in kept]
+
+    def shares(self) -> dict[str, float]:
+        """Each subject's share of what the last exchange read dwelt on."""
+        with self._lock:
+            return dict(self._shares)
 
     def _count_exchange(self, here: Counter[str]) -> None:
         """Add one exchange to what later ones are set against. Lock held."""
@@ -499,6 +540,7 @@ class WhatSheWants:
         reachable: Iterable[str] = (),
         labels: Mapping[str, str] | None = None,
         payoff: Mapping[str, float] | None = None,
+        stood_out: Mapping[str, float] | None = None,
     ) -> dict[str, Any]:
         """One turn's contact with everything it was about.
 
@@ -550,6 +592,10 @@ class WhatSheWants:
                         thing.channels[channel] = held + (paid - held) * rate
                 if went.get(thing.key):
                     thing.ways.setdefault(went[thing.key], Way()).went(liking)
+                share = (stood_out or {}).get(thing.key)
+                if share is not None:
+                    thing.named += 1
+                    thing.stood_out += (max(0.0, min(1.0, float(share))) - thing.stood_out) / min(thing.named, _WINDOW)
             self._noise += (error * error - self._noise) / min(self._read, _WINDOW)
             self._noise = max(1e-9, self._noise)
             held = self._held()
@@ -661,6 +707,28 @@ class WhatSheWants:
             found = [thing for thing in self._things.values() if self.known(thing.key) is False]
         return sorted(found, key=lambda thing: (thing.liking, thing.key))
 
+    def expected_worth(self, goal: str, metadata: Mapping[str, Any] | None = None) -> float | None:
+        """What her record says acting on an option would be worth, in [0, 1].
+
+        One half is a turn worth exactly what she expected. For one of her
+        wants it is her share of what turns with the thing were worth. For
+        anything else it is what turns in which she did that act were worth,
+        the act named as core/affect/feelings_about.py names it. Nothing when
+        she has no turn with it to go on.
+        """
+        want = (metadata or {}).get("want")
+        key = ""
+        if isinstance(want, dict) and want.get("thing"):
+            key = str(want["thing"])
+        else:
+            words = str(goal or "").split()
+            key = f"act:{words[0].lower()}" if words else ""
+        with self._lock:
+            thing = self._things.get(key)
+            if thing is None or thing.contacts <= 0:
+                return None
+            return (thing.liking + 1.0) / 2.0
+
     def regard_for_text(self, text: str) -> float:
         """Her strongest stated like or dislike among the things a text names.
 
@@ -731,15 +799,27 @@ class WhatSheWants:
         candidates.sort(key=lambda t: (-(max(0.0, t.liking) + math.sqrt(t.unsure)), t.key))
         found: list[Want] = []
         for thing in candidates[:cap]:
+            way = self._way_for(thing, offered)
+            # A person is reached by a way she has taken with them. There is
+            # no looking somebody up to find out what they are to her.
+            if thing.kind == "person" and way == FIND_OUT:
+                continue
             gain = thing.unsure / (thing.unsure + noise)
             after = max(noise / _WINDOW, thing.unsure * (1.0 - gain))
+            # What she has to go on. Curiosity needs a foothold: it rises with
+            # how much of an exchange the thing was, and something mentioned
+            # in passing leaves little to be curious about (Loewenstein 1994;
+            # Silvia 2005). A thing no exchange named is one she went to, and
+            # that is a whole foothold.
+            foothold = thing.stood_out if thing.named else 1.0
             state = engine.appraise(
                 Incentive(
                     key=thing.key,
                     description=thing.label,
                     cached_value=max(0.0, thing.liking) if thing.contacts else None,
+                    cue_salience=thing.stood_out,
                 ),
-                epistemic_affordance=1.0,
+                epistemic_affordance=foothold,
                 prior_variance=[thing.unsure],
                 posterior_variance=[after],
             )
@@ -762,7 +842,7 @@ class WhatSheWants:
                 Want(
                     thing=thing.key,
                     label=thing.label,
-                    way=self._way_for(thing, offered),
+                    way=way,
                     kind=kind,
                     wanting=float(state.wanting),
                     utility=utility,
@@ -783,6 +863,64 @@ class WhatSheWants:
         with self._lock:
             self._standing = list(found)
         return found if limit is None else found[: max(0, int(limit))]
+
+    # ── what she has decided ─────────────────────────────────────────────
+
+    def decide(self) -> dict[str, Any] | None:
+        """What she most wants, settled for the next time she is free to act.
+
+        A person who wants a walk tomorrow decides once and does not argue it
+        again in the morning (Bratman 1987; Gollwitzer 1999). Her slate was
+        rebuilt every cycle and nothing on it was ever settled, so a want that
+        formed while somebody was with her was gone by the time she was free.
+        One thing is held at a time, and what is already held stays held.
+        """
+        with self._lock:
+            if self._decided is not None:
+                return dict(self._decided)
+        wanted = self.wants(limit=1)
+        if not wanted:
+            return None
+        with self._lock:
+            self._decided = {**wanted[0].as_dict(), "decided_turn": self._turns}
+            held = self._held()
+            decided = dict(self._decided)
+        self._save(held)
+        return decided
+
+    def decided(self) -> dict[str, Any] | None:
+        """What she is holding to do, while she still wants it.
+
+        Let go when she has come to dislike the thing or has given up on it;
+        a decision is kept against other wants, and it is dropped when the
+        want under it is gone.
+        """
+        with self._lock:
+            held = dict(self._decided) if self._decided is not None else None
+        if held is None:
+            return None
+        key = str(held.get("thing") or "")
+        gone = self.known(key) is False
+        try:
+            gone = gone or self._conation().dynamics.frustration(key).should_disengage()
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "what_she_wants", exc, severity="debug",
+                action="kept what she had decided without asking whether she has given up on it",
+            )
+        if gone:
+            self.done_with(key)
+            return None
+        return held
+
+    def done_with(self, key: str) -> None:
+        """She did what she had decided, or let it go."""
+        with self._lock:
+            if self._decided is None or str(self._decided.get("thing")) != key:
+                return
+            self._decided = None
+            held = self._held()
+        self._save(held)
 
     def standing(self) -> list[Want]:
         """What she wanted the last time it was asked, without asking again.
@@ -818,16 +956,21 @@ def read_turn(
 
     `present` is what the turn was about, as core/affect/feelings_about.py
     names it, and `reading` is what the turn was worth. `said` is what was
-    said in it, by anybody. Where something was said, the subjects are the
-    terms particular to the exchange, in place of the one topic label the
-    turn arrived with.
+    said in it, by anybody. The subjects are the terms the exchange dwells
+    on, and the one topic label the turn arrived with is not used.
     """
     record = record or get_what_she_wants()
     keys = [str(key) for key in present if str(key).strip()]
     words = [str(text) for text in said if str(text or "").strip()]
+    # The topic label a turn arrives with is one word for a whole conversation
+    # and stays on her state after it: live, 13 October, it read "times"
+    # through a morning about tide pools and on the ticks after it. Subjects
+    # come from what was said, and a turn in which nothing was said has none.
+    keys = [key for key in keys if not key.startswith("topic:")]
+    stood_out: dict[str, float] = {}
     if words:
-        keys = [key for key in keys if not key.startswith("topic:")]
         keys.extend(f"topic:{term}" for term in record.about(*words))
+        stood_out = {f"topic:{term}": share for term, share in record.shares().items()}
     reachable = [key for key in keys if ":" in key and key.split(":", 1)[0] in REACHABLE_KINDS]
     labels = {key: key.split(":", 1)[1].strip() for key in reachable}
     return record.met(
@@ -836,6 +979,7 @@ def read_turn(
         reachable=reachable,
         labels=labels,
         payoff=getattr(reading, "payoff", None),
+        stood_out=stood_out,
     )
 
 

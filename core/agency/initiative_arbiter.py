@@ -633,7 +633,26 @@ class InitiativeArbiter:
         return max(0.2, best_match)
 
     def _score_expected_value(self, initiative: dict) -> float:
-        """Estimate payoff using motivation engine resource budgets."""
+        """What acting on it is expected to be worth to her.
+
+        From her own record where she has one: what turns with the thing, or
+        turns in which she did that act, were worth against what she expected
+        (core/conation/what_she_wants.py). Scored live on 13 October, four
+        unlike options all read 0.5 here, so the only number that told them
+        apart was the urgency each source wrote for itself and the loudest
+        source won every time. Where her record is silent, the reading the
+        budgets give stands.
+        """
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            worth = get_what_she_wants().expected_worth(
+                _goal(initiative), initiative.get("metadata") or {}
+            )
+            if worth is not None:
+                return max(0.0, min(1.0, float(worth)))
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("her record did not reach the expected value: %s", exc)
         me = ServiceContainer.get("motivation_engine", default=None)
         if me is None:
             return 0.5

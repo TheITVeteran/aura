@@ -239,3 +239,14 @@ def test_what_her_exchanges_have_said_is_kept_across_a_restart(record, tmp_path)
     flush_writes_behind()
     again = WhatSheWants(tmp_path / "wants.json", engine=ConationEngine())
     assert "anemone" in again.about(*TIDE_TALK)
+
+
+def test_a_turn_in_which_nothing_was_said_has_no_subject(record):
+    from core.conation.what_she_wants import read_turn
+
+    class Worth:
+        measured, worth, size, payoff = True, -1.0, 0.4, {}
+
+    read_turn(["self", "topic:times", "attended:drive_integrity"], Worth(), record)
+    assert record.thing("topic:times") is None
+    assert record.thing("self").contacts == 1

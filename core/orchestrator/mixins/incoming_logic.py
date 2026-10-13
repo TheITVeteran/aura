@@ -543,6 +543,12 @@ class IncomingLogicMixin:
 
             # DriveEngine: Satisfy social drive on user contact + relieve boredom
             try:
+                # The same contact, in the budgets her motivation phase
+                # settles, which is the store her heartbeat reads. See
+                # met_by_somebody.
+                from core.phases.motivation_update import met_by_somebody
+
+                met_by_somebody(15.0)
                 drive = optional_service("drive_engine")
                 if drive:
                     self._fire_and_forget(

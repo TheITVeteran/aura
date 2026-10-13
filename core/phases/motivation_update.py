@@ -49,6 +49,40 @@ def _background_curiosity_allowed() -> bool:
 _DISTRESS: tuple[str, ...] = ("fear", "sadness", "anger", "frustration", "upset", "dread")
 
 
+def met_by_somebody(points: float) -> float:
+    """Somebody reached her: her need for company is met by that much of what is unmet.
+
+    The incoming path credited only the drive engine, a store of its own that
+    her heartbeat does not read while a state is registered. The budget the
+    heartbeat does read recovered a fifth of a point a minute at most, so
+    through a twelve-turn conversation on 13 October it stayed near twenty and
+    "social is depleted (80% urgency)" won her workspace 69 times in three
+    hours. Returns what was credited.
+
+    Satisfaction is the reduction of a need, which shrinks as the need nears
+    its set point (Keramati and Gutkin 2014), the rule `_credit_attended_drive`
+    applies to a drive that won attention.
+    """
+    try:
+        repo = get_runtime_service("state_repository", default=None)
+        current = getattr(repo, "_current", None) if repo is not None else None
+        budgets = getattr(getattr(current, "motivation", None), "budgets", None)
+        budget = budgets.get("social") if isinstance(budgets, dict) else None
+        if not isinstance(budget, dict):
+            return 0.0
+        capacity = float(budget.get("capacity", 100.0))
+        level = float(budget.get("level", 0.0))
+        if capacity <= 0.0:
+            return 0.0
+        gain = max(0.0, float(points)) * max(0.0, capacity - level) / capacity
+        budget["level"] = min(capacity, level + gain)
+        return gain
+    # not a failure: with no state to read there is no budget to credit, and
+    # the drive engine's own credit stands as it did.
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return 0.0
+
+
 class MotivationUpdatePhase(_ReadsTheDriveSignals, Phase):
     """
     Unitary Kernel Phase: Autonomous Will & Digital Metabolism.
