@@ -114,6 +114,12 @@ PROMPT_PARTS: dict[str, str] = {
     # line begins (`_COMPACT_LINES`).
     "rules": "",
     "state": "",
+    # Every system message of the turn, whichever of her prompt builders
+    # wrote it. Three of them say who she is (the long prompt, the response
+    # phase's compact one and the inference gate's compact one), and this is
+    # the one arm that is sure to remove them all: the model is given the
+    # message and nothing else. Asked for by name; `bare` does not include it.
+    "everything": "",
 }
 
 #: How the lines of the compact live-chat prompt begin, by the part each
@@ -151,7 +157,7 @@ def leave_out(parts: Any, *, measurement: bool = True) -> frozenset[str]:
     """
     asked = {str(part).strip().lower() for part in (parts or ()) if str(part).strip()}
     if "bare" in asked:
-        asked = set(PROMPT_PARTS)
+        asked = (asked | set(PROMPT_PARTS)) - ({"everything"} - asked)
     kept = frozenset(asked & set(PROMPT_PARTS))
     _LEFT_OUT.set(kept)
     _MEASURED.set(bool(measurement))
@@ -168,7 +174,7 @@ def left_out() -> frozenset[str]:
         if part.strip()
     }
     if "bare" in standing:
-        standing = set(PROMPT_PARTS)
+        standing = (standing | set(PROMPT_PARTS)) - ({"everything"} - standing)
     return frozenset(_LEFT_OUT.get() | (standing & set(PROMPT_PARTS)))
 
 
@@ -196,11 +202,25 @@ def as_measured(messages: list[Any]) -> list[Any]:
     if not this_turn_is_a_measurement():
         return messages
     framing = [m for m in messages if isinstance(m, dict) and str(m.get("role", "")).lower() == "system"]
+    if "everything" in left_out():
+        framing = []
     asked = next(
         (m for m in reversed(messages) if isinstance(m, dict) and str(m.get("role", "")).lower() == "user"),
         None,
     )
-    return [*framing, asked] if asked is not None else messages
+    if asked is None:
+        return messages
+    # What the model was given, on the record: a measurement of a prompt has
+    # to be able to show the prompt it measured.
+    import logging
+
+    for message in framing:
+        logging.getLogger("Aura.Persona").info(
+            "🔬 measurement turn framing (%d chars): %s",
+            len(str(message.get("content") or "")),
+            " ⏎ ".join(str(message.get("content") or "").splitlines())[:2400],
+        )
+    return [*framing, asked]
 
 
 def without_parts(prompt: str, parts: frozenset[str] | set[str]) -> str:

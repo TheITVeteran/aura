@@ -47,11 +47,11 @@ def test_bare_leaves_what_she_remembers_and_takes_what_tells_her_who_to_be():
 
 def test_leaving_out_is_for_the_turn_that_asked_and_marks_it_a_measurement():
     def a_measured_turn():
-        assert leave_out(["bare"]) == frozenset(PROMPT_PARTS)
+        assert leave_out(["bare"]) == frozenset(PROMPT_PARTS) - {"everything"}
         return left_out(), this_turn_is_a_measurement()
 
     parts, measured = contextvars.copy_context().run(a_measured_turn)
-    assert parts == frozenset(PROMPT_PARTS) and measured
+    assert parts == frozenset(PROMPT_PARTS) - {"everything"} and measured
     assert left_out() == frozenset() and not this_turn_is_a_measurement()
 
 
@@ -120,3 +120,17 @@ def test_a_measurement_turn_meets_its_question_without_the_turns_before_it():
 
     fresh = contextvars.copy_context().run(measured)
     assert fresh == [messages[0], messages[-1]]
+
+
+def test_everything_gives_the_model_the_message_and_nothing_else():
+    messages = [
+        {"role": "system", "content": "You are Aura Luna. You have strong opinions."},
+        {"role": "user", "content": "an earlier probe"},
+        {"role": "user", "content": "Why do limpets come back to the same scar?"},
+    ]
+
+    def measured():
+        leave_out(["everything"], measurement=True)
+        return as_measured(messages)
+
+    assert contextvars.copy_context().run(measured) == [messages[-1]]

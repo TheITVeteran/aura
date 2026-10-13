@@ -50,8 +50,13 @@ from tools.how_much_of_a_reply_is_about_her import share_about_her  # noqa: E402
 #: `opening`, `rules` and `state` are the three kinds of line in the compact
 #: prompt that serves live chat; `anchor`, `examples`, `attractors` and
 #: `honesty` are the headed sections of the long prompt the other lanes use.
-ARMS: tuple[str, ...] = ("none", "opening", "rules", "state", "bare", "anchor", "examples", "attractors", "honesty")
-LIVE_CHAT_ARMS = "none,opening,rules,state,bare"
+#: `everything` gives the model the message and no system text at all, so it
+#: is the arm that removes all three of her persona prompts whichever lane
+#: serves the turn.
+ARMS: tuple[str, ...] = (
+    "none", "everything", "opening", "rules", "state", "bare", "anchor", "examples", "attractors", "honesty",
+)
+LIVE_CHAT_ARMS = "none,everything"
 
 #: What a person might say to her on an ordinary day: about the world, about
 #: an opinion, something she cannot know, and one that turns to her.
