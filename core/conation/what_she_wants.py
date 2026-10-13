@@ -116,7 +116,10 @@ _UNKNOWN = 1.0 / 3.0
 #: The kinds of thing a turn names that she can go to herself. The rest of
 #: what a turn was about (herself, the source that won her attention, an act
 #: and how it came out) shares the credit and is nowhere to go.
-REACHABLE_KINDS: frozenset[str] = frozenset({"topic", "person"})
+REACHABLE_KINDS: frozenset[str] = frozenset({"topic", "person", "game"})
+
+#: How many of the things a thing has come with are kept for it.
+MAX_COMPANY = 16
 
 #: The way any named thing affords before she has gone to it by another:
 #: finding out about it.
@@ -211,6 +214,11 @@ class Thing:
     #: thing no exchange named.
     stood_out: float = 0.0
     named: int = 0
+    #: What the turns were worth while something she had started with it was
+    #: still under way: the doing, apart from how it ended.
+    during: Way = field(default_factory=Way)
+    #: The things it has come with, and in how many turns.
+    came_with: dict[str, int] = field(default_factory=dict)
 
     @property
     def kind(self) -> str:
@@ -232,6 +240,8 @@ class Thing:
             "open": dict(self.open),
             "stood_out": self.stood_out,
             "named": self.named,
+            "during": [self.during.times, self.during.liking],
+            "came_with": dict(self.came_with),
         }
 
     @classmethod
@@ -251,6 +261,9 @@ class Thing:
         thing.open = {str(k): str(v) for k, v in dict(data.get("open", {})).items()}
         thing.stood_out = max(0.0, min(1.0, float(data.get("stood_out", 0.0))))
         thing.named = max(0, int(data.get("named", 0)))
+        times, liking = data.get("during", [0, 0.0])
+        thing.during = Way(times=int(times), liking=float(liking))
+        thing.came_with = {str(k): int(v) for k, v in dict(data.get("came_with", {})).items()}
         return thing
 
 
@@ -308,6 +321,9 @@ class WhatSheWants:
         #: liking usually lands from what the things in it predicted.
         self._noise = _UNKNOWN
         self._read = 0
+        #: The share of her recent turns that were worth more than she
+        #: expected. One half is a life going as expected.
+        self._going = 0.5
         #: Where she went since the last turn was read, and how. The turn that
         #: is read next is the one that going is part of.
         self._went: list[tuple[str, str]] = []
@@ -354,6 +370,7 @@ class WhatSheWants:
             self._good_turns = max(0, min(self._turns, int(stored.get("good_turns", 0))))
             self._noise = max(1e-9, float(stored.get("noise", _UNKNOWN)))
             self._read = max(0, int(stored.get("read", 0)))
+            self._going = max(0.0, min(1.0, float(stored.get("going", 0.5))))
             for row in stored.get("things", []):
                 thing = Thing.from_dict(row)
                 self._things[thing.key] = thing
@@ -380,6 +397,7 @@ class WhatSheWants:
             "good_turns": self._good_turns,
             "noise": self._noise,
             "read": self._read,
+            "going": self._going,
             "saved_at": time.time(),
             "things": [thing.to_dict() for thing in self._things.values()],
             "said": dict(self._said),
@@ -560,11 +578,19 @@ class WhatSheWants:
                 if key not in keys:
                     keys.append(key)
                 can_reach.add(key)
+            # Whatever she has under way is part of this turn whether or not
+            # the turn named it: the doing is lived turn by turn, and a thing
+            # credited only when it ends is worth nothing until it is over.
+            doing = [key for key, thing in self._things.items() if thing.open]
+            for key in doing:
+                if key not in keys:
+                    keys.append(key)
             if not keys:
                 return {"read": False}
             self._turns += 1
             self._read += 1
             self._good_turns += liking > 0.0
+            self._going += ((1.0 if liking > 0.0 else 0.0) - self._going) / min(self._read, _WINDOW)
             things = [self._touch(key, labels.get(key, ""), key in can_reach) for key in keys]
             predicted = max(-1.0, min(1.0, sum(thing.liking for thing in things)))
             error = liking - predicted
@@ -592,6 +618,16 @@ class WhatSheWants:
                         thing.channels[channel] = held + (paid - held) * rate
                 if went.get(thing.key):
                     thing.ways.setdefault(went[thing.key], Way()).went(liking)
+                if thing.key in doing:
+                    thing.during.went(liking)
+                if thing.reachable:
+                    for other in things:
+                        if other.reachable and other.key != thing.key:
+                            thing.came_with[other.key] = thing.came_with.get(other.key, 0) + 1
+                    if len(thing.came_with) > MAX_COMPANY:
+                        thing.came_with = dict(
+                            sorted(thing.came_with.items(), key=lambda kv: (-kv[1], kv[0]))[:MAX_COMPANY]
+                        )
                 share = (stood_out or {}).get(thing.key)
                 if share is not None:
                     thing.named += 1
@@ -707,6 +743,39 @@ class WhatSheWants:
             found = [thing for thing in self._things.values() if self.known(thing.key) is False]
         return sorted(found, key=lambda thing: (thing.liking, thing.key))
 
+    def pictured(self, key: str) -> float:
+        """What a thing is pictured to be worth from what it has come with, in [0, 1].
+
+        A person wants a walk before taking it: the morning is put together
+        from walks already had and it pulls. Worth spreads the same way to a
+        thing that earned none of its own, from the things it has kept company
+        with (Wimmer and Shohamy 2012). Each companion counts by the share of
+        this thing's turns it was in and by what she has found it worth.
+        """
+        with self._lock:
+            thing = self._things.get(key)
+            if thing is None or thing.contacts <= 0:
+                return 0.0
+            pictured = 0.0
+            for other_key, turns in thing.came_with.items():
+                other = self._things.get(other_key)
+                if other is not None:
+                    pictured += min(1.0, turns / thing.contacts) * max(0.0, other.liking)
+            return max(0.0, min(1.0, pictured))
+
+    def vigor(self) -> float:
+        """How readily she acts, against a life going as she expected: 1.0.
+
+        The time worth waiting before an act falls as the square root of the
+        average rate at which things have been paying, because waiting costs
+        what that time would have brought (Niv, Daw, Joel and Dayan 2007). The
+        rate is the share of her recent turns worth more than she expected,
+        and one half is the life she expected.
+        """
+        with self._lock:
+            share = (self._going * min(self._read, _WINDOW) + 1.0) / (min(self._read, _WINDOW) + 2.0)
+        return math.sqrt(share / 0.5)
+
     def expected_worth(self, goal: str, metadata: Mapping[str, Any] | None = None) -> float | None:
         """What her record says acting on an option would be worth, in [0, 1].
 
@@ -812,11 +881,15 @@ class WhatSheWants:
             # Silvia 2005). A thing no exchange named is one she went to, and
             # that is a whole foothold.
             foothold = thing.stood_out if thing.named else 1.0
+            pictured = self.pictured(thing.key)
             state = engine.appraise(
                 Incentive(
                     key=thing.key,
                     description=thing.label,
-                    cached_value=max(0.0, thing.liking) if thing.contacts else None,
+                    # Her own share of what its turns were worth, or what it
+                    # is pictured to be worth from its company, whichever is
+                    # more: she can want what she has only pictured.
+                    cached_value=max(max(0.0, thing.liking), pictured) if thing.contacts else None,
                     cue_salience=thing.stood_out,
                 ),
                 epistemic_affordance=foothold,
@@ -851,6 +924,8 @@ class WhatSheWants:
                     why=(
                         f"{thing.contacts} contacts, {thing.good} of them worth more than she expected; "
                         f"her share of their worth {thing.liking:+.3f}, variance {thing.unsure:.4f}; "
+                        f"pictured from its company {pictured:.3f}; "
+                        f"the doing was worth {thing.during.liking:+.3f} over {thing.during.times} turns; "
                         f"{state.why()}"
                     ),
                     liking=thing.liking,

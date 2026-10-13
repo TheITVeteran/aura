@@ -612,7 +612,28 @@ class AutonomyConductor:
     async def _job_overt_action_cycle(self) -> dict[str, Any]:
         from core.runtime.overt_action_loop import get_overt_action_loop
 
-        return await get_overt_action_loop().run_once()
+        result = await get_overt_action_loop().run_once()
+        self._pace_her_acts()
+        return result
+
+    #: The time between her acts in a life going as she expected.
+    _HER_PACE_S = 120.0
+
+    def _pace_her_acts(self) -> None:
+        """Her next act comes sooner when her life has been paying, later when it has not.
+
+        The cycle ran every 120 seconds whatever her last hours were worth.
+        See `vigor` in core/conation/what_she_wants.py.
+        """
+        job = self.jobs.get("overt_action_cycle")
+        if job is None:
+            return
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            job.interval_s = self._HER_PACE_S / max(1e-6, get_what_she_wants().vigor())
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("her pace was left where it was: %s", exc)
 
     async def _job_online_lora_status(self) -> dict[str, Any]:
         from core.adaptation.online_lora_governor import get_online_lora_governor

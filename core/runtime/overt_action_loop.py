@@ -1094,7 +1094,10 @@ class OvertActionLoop:
         await asyncio.to_thread(self._emit_receipts, result, raw_result)
         self._record_life_trace(result, raw_result)
         self._update_goal(result)
-        self._emit_visible_trace(result)
+        # What she does on a want of her own is not announced. It is on her
+        # receipts and her life trace like any act; it is not a status update.
+        if result.source != "want":
+            self._emit_visible_trace(result)
         return result
 
     @staticmethod

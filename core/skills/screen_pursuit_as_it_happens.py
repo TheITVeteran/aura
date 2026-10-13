@@ -1857,6 +1857,16 @@ def _keep_what_she_learned(page: Any, keep: dict[str, Any]) -> None:
     from core.runtime.what_she_learned import remember
 
     remember(_this_game(page), to_keep(keep))
+    # And the game is a thing she went to, on the one record her talk and her
+    # idle hours are on, so what playing it was worth is hers everywhere.
+    try:
+        from core.conation.what_she_wants import get_what_she_wants
+
+        name = str(_this_game(page) or "").strip()
+        if name:
+            get_what_she_wants().went(f"game:{name}", "play", label=name)
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("the game did not reach her record of what she has met: %s", exc)
 
 
 #: How long her model is given to answer a question a place asks where the place waits for her answer.
