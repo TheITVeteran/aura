@@ -7,8 +7,8 @@ the same game, headless, gave thirty; she lost every game at that rate.
 
 Chromium can instead send each frame as it composites it (the devtools
 screencast). Whatever draws them, a canvas, WebGL, a Flash emulator, a video,
-the frames come as fast as the page changes, and a page that stands still
-sends none: then the last frame is still the picture.
+the frames come as fast as the page changes. Silence can mean either a still
+page or a stalled stream; a fresh screenshot distinguishes them.
 
 ``PageFrames.look`` returns the newest frame cropped to a part of the page,
 in the page's own pixels, and None when the browser cannot stream (any
@@ -23,12 +23,13 @@ import time
 from typing import Any
 
 from core.runtime.executors import run_interactive_cpu
+from core.verify import invariant
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["CanvasFrames", "PageFrames"]
 
-#: How long to wait for a new frame before taking the page to be standing still.
+#: How long to wait before asking the caller for a fresh screenshot.
 STILL_AFTER_S = 0.25
 
 
@@ -95,7 +96,8 @@ class PageFrames:
         if self._latest is None:
             return None
         data, metadata, arrived = self._latest
-        fresh = arrived > self._taken_at
+        if not _new_frame(arrived, self._taken_at):
+            return None
         self._taken_at = arrived
         try:
             picture = await run_interactive_cpu(_cropped, data, metadata, clip)
@@ -104,9 +106,7 @@ class PageFrames:
             return None
         if picture is None:
             return None
-        # A page standing still sends nothing; the same picture, now, is what
-        # it shows now.
-        return picture, (arrived if fresh else time.monotonic())
+        return picture, arrived
 
     async def close(self) -> None:
         session, self._session = self._session, None
@@ -126,6 +126,23 @@ class PageFrames:
             await session.detach()
         except Exception as why:  # noqa: BLE001 - detaching remains necessary when stopping failed
             logger.debug("detaching the stream: %s", why)
+
+
+def _new_frame(arrived: float, taken: float) -> bool:
+    """A frame keeps its original receipt; silence cannot renew it."""
+    import math
+
+    return math.isfinite(arrived) and arrived > taken
+
+
+@invariant("perception.a_repeated_frame_cannot_renew_its_time", scope="perception",
+           owner="core/perception/frames_as_they_are_drawn.py", observational=False)
+def _frame_time_invariant() -> tuple:
+    assert _new_frame(2., 1.)
+    assert not _new_frame(2., 2.)
+    assert not _new_frame(1., 2.)
+    assert not _new_frame(float('nan'), 2.)
+    return ()
 
 
 def _cropped(data: str, metadata: dict[str, Any], clip: dict[str, float]) -> Any:
@@ -204,11 +221,13 @@ class CanvasFrames:
                 self._observing = await acquire(self.page)
                 # What the page plays is heard from here on, where it was not listened to from its first script.
                 await self.page.evaluate(LISTEN)
+            # The request starts before the canvas is read. Its response can
+            # arrive much later, so completion cannot make the picture new.
+            at = time.monotonic()
             data = await self.page.evaluate(_THE_CANVAS_NOW, clip)
         except Exception as why:  # noqa: BLE001 - a page that cannot be asked has no canvas to read
             logger.debug("the canvas could not be read: %s", why)
             data = None
-        at = time.monotonic()
         encoded = data.get("pixels") if isinstance(data, dict) else data
         try:
             picture = await run_interactive_cpu(_from_data_url, encoded) if encoded else None

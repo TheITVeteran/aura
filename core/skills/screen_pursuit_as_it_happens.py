@@ -586,10 +586,10 @@ class PlayingAsItHappens:
             # live play ran at thirteen pictures a second (2026-10-04).
             from core.perception.a_picture_of_her_page import picture_of
 
+            at = time.monotonic()
             picture = await picture_of(self.page, clip, css=True, kind="jpeg")
         except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
             return None
-        at = time.monotonic()
         if picture is None:
             return None
         return picture, at

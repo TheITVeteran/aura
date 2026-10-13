@@ -406,6 +406,7 @@ def _visual_motion_claims() -> tuple:
     from core.perception.a_reading_before_more_detail import _finished_reading_invariant
     from core.perception.activity_in_the_picture import _picture_activity_invariant
     from core.perception.boundary_support_for_translation import _visible_boundary_invariant
+    from core.perception.frames_as_they_are_drawn import _frame_time_invariant
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.position_from_the_same_points import _point_path_invariant
     from core.perception.reading_again_after_loss import _reading_renewal_invariant
@@ -415,6 +416,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("repeated_stream_frames_keep_their_original_time", "core/perception/frames_as_they_are_drawn.py",
+         "tests/test_a_frame_keeps_its_capture_time.py", lambda: _frame_time_invariant() == (),
+         "A consumed stream frame cannot become a fresh observation through silence; canvas and screenshot requests retain their start time through slow completion."),
         ("control_prediction_uses_the_current_picture_age", "core/agency/time_from_picture_to_control.py",
          "tests/test_control_uses_this_pictures_age.py", lambda: _picture_age_invariant() == (),
          "Prediction refreshes the current picture age before steering and keeps measured delivery and post-acknowledgement response separate."),
