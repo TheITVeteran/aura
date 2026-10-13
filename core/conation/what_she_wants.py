@@ -931,6 +931,18 @@ class WhatSheWants:
         )
         return below < _WRONG
 
+    def how_far_off(self) -> float:
+        """How far below what she expected her recent turns have run, in [0, 1].
+
+        Nothing while half or more of them were worth more than she expected,
+        and one when none were. The graded form of `something_is_off`, for
+        what should rise with the mismatch and rest without one.
+        """
+        with self._lock:
+            if self._read <= 0:
+                return 0.0
+            return max(0.0, min(1.0, (0.5 - self._going) * 2.0))
+
     def vigor(self) -> float:
         """How readily she acts, against a life going as she expected: 1.0.
 

@@ -183,3 +183,32 @@ def test_she_looks_at_herself_when_her_turns_have_gone_worse_than_she_expected(r
     for _ in range(200):
         record.met(["self"], -0.4)
     assert record.something_is_off()
+
+
+def test_the_urge_to_go_over_herself_rests_when_nothing_is_off_and_rises_when_it_is(record):
+    from core.consciousness.drive_integration import _reflection_signal, get_drive_integration_engine
+
+    calm = {"dominance": 0.8, "arousal": -0.6}
+    assert _reflection_signal(calm) > 0.5
+    for _ in range(30):
+        record.met(["self"], 0.4)
+    gathered = get_drive_integration_engine().gather_signals(dict(calm))
+    assert gathered["off"] == 0.0 and _reflection_signal(gathered) == 0.0
+    for _ in range(200):
+        record.met(["self"], -0.4)
+    gathered = get_drive_integration_engine().gather_signals(dict(calm))
+    assert gathered["off"] > 0.5 and _reflection_signal(gathered) > 0.3
+
+
+def test_the_self_development_scan_waits_for_something_to_be_off(record, monkeypatch):
+    from core.autonomy import autonomous_initiative_loop as loop
+
+    monkeypatch.setattr(loop, "background_activity_reason", lambda *a, **k: "")
+    for _ in range(30):
+        record.met(["self"], 0.4)
+    assert loop._self_development_blocker() == "nothing_is_off"
+    for _ in range(200):
+        record.met(["self"], -0.4)
+    assert loop._self_development_blocker() == ""
+    monkeypatch.setattr(loop, "background_activity_reason", lambda *a, **k: "user_active")
+    assert loop._self_development_blocker() == "user_active"

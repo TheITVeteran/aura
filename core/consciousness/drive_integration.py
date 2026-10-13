@@ -107,7 +107,18 @@ def _boredom_signal(s: dict[str, float]) -> float:
 
 
 def _reflection_signal(s: dict[str, float]) -> float:
-    return _clamp(0.6 * max(0.0, s.get("dominance", 0.0)) + 0.4 * max(0.0, -s.get("arousal", 0.0)))
+    """The urge to go over herself, which follows something not matching what she expected.
+
+    It had been calm and a sense of control alone, so whenever nothing was
+    happening she turned to herself: live on 13 October, deep reflection was
+    chosen 56 times in three hours. A person looks at themselves when
+    something is off and otherwise at what they are doing (Duval and Wicklund
+    1972; Carver and Scheier 1981). The calm that gives room for it still
+    scales the urge; the mismatch is what there is to reflect on. Where the
+    mismatch is not supplied the reading is what it was.
+    """
+    room = _clamp(0.6 * max(0.0, s.get("dominance", 0.0)) + 0.4 * max(0.0, -s.get("arousal", 0.0)))
+    return room * _clamp(s["off"]) if "off" in s else room
 
 
 def _relief_signal(s: dict[str, float]) -> float:
@@ -202,6 +213,15 @@ class DriveIntegrationEngine:
             except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("drive_integration", exc, severity="debug")
                 signals.setdefault("pain", 0.0)
+        if "off" not in signals:
+            # How far her recent turns have run below what she expected.
+            # See `how_far_off` in core/conation/what_she_wants.py.
+            try:
+                from core.conation.what_she_wants import get_what_she_wants
+
+                signals["off"] = _clamp(get_what_she_wants().how_far_off())
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+                record_degradation("drive_integration", exc, severity="debug")
         return signals
 
     def state(self) -> dict[str, object]:

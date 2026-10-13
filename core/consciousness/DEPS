@@ -38,6 +38,9 @@ include_rules = [
     "+core.config",
     "+core.connectome",
     "+core.constitution",
+    # The urge to go over herself reads how far her recent turns have run
+    # below what she expected, from her record of what her turns were worth.
+    "+core.conation",
     "+core.container",
     "+core.continuity",
     "+core.conversation.word_markers",
