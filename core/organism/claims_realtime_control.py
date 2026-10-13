@@ -399,6 +399,7 @@ def _visual_motion_claims() -> tuple:
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.controls_that_take_time_to_build import _stored_response_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
+    from core.agency.following_a_prepared_path import _prepared_path_invariant
     from core.agency.inputs_while_measuring_control import _single_input_interval_invariant
     from core.agency.room_to_finish_a_required_motion import _preparation_room_invariant
     from core.agency.solving_for_a_required_state import _required_state_invariant
@@ -419,6 +420,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("prepared_paths_need_current_feedback_and_receipts", "core/agency/following_a_prepared_path.py",
+         "tests/test_a_prepared_path_requires_current_feedback.py", lambda: _prepared_path_invariant() == (),
+         "A prepared input path is replayed from fresh state under the same model identity; only its own timely completed input receipt advances its cursor."),
         ("motion_forecasts_keep_released_response", "core/agency/controls_that_take_time_to_build.py",
          "tests/test_room_to_finish_a_required_motion.py", lambda: _stored_response_invariant() == (),
          "Known channel equations retain build-up and decay; a fast affine forecast agrees with physical ticks without declaring intermediate contacts safe."),
