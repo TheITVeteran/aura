@@ -321,6 +321,9 @@ class WhatSheWants:
         self._said_in: Counter[str] = Counter()
         self._exchanges = 0
         self._shares: dict[str, float] = {}
+        #: What she has decided to do when she next can, if anything: one of
+        #: her wants, as it stood when she decided.
+        self._decided: dict[str, Any] | None = None
         self._standing: list[Want] = []
         self._engine = engine
         self._path = Path(path) if path is not None else None
@@ -358,6 +361,8 @@ class WhatSheWants:
             self._said_total = max(0, int(stored.get("said_total", 0)))
             self._said_in = Counter({str(k): int(v) for k, v in dict(stored.get("said_in", {})).items()})
             self._exchanges = max(0, int(stored.get("exchanges", 0)))
+            decided = stored.get("decided")
+            self._decided = dict(decided) if isinstance(decided, dict) and decided.get("thing") else None
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             self._things.clear()
             self._turns = self._good_turns = self._read = 0
@@ -381,6 +386,7 @@ class WhatSheWants:
             "said_total": self._said_total,
             "said_in": dict(self._said_in),
             "exchanges": self._exchanges,
+            "decided": self._decided,
         }
 
     def _save(self, payload: dict[str, Any]) -> None:
@@ -857,6 +863,64 @@ class WhatSheWants:
         with self._lock:
             self._standing = list(found)
         return found if limit is None else found[: max(0, int(limit))]
+
+    # ── what she has decided ─────────────────────────────────────────────
+
+    def decide(self) -> dict[str, Any] | None:
+        """What she most wants, settled for the next time she is free to act.
+
+        A person who wants a walk tomorrow decides once and does not argue it
+        again in the morning (Bratman 1987; Gollwitzer 1999). Her slate was
+        rebuilt every cycle and nothing on it was ever settled, so a want that
+        formed while somebody was with her was gone by the time she was free.
+        One thing is held at a time, and what is already held stays held.
+        """
+        with self._lock:
+            if self._decided is not None:
+                return dict(self._decided)
+        wanted = self.wants(limit=1)
+        if not wanted:
+            return None
+        with self._lock:
+            self._decided = {**wanted[0].as_dict(), "decided_turn": self._turns}
+            held = self._held()
+            decided = dict(self._decided)
+        self._save(held)
+        return decided
+
+    def decided(self) -> dict[str, Any] | None:
+        """What she is holding to do, while she still wants it.
+
+        Let go when she has come to dislike the thing or has given up on it;
+        a decision is kept against other wants, and it is dropped when the
+        want under it is gone.
+        """
+        with self._lock:
+            held = dict(self._decided) if self._decided is not None else None
+        if held is None:
+            return None
+        key = str(held.get("thing") or "")
+        gone = self.known(key) is False
+        try:
+            gone = gone or self._conation().dynamics.frustration(key).should_disengage()
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "what_she_wants", exc, severity="debug",
+                action="kept what she had decided without asking whether she has given up on it",
+            )
+        if gone:
+            self.done_with(key)
+            return None
+        return held
+
+    def done_with(self, key: str) -> None:
+        """She did what she had decided, or let it go."""
+        with self._lock:
+            if self._decided is None or str(self._decided.get("thing")) != key:
+                return
+            self._decided = None
+            held = self._held()
+        self._save(held)
 
     def standing(self) -> list[Want]:
         """What she wanted the last time it was asked, without asking again.

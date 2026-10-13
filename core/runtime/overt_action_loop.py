@@ -174,12 +174,21 @@ class OvertActionLoop:
 
             reason = self._background_reason()
             if reason and not force:
+                # She cannot act now. What she most wants is settled for when
+                # she can, so it is still hers when the moment comes.
+                self._decide_for_later()
                 return self._record_skip(f"background_policy:{reason}").to_dict()
 
             state = self._state()
-            synth_result = await self._synthesize(state)
-            initiative = dict(getattr(synth_result, "winner", None) or {})
+            # What she already decided is done first and is not argued again
+            # against whatever else has come up since.
+            initiative, held_receipt = self._what_she_decided()
+            synth_result = None if initiative else await self._synthesize(state)
             if not initiative:
+                initiative = dict(getattr(synth_result, "winner", None) or {})
+            if held_receipt:
+                will_receipt_id = held_receipt
+            elif not initiative:
                 if os.getenv("AURA_OVERT_ACTION_FALLBACK", "0").strip().lower() in {"0", "false", "off", "no"}:
                     return self._record_skip("no_authorized_initiative").to_dict()
                 initiative = self._fallback_initiative()
@@ -500,6 +509,52 @@ class OvertActionLoop:
             )
         _note_want(initiative, result)
         return await self._finish(result, raw_result=raw)
+
+    @staticmethod
+    def _decide_for_later() -> None:
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            get_what_she_wants().decide()
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "overt_action_loop", exc, severity="warning",
+                action="could not act and settled nothing for when she can",
+            )
+
+    def _what_she_decided(self) -> tuple[dict[str, Any], str]:
+        """The initiative for what she is holding to do, and the Will's leave for it.
+
+        Empty when she holds nothing or the Will refuses it. The Will is asked
+        because it is the boundary every act of hers passes; nothing else is
+        asked, because she has already chosen.
+        """
+        try:
+            from core.conation.what_she_wants import FIND_OUT, get_what_she_wants
+
+            held = get_what_she_wants().decided()
+            if not held:
+                return {}, ""
+            metadata: dict[str, Any] = {"want": held, "decided": True}
+            if not held.get("unfinished"):
+                metadata["skill"] = "web_search" if held.get("way") == FIND_OUT else held.get("way")
+                metadata["params"] = {"query": held.get("label")}
+            initiative = {
+                "goal": str(held.get("unfinished") or held.get("label") or ""),
+                "source": "want",
+                "type": "decided",
+                "urgency": float(held.get("priority", 0.0) or 0.0),
+                "triggered_by": str(held.get("origin") or "interest"),
+                "metadata": metadata,
+            }
+            receipt = self._authorize_fallback(initiative)
+            return (initiative, receipt) if receipt else ({}, "")
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "overt_action_loop", exc, severity="warning",
+                action="did not act on what she had decided; chose afresh",
+            )
+            return {}, ""
 
     async def _execute_planned_goal(
         self,
@@ -1348,6 +1403,7 @@ def _note_want(initiative: dict[str, Any], result: OvertActionResult) -> None:
         record.went(thing, result.skill or str(want.get("way") or ""), label=str(want.get("label") or ""))
         if result.status == "deferred":
             return
+        record.done_with(thing)
         held = record.thing(thing)
         unfinished = str(want.get("unfinished") or "")
         if result.verified:
