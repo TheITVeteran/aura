@@ -109,4 +109,26 @@ async def look_at_a_page(
             "on_her_page": True,
         }
     )
+    from core.perception.a_reading_before_more_detail import keep_the_finished_reading
+
+    captured = getattr(reading, "picture_snapshot", None)
+    keep_the_finished_reading(reading, lambda: _the_same_picture_now(page, surface, name, clip, (wide, tall), captured))
     return reading
+
+
+async def _the_same_picture_now(page: Any, surface: str, name: str, clip: dict[str, float], size: tuple[int, int],
+                                captured: Any) -> bool:
+    """Extra pointer inspection may change a page; only an unchanged capture keeps the reading usable."""
+    import numpy as np
+
+    from core.perception.a_picture_of_her_page import picture_of
+    from core.perception.observed_transfer import make_snapshot
+
+    if surface != f"page:{id(page)}:{name}:{getattr(page, 'url', '')}" or await the_page_size(page) != size:
+        return False
+    picture = await picture_of(page, clip, css=False, kind="png")
+    if (picture is None or surface != f"page:{id(page)}:{name}:{getattr(page, 'url', '')}"
+            or await the_page_size(page) != size):
+        return False
+    current = make_snapshot(np.ascontiguousarray(picture[:, :, ::-1]))
+    return current is not None and current == captured

@@ -6,7 +6,6 @@ which the decision needs as much as it needs the reading itself.
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -208,9 +207,11 @@ async def observe_the_screen(
     # are not the same thing and do not have the same answer.
     patience = _how_long_a_look_takes(reading_took)
     began_looking = time.monotonic()
+    from core.perception.a_reading_before_more_detail import read_within_its_time
+
     try:
-        seen = await asyncio.wait_for(
-            read_screen(target_app, over=drawn["where"]), timeout=patience
+        seen = await read_within_its_time(
+            lambda: read_screen(target_app, over=drawn["where"]), patience
         )
     except TimeoutError:
         # A wedged capture is not a reason to keep acting blind.

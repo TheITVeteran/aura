@@ -402,6 +402,7 @@ def _visual_motion_claims() -> tuple:
     from core.agency.what_a_press_does import _settled_trial_invariant, _unchanged_input_invariant
     from core.agency.what_follows_the_pointer import _pointer_body_continuity_invariant
     from core.agency.which_one_answers_to_her import _motion_segments_invariant
+    from core.perception.a_reading_before_more_detail import _finished_reading_invariant
     from core.perception.activity_in_the_picture import _picture_activity_invariant
     from core.perception.boundary_support_for_translation import _visible_boundary_invariant
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
@@ -413,6 +414,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("finished_readings_survive_only_with_their_current_capture", "core/perception/a_reading_before_more_detail.py",
+         "tests/test_a_finished_reading_survives_slow_detail.py", lambda: _finished_reading_invariant() == (),
+         "Optional inspection timeouts can retain completed scoped readings only after a new capture agrees; incomplete, changed or refused captures remain unavailable."),
         ("arrivals_need_measured_braking_room", "core/agency/arriving_by_her_pushes.py",
          "tests/test_a_carried_body_arrives_before_it_stops.py", lambda: _arrival_braking_invariant() == (),
          "Carried arrival plans need measured braking pushes and finite goals; terminal closing speed is weighed against room before first contact."),
