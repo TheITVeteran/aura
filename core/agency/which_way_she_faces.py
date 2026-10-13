@@ -51,6 +51,9 @@ SPREAD_PRESSES = 3
 #: How long after a key is pressed her going is still the last key's: the game, and the picture of it, answer late.
 SETTLE_S = 0.2
 
+#: The longest interval between observations that can establish a continuous turn.
+OBSERVATION_GAP_S = .35
+
 
 def _wrap(angle: float) -> float:
     return (angle + math.pi) % (2 * math.pi) - math.pi
@@ -105,16 +108,31 @@ class WhichWaySheFaces:
     pressed: set[str] = field(default_factory=set)
     last_tried: str = ""
     now: float = 0.0
+    last_picture_at: float | None = None
 
-    def saw(self, vx: float, vy: float, held: str, at: float) -> None:
-        """One picture of her: how she was going, and the key held ("" for none)."""
+    def saw(self, vx: float, vy: float, held: str, at: float, *, measured: bool = True,
+            began: float | None = None) -> None:
+        """Read observed motion under its delivered input; missing motion advances time without teaching a response."""
+        if not math.isfinite(at) or (self.last_picture_at is not None and at <= self.last_picture_at):
+            return
+        if began is not None and (not math.isfinite(began) or began > at):
+            return
+        gap = self.last_picture_at is not None and at - self.last_picture_at > OBSERVATION_GAP_S
+        self.last_picture_at = at
         self.now = at
-        if held != self.held:
-            self._let_go(at)
-            self.held, self.held_since, self.going, self.sign = held, at, [], None
+        if held != self.held or (began is not None and began != self.held_since):
+            since = at if began is None else began
+            self._let_go(since)
+            self.held, self.held_since, self.going, self.sign = held, since, [], None
             self.settled_pictures = 0
             if held:
                 self.pressed.add(held)
+        if gap or not measured or not all(math.isfinite(v) for v in (vx, vy)):
+            self.going = []
+            self.settled_pictures = 0
+            self.turns_measured = False
+            if not measured or not all(math.isfinite(v) for v in (vx, vy)):
+                return
         # Just after a press she still goes as the last key had her going: in rooms with walls (offline 2026-10-11) a
         # press into a wall was read as a key that took her the way the key before it had.
         if not held or at - self.held_since < SETTLE_S:
@@ -123,6 +141,10 @@ class WhichWaySheFaces:
         if math.hypot(vx, vy) < MOVING:
             return
         self.going.append((vx, vy))
+        self._saw_direction(vx, vy, held)
+
+    def _saw_direction(self, vx: float, vy: float, held: str) -> None:
+        """Anchor the facing to observed travel and close any observed turning interval."""
         # Whether this key takes her ahead or back: as it has before; else, for the first key she ever goes by, ahead,
         # which sets which way is ahead; else whichever of its two readings (the way she goes, or its opposite) is
         # nearer where the turns since she last went should have brought her facing: by the rates learned so far, and
@@ -150,8 +172,8 @@ class WhichWaySheFaces:
                 self.turns.append((dict(held_for), _wrap(way - self.facing)))
                 del self.turns[:-60]
             self.turned_by = []
-            self.turns_measured = True
         self.facing = way
+        self.turns_measured = True
 
     def _turned_since(self) -> float:
         """How far the turning keys pressed since she last went are known to have turned her."""

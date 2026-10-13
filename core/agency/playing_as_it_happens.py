@@ -55,6 +55,7 @@ from core.agency.choosing_where_to_be import (  # noqa: F401 (the existing decis
 )
 from core.agency.controls_ready_for_the_motion_model import has_a_measured_response
 from core.agency.countering_motion_as_it_appears import CounteringMotion
+from core.agency.facing_seen_under_its_input import observe_facing
 from core.agency.holding_to_charge import Charging
 from core.agency.how_far_her_blow_reaches import BLOW_EVERY_S as BLOW_EVERY_S
 from core.agency.how_far_her_blow_reaches import HerBlows
@@ -643,8 +644,8 @@ def _what_the_place_does(run: _Run, choosing: _Choosing, moves: WhatMoves, hers:
                       counters=meeting.readouts.current, vitals=meeting.vitals)
     choosing.gone_for, choosing.urgency = run.gone_for, run.pressures.urgency()
     choosing.faces, choosing.comes, choosing.way_through = run.faces, run.comes, run.way_through
+    observe_facing(run.faces, mine, hers, at)
     if mine is not None:
-        run.faces.saw(float(mine.vx), float(mine.vy), run.held, at)
         run.comes.saw(moves.things.values(), mine)
     # Carried on by her own going, doing nothing is already what her going does; under the pointer, it is staying put.
     if mine is not None and not getattr(hers, "carried", False) and not choosing.pointing:

@@ -17,6 +17,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.agency.controls_ready_for_the_motion_model import _model_readiness_invariant
     from core.agency.countering_motion_as_it_appears import _counter_trial_measurement_invariant
     from core.agency.deliberate_action import _unmeasured_response_invariant
+    from core.agency.facing_seen_under_its_input import _facing_input_invariant
     from core.agency.giving_a_trial_time import _control_trial_time_invariant
     from core.agency.how_a_game_works import _known_body_controls_invariant
     from core.agency.keeping_a_trial_observable import _observed_viability_invariant
@@ -122,6 +123,9 @@ def install_realtime_control_claims(suite: Any) -> None:
         ("turns_require_settled_observations", "core/agency/which_way_she_faces.py",
          "tests/test_a_turn_is_not_learned_from_unseen_motion.py", lambda: _turn_observation_invariant() == (),
          "Stationary turning samples require settled observations; missing pictures cannot establish that a press moved nothing."),
+        ("facing_keeps_observed_motion_and_input_custody", "core/agency/facing_seen_under_its_input.py",
+         "tests/test_facing_uses_observed_motion_and_its_input.py", lambda: _facing_input_invariant() == (),
+         "Facing measurements require current observed motion under the input delivered before the picture; predictions and overlapping inputs teach no response."),
         ("current_play_words_require_a_measured_frame", "core/skills/current_words_before_play.py",
          "tests/test_current_words_precede_play_interpretation.py", lambda: _current_play_words_invariant() == (),
          "Fast play handoff reads use current measured words; empty, old and future frames cannot remove a menu."),
