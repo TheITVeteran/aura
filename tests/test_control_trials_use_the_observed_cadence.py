@@ -55,9 +55,12 @@ def _body(number, axis, sign):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("hz", [7.5, 10., 15., 60.])
 @pytest.mark.parametrize("axis,sign", [(0, -1), (0, 1), (1, -1), (1, 1)])
-async def test_the_actual_actor_learns_inertial_controls_at_each_observed_rate(monkeypatch, hz, axis, sign):
+@pytest.mark.parametrize("favored", [False, True])
+async def test_the_actual_actor_learns_inertial_controls_at_each_observed_rate(monkeypatch, hz, axis, sign, favored):
     now = [0.]
     monkeypatch.setattr(play.time, "monotonic", lambda: now[0])
+    if favored:
+        monkeypatch.setattr(play, "a_key_that_pays", lambda _keys: "other")
     actions = []
 
     class Hands:

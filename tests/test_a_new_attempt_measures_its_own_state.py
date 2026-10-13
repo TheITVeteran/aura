@@ -324,4 +324,5 @@ def test_a_key_pressed_into_the_floor_does_not_keep_her_trying_her_keys_for_good
     assert not _still_trying_keys(_Run(keys=keys, began=0, trying=KNOWN_BY * len(keys)), hers, found, False)
     hers.number = hers.kind = None                                      # not found: two turns at each, as ever
     assert _still_trying_keys(_Run(keys=keys, began=0, trying=1), hers, SimpleNamespace(mine=None), False)
-    assert not _still_trying_keys(_Run(keys=keys, began=0, trying=2 * len(keys)), hers, SimpleNamespace(mine=None), False)
+    assert _still_trying_keys(_Run(keys=keys, began=0, trying=2 * len(keys)), hers, SimpleNamespace(mine=None), False)
+    assert not _still_trying_keys(_Run(keys=keys, began=0, trying=KNOWN_BY * len(keys)), hers, SimpleNamespace(mine=None), False)

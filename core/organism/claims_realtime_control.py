@@ -20,6 +20,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.agency.facing_seen_under_its_input import _facing_input_invariant
     from core.agency.giving_a_trial_time import _control_trial_time_invariant
     from core.agency.how_a_game_works import _known_body_controls_invariant
+    from core.agency.inputs_while_measuring_control import _body_probe_phase_invariant
     from core.agency.keeping_a_trial_observable import _observed_viability_invariant
     from core.agency.using_a_control_on_a_thing import _object_use_target_invariant
     from core.agency.what_meeting_things_does import _absent_counters_are_not_current
@@ -117,6 +118,9 @@ def install_realtime_control_claims(suite: Any) -> None:
         ("body_trials_preserve_their_interaction_phase", "core/agency/body_trials_keep_the_world.py",
          "tests/test_body_trials_leave_interface_controls_available.py", lambda: _body_trial_phase_invariant() == (),
          "Known body trials exclude explicit resets and text-entry controls while preserving unknown inputs and interface availability."),
+        ("control_discovery_keeps_its_finite_observation_phase", "core/agency/inputs_while_measuring_control.py",
+         "tests/test_control_discovery_has_its_own_finite_phase.py", lambda: _body_probe_phase_invariant() == (),
+         "Control discovery reserves two isolated press and rest cycles and each delivered trial's finite observation interval before ordinary favored actions."),
         ("kept_words_need_their_captured_pixels", "core/perception/words_kept_with_their_pixels.py",
          "tests/test_old_menu_words_keep_their_pixels.py", lambda: _kept_word_pixels_invariant() == (),
          "Retained word readings can be contradicted by measured appearance changes; absent pixels and changed view geometry stay unknown."),

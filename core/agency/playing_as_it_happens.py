@@ -218,6 +218,7 @@ class _Run:
     held_trying: bool = False
     trying: int = 0
     tried_at: float = 0.0
+    last_payoff_trial_at: float = -math.inf
     #: Each delivered body trial keeps its deadline; the largest duration used also bounds the search allowance.
     body_trial: Any = None
     longest_control_trial_s: float = 0.0
@@ -804,14 +805,15 @@ TOUCHING_TO_NO_END_S = 20.0
 KNOWN_BY = 4
 
 
-def _still_trying_keys(run: _Run, hers: WhichIsHers, choosing: Any, trying_the_pointer: bool) -> bool:
+def _still_trying_keys(run: _Run, hers: WhichIsHers, choosing: Any, trying_the_pointer: bool, *,
+                       at: float | None = None) -> bool:
     """Whether her keys are still being tried: two turns at each until her thing is found; then until each is known,
     and no more than so many turns at each, known or not: a key held into a floor tells nothing however often it is
     pressed. Offline 2026-10-12 a brawler on the ground was tried with "down" every half second for the rest of the
     round, and never once punched the robots walking up to her."""
     return bool(not trying_the_pointer and run.keys and not hers.follows_pointer
-                and ((choosing.mine is None and run.trying < 2 * len(run.keys))
-                     or (hers.kind is not None and not hers.keys_known(run.keys) and run.trying < KNOWN_BY * len(run.keys))))
+                and (choosing.mine is None or hers.kind is not None)
+                and body_probe_is_active(run, hers, pointer_steps=2 * len(_POINTER_TRIAL), at=at))
 
 
 #: How many presses of the keys that moved her thing may go by with it not going, and for how long at least, before
@@ -1372,7 +1374,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
     # times a second in its first round and once a second in every round after.
     if (choosing.mine is None or _how_it_stands(run, at)[1]) and not hers.follows_pointer:
         await _fire_while_finding_herself(hands, run, hers, moves, rules, at)
-    if _still_trying_keys(run, hers, choosing, trying_the_pointer):
+    if _still_trying_keys(run, hers, choosing, trying_the_pointer, at=at):
         await _try_the_keys(hands, run, hers, at, moves)
         return
     if await _a_facing_trial(hands, run, hers, choosing, at):
@@ -1399,14 +1401,6 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
                 and (run.timing.pays() or at - run.tried_at < max(RECHECK_CONTROLS_S, run.timing.a_round_s()))
                 and await _press_in_time(hands, run, moves, at, say)):
             return
-        # A key she has come to think pays (core/cognition/what_she_notices.py), used while nothing of hers is found.
-        paying = a_key_that_pays(run.keys)
-        timing = run.timing is not None and run.timing.has_something_to_time(moves.things.values())
-        if paying and not timing and at - run.tried_at >= TRY_A_KEY_S and hasattr(hands, "tap"):
-            await hands.tap(paying)
-            run.input_key_downs[paying] += 1
-            run.tried_at = at
-            return
         if run.keys and run.trying >= 4 * len(run.keys) and at - run.tried_at >= RECHECK_CONTROLS_S:
             run.trying = 0
             run.control_probe_retries += 1
@@ -1419,6 +1413,15 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
                 _say(run, say, "I've lost track of which one is me; trying the keys again to find out.", at, once="recheck_controls")
             else:
                 logger.info("trying the keys again: nothing has answered to them yet")
+        # A favored tap has its own clock; it cannot postpone the next discovery pass.
+        paying = a_key_that_pays(run.keys)
+        timing = run.timing is not None and run.timing.has_something_to_time(moves.things.values())
+        if (paying and not timing and not body_probe_is_active(run, hers, pointer_steps=2 * len(_POINTER_TRIAL), at=at)
+                and at - max(run.tried_at, run.last_payoff_trial_at) >= TRY_A_KEY_S and hasattr(hands, "tap")):
+            await hands.tap(paying)
+            run.input_key_downs[paying] += 1
+            run.last_payoff_trial_at = at
+            return
         pointer_trial = run.pointed < 2 * len(_POINTER_TRIAL) and hasattr(hands, "point")
         if pointer_trial and run.pointer_first:
             await _try_the_pointer(hands, run, hers, moves, at)
@@ -1718,7 +1721,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     """
     from core.agency.thrown_at_what_shows import comes_at_her, how_long_throws_take
 
-    if rules is None or (not _no_body_to_find() and body_probe_is_active(run, hers, pointer_steps=2 * len(_POINTER_TRIAL))):
+    if rules is None or (not _no_body_to_find() and body_probe_is_active(run, hers, pointer_steps=2 * len(_POINTER_TRIAL), at=at)):
         return
     # A key the words give to getting out of the way is not one to fire with, whatever else a run-on line made of it:
     # LIVE 2026-10-11 "...FIVE TIMES WINS DODGE FOOD BY PRESSING THE SPACE BAR" gave space to hitting as well, she

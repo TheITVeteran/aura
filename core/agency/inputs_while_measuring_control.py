@@ -20,14 +20,39 @@ _PRIMARY: ContextVar[frozenset[tuple[int, int]]] = ContextVar('primary_control_d
 _INPUTS = frozenset({'down', 'up', 'tap', 'press', 'click', 'point'})
 
 
-def body_probe_is_active(run: Any, hers: Any, *, pointer_steps: int) -> bool:
+def body_probe_is_active(run: Any, hers: Any, *, pointer_steps: int, at: float | None = None) -> bool:
     """Reserve a finite discovery pass for one input at a time, including its rests."""
     if getattr(run, 'pointer_first', False):
         return not hers.follows_pointer and 0 <= getattr(run, 'pointed', pointer_steps) < pointer_steps
+    trial = getattr(run, 'body_trial', None)
+    epoch = getattr(getattr(hers, 'identification', None), 'epoch', 0)
+    if (at is not None and trial is not None and getattr(run, 'held_trying', False)
+            and trial.waits_for_picture(getattr(run, 'held', ''), getattr(run, 'held_since', None), epoch, at)):
+        return True
     keys = getattr(run, 'keys', ())
     trying = getattr(run, 'trying', None)
     return bool(keys and type(trying) is int and 0 <= trying < 4 * len(keys)
                 and (hers.number is None or not hers.keys_known(keys)))
+
+
+@invariant("agency.control_discovery_keeps_its_finite_observation_phase", scope="agency",
+           owner="core/agency/inputs_while_measuring_control.py", observational=False)
+def _body_probe_phase_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    from core.agency.giving_a_trial_time import ControlTrial
+    from core.agency.playing_as_it_happens import _still_trying_keys
+
+    hers = SimpleNamespace(number=None, kind=None, follows_pointer=False,
+                           identification=SimpleNamespace(epoch=0), keys_known=lambda _keys: False)
+    run = SimpleNamespace(keys=['a', 'b'], trying=4, pointer_first=False, body_trial=None)
+    choosing = SimpleNamespace(mine=None)
+    assert _still_trying_keys(run, hers, choosing, False, at=1.)
+    run.trying, run.held, run.held_since, run.held_trying = 8, '', 1., True
+    run.body_trial = ControlTrial('', 1., 1.5, 0)
+    assert _still_trying_keys(run, hers, choosing, False, at=1.25)
+    assert not _still_trying_keys(run, hers, choosing, False, at=1.5)
+    return ()
 
 
 class HandsWithControlReceipts:
