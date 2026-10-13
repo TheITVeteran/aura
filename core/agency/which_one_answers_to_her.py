@@ -142,24 +142,49 @@ class _Speeds:
     pinned_in: dict[tuple[str, float], int] = field(default_factory=dict)
     interrupted: set[tuple[str, float]] = field(default_factory=set)
     ended: set[tuple[str, float]] = field(default_factory=set)
+    sealed_by_gap: set[tuple[str, float]] = field(default_factory=set)
 
     def end(self, key: str, began: float) -> None:
         """Keep the measured prefix; later inputs cannot extend or contradict it."""
+        self.sealed_by_gap.discard((key, began))
         self.ended.add((key, began))
         if len(self.ended) > 80:
-            self.ended.remove(min(self.ended, key=lambda value: value[1]))
+            oldest = min(self.ended, key=lambda value: value[1])
+            self.ended.remove(oldest)
+            self.sealed_by_gap.discard(oldest)
 
     def unseen(self, key: str, began: float, *, contradicted: bool = False) -> None:
-        """Resume from a fresh measured segment after a gap; retire a contradicted trial."""
+        """Close a measured prefix at a gap; restart an incomplete one or retire a contradiction.
+
+        Offline 2026-10-12 a missing reading deleted two measured movements
+        under one press. Keep that interval without extending it across the
+        gap. A contradiction before the input ends still retires the trial.
+        """
         press = (key, began)
         if press in self.ended:
+            if not contradicted or press not in self.sealed_by_gap:
+                return
+        elif not contradicted and self._has_measured_prefix(press):
+            self.end(key, began)
+            self.sealed_by_gap.add(press)
             return
         if contradicted:
             self.interrupted.add(press)
+        self.sealed_by_gap.discard(press)
         if len(self.interrupted) > 80:
             self.interrupted.remove(min(self.interrupted, key=lambda value: value[1]))
         for kept in (self.by_press, self.timed, self.pinned_in):
             kept.pop(press, None)
+
+    def _has_measured_prefix(self, press: tuple[str, float]) -> bool:
+        """Two finite settled samples must have distinct measured times within this press."""
+        values, timed = self.by_press.get(press, ()), self.timed.get(press, ())
+        if len(values) < 2 or len(timed) != len(values) or not math.isfinite(press[1]):
+            return False
+        return (all(math.isfinite(v) for sample in timed for v in sample)
+                and all(tuple(sample[1:]) == tuple(value) for sample, value in zip(timed, values, strict=True))
+                and timed[0][0] > press[1]
+                and all(b[0] > a[0] for a, b in zip(timed, timed[1:], strict=False)))
 
     def add(self, key: str, vx: float, vy: float, *, press: float | None = None, pinned: bool = False,
             settled: bool = True, position: tuple[float, float] | None = None, at: float | None = None,
@@ -1297,4 +1322,19 @@ def _motion_segments_invariant() -> tuple:
     speeds.unseen("a", 1., contradicted=True)
     speeds.add("a", 30., 0., press=1., when=1.5)
     assert not speeds.by_press and not speeds.timed
+    return ()
+
+
+@invariant("agency.a_missing_reading_closes_an_observed_control_prefix", scope="agency",
+           owner="core/agency/which_one_answers_to_her.py", observational=False)
+def _measured_prefix_invariant() -> tuple:
+    speeds = _Speeds()
+    for key, began, speed in (("a", 1., 30.), ("b", 3., -30.), ("a", 5., 30.), ("b", 7., -30.)):
+        for at in (began + .25, began + .3):
+            speeds.add(key, speed, 0., press=began, when=at)
+        speeds.unseen(key, began)
+        speeds.add(key, 300., 0., press=began, when=began + .6)
+    assert speeds.ratio()[1] == 60.
+    speeds.unseen("a", 1., contradicted=True)
+    assert ("a", 1.) not in speeds.by_press
     return ()

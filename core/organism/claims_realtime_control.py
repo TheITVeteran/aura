@@ -406,7 +406,10 @@ def _visual_motion_claims() -> tuple:
     from core.agency.time_from_picture_to_control import _picture_age_invariant
     from core.agency.what_a_press_does import _settled_trial_invariant, _unchanged_input_invariant
     from core.agency.what_follows_the_pointer import _pointer_body_continuity_invariant
-    from core.agency.which_one_answers_to_her import _motion_segments_invariant
+    from core.agency.which_one_answers_to_her import (
+        _measured_prefix_invariant,
+        _motion_segments_invariant,
+    )
     from core.perception.a_reading_before_more_detail import _finished_reading_invariant
     from core.perception.activity_in_the_picture import _picture_activity_invariant
     from core.perception.background_visible_beside_a_patch import _exposed_background_invariant
@@ -489,7 +492,10 @@ def _visual_motion_claims() -> tuple:
          "Detected box movement requires agreeing current visible support before it teaches control responses or physics."),
         ("control_measurements_resume_on_new_observed_segments", "core/agency/which_one_answers_to_her.py",
          "tests/test_translation_needs_visible_support.py", lambda: _motion_segments_invariant() == (),
-         "Missing motion starts a fresh measured segment of the held input; contradictory motion retires that trial."),
+         "An incomplete motion reading starts a fresh measured segment of the held input; contradictory motion retires that trial."),
+        ("missing_readings_preserve_measured_control_prefixes", "core/agency/which_one_answers_to_her.py",
+         "tests/test_measured_control_prefix_survives_a_gap.py", lambda: _measured_prefix_invariant() == (),
+         "A missing reading closes a finite measured control prefix without extending it across the gap or creating another trial; contradiction before input completion retires it."),
         ("lost_readings_are_refreshed_without_duplicate_requests", "core/perception/reading_again_after_loss.py",
          "tests/test_a_body_guess_keeps_its_observed_track.py", lambda: _reading_renewal_invariant() == (),
          "An unresolved reading can be refreshed after measured loss; unread frames, active requests and current ownership do not authorize another request."),
