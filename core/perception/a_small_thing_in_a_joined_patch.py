@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from core.perception.background_visible_beside_a_patch import exposed_background
 from core.verify import invariant
 
 
@@ -32,9 +33,10 @@ def keep_pixels_apart_from_the_floor(picture: np.ndarray, inside: np.ndarray, *,
     around = np.median(picture[y0:y1, x0:x1][ring].astype(np.float32), axis=0)
     here = picture[top:top + h, left:left + w]
     pixels = here[inside].astype(np.float32)
-    if float(np.abs(np.median(pixels, axis=0) - around).max()) >= difference:
-        return inside
-    floor = inside & (np.abs(here.astype(np.float32) - around).max(axis=2) < difference)
+    if float(np.abs(np.median(pixels, axis=0) - around).max()) < difference:
+        floor = inside & (np.abs(here.astype(np.float32) - around).max(axis=2) < difference)
+    else:
+        floor = exposed_background(picture, inside, left=left, top=top, difference=difference)
     backdrop[top:top + h, left:left + w][floor] = here[floor]
     return inside & ~floor
 

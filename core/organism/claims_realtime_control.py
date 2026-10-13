@@ -409,6 +409,7 @@ def _visual_motion_claims() -> tuple:
     from core.agency.which_one_answers_to_her import _motion_segments_invariant
     from core.perception.a_reading_before_more_detail import _finished_reading_invariant
     from core.perception.activity_in_the_picture import _picture_activity_invariant
+    from core.perception.background_visible_beside_a_patch import _exposed_background_invariant
     from core.perception.boundary_support_for_translation import _visible_boundary_invariant
     from core.perception.frames_as_they_are_drawn import _frame_time_invariant
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
@@ -420,6 +421,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("exposed_background_keeps_enclosed_body_detail", "core/perception/background_visible_beside_a_patch.py",
+         "tests/test_exposed_background_can_be_a_minority.py", lambda: _exposed_background_invariant() == (),
+         "Quiet agreeing opposite-side pixels can identify exposed background inside a foreground patch; enclosed matching details and unsupported boundaries remain uncorrected."),
         ("prepared_paths_need_current_feedback_and_receipts", "core/agency/following_a_prepared_path.py",
          "tests/test_a_prepared_path_requires_current_feedback.py", lambda: _prepared_path_invariant() == (),
          "A prepared input path is replayed from fresh state under the same model identity; only its own timely completed input receipt advances its cursor."),

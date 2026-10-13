@@ -43,6 +43,7 @@ include_rules = [
     "+core.perception.what_moves_in_the_picture",
     "+core.perception.what_the_points_on_a_thing_say", # Pure check of current owned points before reading approach or identity.
     "+core.perception.a_small_thing_in_a_joined_patch", # Pure canary for minority pixels and bounded discovery.
+    "+core.perception.background_visible_beside_a_patch", # Pure check of exposed background and enclosed details.
     "+core.perception.where_the_words_point",
     "+core.perception.words_kept_with_their_pixels", # Pure canary for the pixels supporting retained word readings.
     # The pure offline readiness canary checks eligibility without dispatching input.
