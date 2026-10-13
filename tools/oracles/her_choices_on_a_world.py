@@ -61,6 +61,22 @@ class _HerKeys:
         return None
 
 
+class _Comes:
+    """What play knows of which kinds come for her, as core/agency/what_comes_for_her.py comes to know it."""
+
+    def __init__(self, kinds: set[int]) -> None:
+        self.kinds = kinds
+
+    def comes_for_her(self, thing: Any, size: float = 16.0) -> bool:
+        return int(getattr(thing, "kind", -1)) in self.kinds
+
+    @staticmethod
+    def where_at(thing: Any, after: float, her_x: float, her_y: float) -> tuple[float, float]:
+        from core.agency.what_comes_for_her import WhatComesForHer
+
+        return WhatComesForHer.where_at(thing, after, her_x, her_y)
+
+
 def _a_thing(number: int, kind: int, box: tuple[float, float, float, float], scale: float) -> Any:
     from core.perception.what_moves_in_the_picture import Thing
 
@@ -74,7 +90,7 @@ class HerChoicesOnAWorld:
 
     def __init__(self, world: str, *, seed: int = 1, ground_from_code: bool = True, decide_every: float = 1 / 30,
                  reading: Any = None, late_by: int = 0, swerves_from_code: bool = False, jitter: float = 0.0,
-                 marks_seen: bool = False) -> None:
+                 marks_seen: bool = False, query: str = "", comes_known: bool = False) -> None:
         self.world, self.seed = world, seed
         self.reading = reading if reading is not None else reading_of(world)
         self.ground_from_code = ground_from_code
@@ -94,7 +110,11 @@ class HerChoicesOnAWorld:
         self._last_wait = decide_every
         self._numbered = 10
         self.scale = SHAPE[1] / self.reading.stage[0]
-        self._oracle = WorldRunFromItsCode(world, seed=seed)
+        #: Whether the kinds the reading says chase her are known to come for her, as play comes to know them
+        #: (core/agency/what_comes_for_her.py).
+        self.comes_known = comes_known
+        #: What else the page is told when it is loaded ("level=7").
+        self._oracle = WorldRunFromItsCode(world, seed=seed, query=query)
         self.trace: list[dict[str, Any]] = []
 
     def __enter__(self) -> HerChoicesOnAWorld:
@@ -126,7 +146,9 @@ class HerChoicesOnAWorld:
                 thing = _a_thing(0, kind, (item["x"], item["y"], *size), self.scale)
                 near = min((t for t in free.values() if t.kind == kind),
                            key=lambda t: math.dist((t.x, t.y), (thing.x, thing.y)), default=None)
-                if near is not None and math.dist((near.x, near.y), (thing.x, thing.y)) < 12:
+                # The same thing where it could have got to since: as far as it was going, and half again, or 12 pixels.
+                reach = max(12.0, 1.5 * math.hypot(near.vx, near.vy) * self._last_wait) if near is not None else 0.0
+                if near is not None and math.dist((near.x, near.y), (thing.x, thing.y)) < reach:
                     del free[near.number]
                     thing.number, thing.path = near.number, near.path
                     thing.vx = (thing.x - near.x) / self._last_wait
@@ -199,6 +221,9 @@ class HerChoicesOnAWorld:
                                  response_s=self.late_by * self.decide_every,
                                  covered=(covered, cell) if ground is None else None)
             choosing.ground, choosing.swerves_told = ground, told
+            if self.comes_known:
+                choosing.comes = _Comes({kind for kind, of in enumerate(self.reading.things, start=1)
+                                         if of.moves == "chases her"})
             key, why, _aim = choosing.key(held)
             held = key
             on_the_way.append(key)

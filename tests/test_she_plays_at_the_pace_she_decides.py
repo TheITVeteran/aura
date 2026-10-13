@@ -6,9 +6,8 @@ plans that changed keys a sixth of a second ahead, when her next decision was a 
 went right and left on the spot while a bug came to her; cells she walked over between two pictures, never seen under
 her, that she went back over again and again; and a cell her steps kept carrying her past, gone for one way and then
 the other for fifteen seconds. Measured on seeds 1 to 6, each decision a decision late and the waits between them
-uneven by up to 30%, with the floor's marks seen: at three decisions a second she won all six, the slowest in 69 s,
-and lost six lives between them; at two, she won two. With plans that change before her next decision she won five
-at three a second, losing eight lives, and at two she won none and lost every life.
+uneven by up to 30%, with the floor's marks seen: at three decisions a second she won all six, the slowest in 68 s,
+and lost one life between them; with plans that change before her next decision, she won all six and lost seven.
 """
 from __future__ import annotations
 
@@ -170,7 +169,7 @@ def test_at_three_decisions_a_second_she_paints_the_floor_on_every_seed():
     _node()
     played = _played(3.0)
     assert all(came["ended"] and came["ended"][-1]["why"] == "won" for came in played), played
-    assert sum(3 - came["lives"] for came in played) <= 6, played
+    assert sum(3 - came["lives"] for came in played) <= 3, played
 
 
 @pytest.mark.slow
@@ -178,14 +177,13 @@ def test_with_plans_that_change_before_her_next_decision_she_is_caught(monkeypat
     import core.agency.imagining_ahead as imagining
 
     _node()
-    at_her_pace = _played(2.0)
+    at_her_pace = _played(3.0)
     original = imagining.plans_to_imagine
     monkeypatch.setattr(imagining, "plans_to_imagine",
                         lambda choices, presses, held, every=0.0: original(choices, presses, held, every=0.0))
-    too_soon = _played(2.0)
+    too_soon = _played(3.0)
 
-    def won(played):
-        return sum(1 for came in played if came["ended"] and came["ended"][-1]["why"] == "won")
+    def lost(played):
+        return sum(3 - came["lives"] for came in played)
 
-    assert won(at_her_pace) >= 1, at_her_pace
-    assert won(too_soon) == 0 and all(came["lives"] == 0 for came in too_soon), too_soon
+    assert lost(at_her_pace) <= 3 and lost(too_soon) >= 5, (lost(at_her_pace), lost(too_soon))

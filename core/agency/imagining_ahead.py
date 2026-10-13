@@ -64,6 +64,13 @@ GENTLE_SHARE = 0.25
 #: outweighs one that stands, and a cell is never worth meeting what costs her.
 A_CELL_GONE_OVER = 0.25
 
+#: How long she takes to answer, in seconds, from which a thing that comes for her is imagined turning toward her as
+#: fast as it has been seen to turn, not going on as it goes. Measured on the seventh and twentieth levels of
+#: Camp Lazlo: Paintcan Panic from its code (tests/fixtures/worlds_that_move/paintcan.html), seeds 1 to 12: answering
+#: in 0.67 s, she won 6 imagining its chasers turning and 1 imagining them going straight on; answering in 0.25 s, 11
+#: and 12. Imagined pushed as hard as seen and held back by drag, she won 3 and 9.
+CHASED_WHERE_ANSWERING_S = 0.3
+
 #: The most things imagined: the nearest that matter.
 MOST_THINGS = 16
 #: How much faster and slower than she has measured the world is imagined going, plan by plan: her measure of it is
@@ -135,6 +142,15 @@ class _Scene:
     #: (core/agency/how_far_a_thing_could_swerve.py).
     swerves: np.ndarray = field(default_factory=lambda: np.zeros(0))
     answer_s: float = 0.0
+    #: Which things come for her (core/agency/what_comes_for_her.py), where each is once her keys reach the world, and
+    #: how fast it goes: each is run toward where she is, plan by plan, not along its line.
+    chasing: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=bool))
+    chase_from: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))
+    chase_going: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))
+    #: How fast each turns its going toward her (pixels a second, each second; infinite where it has not been seen
+    #: turning), and the fastest it goes.
+    chase_turn: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    chase_top: np.ndarray = field(default_factory=lambda: np.zeros(0))
 
 
 def plans_to_imagine(choices: Sequence[str], presses: Sequence[str], held: str, *, every: float = 0.0) -> list[Plan]:
@@ -272,6 +288,22 @@ def _the_world_run_forward(choosing: Any, scene: _Scene) -> None:
     swerve = getattr(choosing, "swerve", None)
     scene.swerves = np.array([float(swerve(t)) if callable(swerve) else 0.0 for t, _w in things])
     scene.answer_s = float(choosing.answer_s()) if hasattr(choosing, "answer_s") else 0.0
+    # Where she answers slowly, what comes for her turns toward her before she can see it do so, and is imagined
+    # turning; where quickly, what it does next is seen in time, and imagined going on as it goes.
+    comes = getattr(choosing, "comes", None) if scene.answer_s >= CHASED_WHERE_ANSWERING_S else None
+    scene.chasing = np.array([bool(comes is not None and comes.comes_for_her(t, max(scene.size))) for t, _w in things],
+                             dtype=bool).reshape(count)
+    scene.chase_from = np.array([[float(t.x) + float(t.vx) * scene.delay, float(t.y) + float(t.vy) * scene.delay]
+                                 for t, _w in things]).reshape(count, 2)
+    scene.chase_going = np.array([[float(t.vx), float(t.vy)] for t, _w in things]).reshape(count, 2)
+    from core.agency.what_comes_for_her import how_it_turns
+
+    turning = [how_it_turns(getattr(t, "path", None)) if chasing else None
+               for (t, _w), chasing in zip(things, scene.chasing, strict=True)]
+    scene.chase_turn = np.array([turn[0] if turn else math.inf for turn in turning]).reshape(count)
+    scene.chase_top = np.array([max(turn[1], math.hypot(float(t.vx), float(t.vy))) if turn
+                                else math.hypot(float(t.vx), float(t.vy)) for turn, (t, _w) in zip(turning, things, strict=True)
+                                ]).reshape(count)
     if scene.pushes is not None:
         # What she comes onto, she comes onto gently: under the speed meeting it has been found to cost above, or a
         # gentle share of her going where that is not known yet.
@@ -358,7 +390,8 @@ def _run(scene: _Scene, plan: Plan, goal: tuple[float | None, float | None], hel
     if scene.worth.size:
         # The plan held against the world at each pace, and what it comes to taken over all of them.
         for layer in range(len(PACES)):
-            met, got, lost = _what_it_meets(scene, layer, xs, ys, caution, speeds)
+            met, got, lost = _what_it_meets(scene, layer, xs, ys, caution, speeds,
+                                            _chased(scene, layer, xs, ys) if scene.chasing.any() else None)
             worth += met / len(PACES)
             gets, costs = (got, lost) if PACES[layer] == 1.0 else (gets, costs)
     covers = 0
@@ -388,6 +421,36 @@ def _run(scene: _Scene, plan: Plan, goal: tuple[float | None, float | None], hel
     return Imagined(plan, worth, gets, costs, (float(xs[-1]), float(ys[-1])), covers)
 
 
+def _chased(scene: _Scene, layer: int, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+    """Where each thing is at each step, at one pace, with those that come for her turned toward where her path has her
+    then, as fast as each has been seen to turn and no faster than it has been seen to go: one seen turning at once
+    goes straight at her and no further."""
+    where = scene.where[layer].copy()
+    pace = PACES[layer]
+    for column in np.flatnonzero(scene.chasing):
+        x, y = scene.chase_from[column]
+        vx, vy = scene.chase_going[column] * pace
+        turn, top = float(scene.chase_turn[column]) * pace, float(scene.chase_top[column]) * pace
+        previous = 0.0
+        for row, when in enumerate(scene.times):
+            step = float(when) - previous
+            previous = float(when)
+            dx, dy = float(xs[row]) - x, float(ys[row]) - y
+            far = math.hypot(dx, dy)
+            if not math.isfinite(turn):
+                go = min(far, top * step)
+                x, y = (x + dx / far * go, y + dy / far * go) if far > 1e-9 else (x, y)
+            else:
+                if far > 1e-9:
+                    vx, vy = vx + dx / far * turn * step, vy + dy / far * turn * step
+                speed = math.hypot(vx, vy)
+                if speed > top > 0.0:
+                    vx, vy = vx * top / speed, vy * top / speed
+                x, y = x + vx * step, y + vy * step
+            where[row, column] = (x, y)
+    return where
+
+
 def _ground_gone_over(ground: Any, xs: np.ndarray, ys: np.ndarray) -> tuple[float, int]:
     """What a path's going over ground not yet gone over is worth, each new cell the sooner the better, and how many."""
     worth, new = 0.0, set()
@@ -400,10 +463,11 @@ def _ground_gone_over(ground: Any, xs: np.ndarray, ys: np.ndarray) -> tuple[floa
 
 
 def _what_it_meets(scene: _Scene, layer: int, xs: np.ndarray, ys: np.ndarray, caution: float,
-                   speeds: np.ndarray | None = None) -> tuple[float, int, int]:
+                   speeds: np.ndarray | None = None, where: np.ndarray | None = None) -> tuple[float, int, int]:
     """What her path meets in the world run at one pace: its worth, how many worth getting it gets, how many cost her.
-    A carried body coming onto a thing faster than it can be met breaks on it: that meeting costs."""
-    where, there = scene.where[layer], scene.there[layer]
+    A carried body coming onto a thing faster than it can be met breaks on it: that meeting costs. ``where`` is where
+    each thing is at each step, where it is not the world's own going (things that come for her)."""
+    where, there = (scene.where[layer] if where is None else where), scene.there[layer]
     apart_x = np.abs(where[:, :, 0] - xs[:, None])
     apart_y = np.abs(where[:, :, 1] - ys[:, None])
     reach_x = (scene.sizes[:, 0][None, :] + scene.size[0]) / 2

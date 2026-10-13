@@ -1,0 +1,102 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Paintcan</title></head><body>
+<script src="world.js"></script>
+<script>
+// Camp Lazlo: Paintcan Panic, game 25 of the 56, as the card its code was read into by hand says it plays
+// (tests/fixtures/flash_games_as_their_code_says/25.json): its 600 x 400 stage drawn at 0.8, its rules run frame by
+// frame at its 31 frames a second. Running over ground not yet painted paints it and costs 15 paint; a chaser who
+// reaches her costs 1000 unless she is in a jump, and then every chaser backs off to 80 pixels and waits two seconds.
+// Out of paint, she fails; 50% painted passes the first level. Where the card does not say, the choice is marked
+// "not in the card": where the chaser starts, her size and the colours, how long a jump lasts, and that she stops
+// when no arrow is held. The card places a body by its middle; each is kept here by its corner, the middle 8 (her) or
+// 7 (a chaser) pixels in, as the other worlds keep theirs.
+const S = 0.8, FPS = 31, FRAME = 1 / FPS;
+const FIELD = [10 * S, 110 * S, 590 * S, 390 * S];
+const CELL = [30 * S, 25 * S], COLS = 20, ROWS = 12;
+// The level is the page's to say (?level=n); its quota is the card's, and its chasers come as the card brings them in:
+// Edward from the first, Chip from the third, Skip from the seventh, the last two pushing at most 0.15 a frame.
+const LEVEL = Math.max(1, Math.min(20, Number(new URLSearchParams(location.search).get("level") || 1)));
+const QUOTA = [50, 50, 55, 55, 60, 60, 65, 65, 70, 70, 70, 75, 75, 75, 80, 80, 85, 85, 90, 90][LEVEL - 1];
+const JUMP_FRAMES = 15;                                             // not in the card
+const game = {
+  title: "PAINTCAN PANIC", lives: 1,
+  rules: ["Use the arrow keys to run.", "Run over the ground to paint it.", "Paint " + QUOTA + "% of the ground to continue.",
+          "Press Z to jump: you paint nothing, and nothing can hit you.", "Keep away from Edward: he costs you paint.",
+          "Run out of paint and you fail."],
+  reset(world) {
+    this.me = { x: 200 * S - 8, y: 150 * S - 8, w: 16, h: 16, speed: 0, jump: 0, fx: 1, fy: 0 };   // size: not in the card
+    this.painted = new Uint8Array(COLS * ROWS); this.count = 0; this.supply = 5000; this.left = 0;
+    // Where each starts: not in the card.
+    this.chasers = [[560, 360, 0.4, 1], [40, 360, 0.15, 3], [560, 140, 0.15, 7]].filter((c) => LEVEL >= c[3])
+      .map(([x, y, most]) => ({ x: x * S - 7, y: y * S - 7, w: 14, h: 14, vx: 0, vy: 0, push: 0, most, wait: 2 * FPS }));
+    world.painted = 0; world.supply = this.supply; this.touches = 0;
+  },
+  step(dt, world) {
+    this.left += dt;
+    while (this.left >= FRAME && world.state === "play") { this.left -= FRAME; this.frame(world); }
+  },
+  frame(world) {
+    const me = this.me;
+    let dx = 0, dy = 0;
+    if (world.held.has("ArrowLeft")) dx -= 1;
+    if (world.held.has("ArrowRight")) dx += 1;
+    if (world.held.has("ArrowUp")) dy -= 1;
+    if (world.held.has("ArrowDown")) dy += 1;
+    if (world.held.has("z") && !me.jump) me.jump = JUMP_FRAMES;
+    if (me.jump) me.jump -= 1;
+    // Speed grows by 1 a frame to 7; two arrows together, each axis at speed / 1.4. In a jump she keeps the way she faces.
+    if (me.jump) { dx = me.fx; dy = me.fy; } else if (dx || dy) { me.fx = dx; me.fy = dy; }
+    me.speed = (dx || dy) ? Math.min(7, me.speed + 1) : 0;          // stopping at once: not in the card
+    const each = (dx && dy) ? me.speed / 1.4 : me.speed;
+    me.x = Math.max(FIELD[0] - 8, Math.min(FIELD[2] - 8, me.x + dx * each * S));
+    me.y = Math.max(FIELD[1] - 8, Math.min(FIELD[3] - 8, me.y + dy * each * S));
+    const mx = me.x + 8, my = me.y + 8;
+    const c = Math.floor((mx - FIELD[0]) / CELL[0]), r = Math.floor((my - FIELD[1]) / CELL[1]);
+    if (!me.jump && c >= 0 && c < COLS && r >= 0 && r < ROWS && !this.painted[r * COLS + c]) {
+      this.painted[r * COLS + c] = 1; this.count += 1; this.supply -= 15;
+    }
+    // A chaser steers toward her: its push grows by 0.2 a frame to 0.4, added to a velocity kept at 0.97 a frame.
+    for (const e of this.chasers) {
+      if (e.wait > 0) { e.wait -= 1; continue; }
+      const gx = mx - (e.x + 7), gy = my - (e.y + 7), d = Math.hypot(gx, gy) || 1;
+      e.push = Math.min(e.most, e.push + 0.2);
+      e.vx = e.vx * 0.97 + (gx / d) * e.push * S; e.vy = e.vy * 0.97 + (gy / d) * e.push * S;
+      e.x += e.vx; e.y += e.vy;
+      if (Math.hypot(mx - (e.x + 7), my - (e.y + 7)) < 15 * S && !me.jump) {
+        this.supply -= 1000; this.touches += 1; world.losses = (world.losses || 0) + 1;
+        for (const o of this.chasers) {
+          // Straight away from her, or, where it is right on her middle, to one side.
+          const ox = o.x + 7 - mx, oy = o.y + 7 - my, od = Math.hypot(ox, oy);
+          const ux = od > 1e-6 ? ox / od : 1, uy = od > 1e-6 ? oy / od : 0;
+          o.x = mx + ux * 80 * S - 7; o.y = my + uy * 80 * S - 7; o.vx = 0; o.vy = 0; o.push = 0; o.wait = 2 * FPS;
+        }
+      }
+    }
+    world.painted = this.count / (COLS * ROWS); world.supply = this.supply;
+    world.score = Math.floor(this.count / 2.4);
+    if (this.supply < 0) world.over("no paint left");
+    else if (this.count / 2.4 >= QUOTA) world.over("won");
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#2e3b1f"; ctx.fillRect(0, 0, 480, 320);
+    ctx.fillStyle = "#6f9a43"; ctx.fillRect(FIELD[0], FIELD[1], FIELD[2] - FIELD[0], FIELD[3] - FIELD[1]);
+    if (!this.painted) return;
+    ctx.fillStyle = "#e3c64a";
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
+      if (this.painted[r * COLS + c]) ctx.fillRect(FIELD[0] + c * CELL[0], FIELD[1] + r * CELL[1], CELL[0], CELL[1]);
+  },
+  draw(ctx) {
+    const me = this.me;
+    ctx.fillStyle = me.jump ? "#ffffff" : "#d9733a"; ctx.fillRect(me.x, me.y, 16, 16);
+    ctx.fillStyle = "#7d4fa8"; for (const e of this.chasers) ctx.fillRect(e.x, e.y, 14, 14);
+  },
+  readouts(ctx, world) {
+    world.text("AREA PAINTED", 12, 22, 13, "#fff", "left");
+    ctx.fillStyle = "#555"; ctx.fillRect(12, 30, 150, 10);
+    ctx.fillStyle = "#e3c64a"; ctx.fillRect(12, 30, 150 * Math.min(1, this.count / 2.4 / 100), 10);
+    world.text("PAINT SUPPLY", 300, 22, 13, "#fff", "left");
+    ctx.fillStyle = "#555"; ctx.fillRect(300, 30, 150, 10);
+    ctx.fillStyle = "#4aa3e3"; ctx.fillRect(300, 30, 150 * Math.max(0, this.supply / 5000), 10);
+  },
+};
+playWorld(game);
+</script></body></html>

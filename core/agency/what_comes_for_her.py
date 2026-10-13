@@ -17,7 +17,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["WhatComesForHer"]
+__all__ = ["WhatComesForHer", "how_it_turns"]
 
 #: How fast, in working pixels a second, a thing must go for its going to point anywhere.
 GOING = 12.0
@@ -26,6 +26,11 @@ GOING = 12.0
 #: the way to her to come for her (the cosine of the angle between them).
 LEAST_PICTURES = 12
 LINES_UP = 0.8
+
+#: The least time between two places a going is reckoned over, and between two goings a turn is reckoned over, in
+#: seconds: long enough that where it was seen, give or take a pixel, says little of either.
+GOING_OVER_S = 0.1
+TURNING_OVER_S = 0.12
 
 #: How far she must have moved about, in her own sizes, for lining up to say anything: a thing that goes straight at
 #: where she stands still lines up whether it follows her or not.
@@ -84,3 +89,30 @@ class WhatComesForHer:
             return float(thing.x), float(thing.y)
         step = min(far, speed * max(0.0, after))
         return float(thing.x) + dx / far * step, float(thing.y) + dy / far * step
+
+
+def how_it_turns(path: Any) -> tuple[float, float] | None:
+    """How fast a thing has been seen to turn its going, in working pixels a second each second, and the fastest it
+    has been seen to go, in working pixels a second, from its path ((when, across, down), oldest first); None where
+    its path is too short to say. A thing that comes for her goes toward her only as fast as it turns: offline
+    2026-10-13 a chaser coming on twice her speed, from a campground's own code, was taken to turn at once and was
+    never side-stepped, and when she jumped over it, it was taken to stay on her when it had gone past."""
+    points = list(path or [])
+    goings, start = [], 0
+    for end in range(1, len(points)):
+        span = points[end][0] - points[start][0]
+        if span >= GOING_OVER_S:
+            goings.append(((points[end][0] + points[start][0]) / 2, (points[end][1] - points[start][1]) / span,
+                           (points[end][2] - points[start][2]) / span))
+            start = end
+    if len(goings) < 3:
+        return None
+    turns, first = [], 0
+    for later in range(1, len(goings)):
+        apart = goings[later][0] - goings[first][0]
+        if apart >= TURNING_OVER_S:
+            turns.append(math.hypot(goings[later][1] - goings[first][1], goings[later][2] - goings[first][2]) / apart)
+            first = later
+    if not turns:
+        return None
+    return max(turns), max(math.hypot(vx, vy) for _at, vx, vy in goings)
