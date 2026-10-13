@@ -1087,6 +1087,18 @@ class _RunsTheThinkingLoop:
         last_msg = self._turn_response_message(
             state.cognition.working_memory, mark=turn_memory_mark
         )
+        # What the turn was worth to her, and what was in it. Chat is served by
+        # this loop and almost never by the kernel tick, and the reading lived
+        # in a kernel phase, so the turns she spends with a person went unread
+        # (live, 13 October). It never raises. See core/phases/learning_phase.py.
+        if last_msg and not is_background:
+            from core.phases.learning_phase import read_what_the_turn_was_worth
+
+            await read_what_the_turn_was_worth(
+                state,
+                person=str((context or {}).get("user_id") or ""),
+                sent_from=str(origin or "") if self._is_user_facing_origin(origin) else "",
+            )
         if last_msg:
             self.autopoiesis.experience_friction(objective[:20], 0.05)
             # Reward is no longer 1.0 for the mere existence of an

@@ -197,6 +197,24 @@ class InitiativeArbiter:
         # A habit that has done worse than her weighing does not fire on drive
         # alone: its score counts for less by the deficit, and preference below
         # can still pick it. See core/agency/habits_are_hers.py.
+        # And what she has found things to be worth. An option that goes to
+        # something she dislikes is worth less to her by that much and one
+        # that goes to something she likes more, whoever put it on the slate.
+        # Her own wants are left alone here: the choice below weighs each on
+        # the same liking. See core/conation/what_she_wants.py.
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            record = get_what_she_wants()
+            for item in scored:
+                if isinstance((item.initiative.get("metadata") or {}).get("want"), dict):
+                    continue
+                regard = record.regard_for_text(_goal(item.initiative))
+                if regard:
+                    item.final_score *= 1.0 + regard
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("her likes and dislikes did not reach arbitration: %s", exc)
+
         try:
             from core.agency.habits_are_hers import act_of, discounted_by_habit, get_habit_ledger
 

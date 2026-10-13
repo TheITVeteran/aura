@@ -173,6 +173,56 @@ def test_no_input_can_supply_a_completion_receipt():
     assert follower.cursor == 0
 
 
+def test_dispatch_freshness_does_not_shorten_an_acknowledged_physical_action():
+    follower = _prepared()
+    offered = _feedback(follower)
+    window = follower.started(offered, at=1.45, duration=.2, slack=.05)
+    assert window.began == 1.45 and window.until == pytest.approx(1.65)
+    assert offered.expires_at == 1.5 and not follower.is_current(offered, 1.66)
+    assert follower.finished(offered, at=1.66, succeeded=True)
+    assert follower.cursor == 1
+    assert _feedback(follower, 1, at=1.65, now=1.67) is None
+    assert _feedback(follower, 1, at=1.67) is not None
+
+
+@pytest.mark.parametrize('completed', [1.5, 1.8, math.nan, math.inf])
+def test_a_physical_receipt_must_cover_the_full_hold_and_its_completion_bound(completed):
+    follower = _prepared()
+    offered = _feedback(follower)
+    assert follower.started(offered, at=1.45, duration=.2, slack=.05)
+    assert not follower.finished(offered, at=completed, succeeded=True)
+    assert follower.cursor == 0 and follower.plan is None
+
+
+@pytest.mark.parametrize('options', [dict(at=1.51, duration=.2), dict(at=1.4, duration=0.),
+    dict(at=1.4, duration=True), dict(at=1.4, duration=math.nan), dict(at=1.4, duration=.2, slack=-1.),
+    dict(at=1.4, duration=1e-300)])
+def test_a_stale_or_unavailable_physical_dispatch_retires_the_prediction(options):
+    follower = _prepared()
+    offered = _feedback(follower)
+    assert follower.started(offered, **options) is None
+    assert follower.plan is None and follower.cursor == 0
+
+
+def test_a_duplicate_start_or_different_offer_cannot_renew_an_action_window():
+    follower = _prepared()
+    offered = _feedback(follower)
+    assert follower.started(replace(offered), at=1.1, duration=.1) is None
+    first = follower.started(offered, at=1.1, duration=.2, slack=.05)
+    assert follower.started(offered, at=1.2, duration=1.) is None
+    assert follower._started is first and follower.plan is not None
+    assert follower.finished(offered, at=1.31, succeeded=True)
+
+
+def test_an_executor_can_retire_an_incomplete_action_without_a_success_receipt():
+    follower = _prepared()
+    offered = _feedback(follower)
+    assert follower.started(offered, at=1.1, duration=.2)
+    follower.invalidate()
+    assert follower.plan is None and follower._started is None
+    assert not follower.finished(offered, at=1.3, succeeded=True) and follower.cursor == 0
+
+
 def test_prepared_feedback_has_a_registered_measured_claim():
     from core.organism.claims_realtime_control import install_realtime_control_claims
     from core.organism.model_validation import ValidationSuite

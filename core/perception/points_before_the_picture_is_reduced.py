@@ -1,0 +1,200 @@
+"""Keep visible marks before a reduced picture loses their detail.
+
+An outline can be read small while its points need the pixels it was drawn
+with. Tracking uses a bounded source picture; all exposed positions return
+to the same working coordinates. Local rotation and colour support are
+measured in both directions before a point keeps its name.
+"""
+from __future__ import annotations
+
+import math
+
+import numpy as np
+from scipy import ndimage
+
+from core.perception.points_that_keep_their_motion import (
+    FollowingPoints,
+    SeenPoint,
+    _follow,
+    _grey,
+    _pyramid,
+    _sample,
+)
+from core.verify import invariant
+
+_OFFSETS = np.mgrid[-3:4, -3:4].reshape(2, -1).T[:, ::-1].astype(float)
+
+
+def _samples(picture: np.ndarray, places: np.ndarray) -> np.ndarray:
+    return ndimage.map_coordinates(picture, [places[..., 1], places[..., 0]], order=1, mode='constant', cval=0.)
+
+
+def _colours(picture: np.ndarray) -> np.ndarray:
+    return np.stack([ndimage.gaussian_filter(picture[..., c].astype(np.float32) / 255., .6)
+                     for c in range(3)], axis=-1)
+
+
+def _refine(before: np.ndarray, after: np.ndarray, points: np.ndarray,
+            initial: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Fit a small rigid patch, retaining the colour residual as separate evidence."""
+    if not len(points):
+        return initial.copy(), np.empty(0), np.empty(0), np.empty(0, dtype=bool)
+    gradients = [np.gradient(after[..., c]) for c in range(3)]
+    templates = np.stack([_samples(before[..., c], points[:, None] + _OFFSETS) for c in range(3)], axis=-1)
+    shift, angles, useful = initial - points, np.zeros(len(points)), np.ones(len(points), dtype=bool)
+    for _ in range(12):
+        c, s = np.cos(angles), np.sin(angles)
+        rotated = np.stack((c[:, None] * _OFFSETS[:, 0] - s[:, None] * _OFFSETS[:, 1],
+                            s[:, None] * _OFFSETS[:, 0] + c[:, None] * _OFFSETS[:, 1]), axis=-1)
+        places = points[:, None] + shift[:, None] + rotated
+        current = np.stack([_samples(after[..., k], places) for k in range(3)], axis=-1)
+        dx = np.stack([_samples(gx, places) for _gy, gx in gradients], axis=-1)
+        dy = np.stack([_samples(gy, places) for gy, _gx in gradients], axis=-1)
+        rotation = -rotated[..., 1, None] * dx + rotated[..., 0, None] * dy
+        jacobian = np.stack((dx, dy, rotation), axis=-1).reshape(len(points), -1, 3)
+        residual = (templates - current).reshape(len(points), -1)
+        normal = np.einsum('nki,nkj->nij', jacobian, jacobian)
+        valid = np.linalg.eigvalsh(normal)[:, 0] > 1e-6
+        useful &= valid
+        delta = np.zeros((len(points), 3))
+        rhs = np.einsum('nki,nk->ni', jacobian, residual)
+        delta[valid] = np.linalg.solve(normal[valid], rhs[valid, :, None])[..., 0]
+        delta[:, :2] = np.clip(delta[:, :2], -2., 2.)
+        delta[:, 2] = np.clip(delta[:, 2], -.12, .12)
+        shift += delta[:, :2]
+        angles += delta[:, 2]
+        if np.max(np.linalg.norm(delta[:, :2], axis=1), initial=0.) < .015 and np.max(abs(delta[:, 2]), initial=0.) < .002:
+            break
+    c, s = np.cos(angles), np.sin(angles)
+    rotated = np.stack((c[:, None] * _OFFSETS[:, 0] - s[:, None] * _OFFSETS[:, 1],
+                        s[:, None] * _OFFSETS[:, 0] + c[:, None] * _OFFSETS[:, 1]), axis=-1)
+    places = points[:, None] + shift[:, None] + rotated
+    current = np.stack([_samples(after[..., k], places) for k in range(3)], axis=-1)
+    error = np.mean(abs(templates - current), axis=(1, 2))
+    return points + shift, error, angles, useful
+
+
+def _new_marks(image: np.ndarray, occupied: list[SeenPoint], limit: int, scale: tuple) -> list[tuple[float, float]]:
+    """Spread the source corners by working-picture cells within the fixed point budget."""
+    gy, gx = np.gradient(image)
+    xx, xy, yy = (ndimage.uniform_filter(a * b, 3) for a, b in ((gx, gx), (gx, gy), (gy, gy)))
+    strength = .5 * (xx + yy - np.sqrt((xx - yy) ** 2 + 4 * xy ** 2))
+    peaks = (strength == ndimage.maximum_filter(strength, 5)) & (strength > max(.00015, .01 * float(strength.max())))
+    peaks[:4] = peaks[-4:] = False
+    peaks[:, :4] = peaks[:, -4:] = False
+    for point in occupied:
+        x, y = int(round(point.x)), int(round(point.y))
+        peaks[max(0, y - 4):y + 5, max(0, x - 4):x + 5] = False
+    ys, xs = np.nonzero(peaks)
+    cells: dict[tuple, list] = {}
+    for y, x in zip(ys, xs, strict=True):
+        cell = int(y * scale[1]) // 24, int(x * scale[0]) // 24
+        cells.setdefault(cell, []).append((float(strength[y, x]), float(x), float(y)))
+    for values in cells.values():
+        values.sort(reverse=True)
+    found = []
+    for rank in range(max((len(values) for values in cells.values()), default=0)):
+        for _strength, x, y in sorted((v[rank] for v in cells.values() if len(v) > rank), reverse=True):
+            found.append((x, y))
+            if len(found) >= limit:
+                return found
+    return found
+
+
+class PointsBeforeReduction(FollowingPoints):
+    """Source-resolution marks published in the existing working coordinate system."""
+
+    def __init__(self, *, pixel_budget: int = 256_000, **kwargs) -> None:
+        super().__init__(**kwargs)
+        if type(pixel_budget) is not int or not 256 <= pixel_budget <= 1_000_000:
+            raise ValueError('source tracking needs a bounded pixel budget')
+        self.pixel_budget = pixel_budget
+        self._native_points: tuple[SeenPoint, ...] = ()
+        self._colours: np.ndarray | None = None
+        self._geometry: tuple | None = None
+
+    def clear(self) -> None:
+        super().clear()
+        self._native_points, self._colours, self._geometry = (), None, None
+
+    def see_source(self, source: np.ndarray, working: np.ndarray, at: float) -> tuple[SeenPoint, ...]:
+        """A source and its reduced view must belong to this one capture and geometry."""
+        if (source.ndim != 3 or working.ndim != 3 or min(source.shape[:2]) < 16
+                or min(working.shape[:2]) < 16 or min(source.shape[2], working.shape[2]) < 3
+                or not math.isfinite(at) or self.limit <= 0):
+            self.clear()
+            return ()
+        source_shape = source.shape[:2]
+        factor = min(1., math.sqrt(self.pixel_budget / (source.shape[0] * source.shape[1])))
+        if factor < 1.:
+            from core.perception.picture_arithmetic import shrink
+
+            width, height = int(source.shape[1] * factor), int(source.shape[0] * factor)
+            if min(width, height) < 16:
+                self.clear()
+                return ()
+            source = shrink(source, width, height)
+        geometry = source_shape, source.shape[:2], working.shape[:2]
+        if self._geometry is not None and (geometry != self._geometry or not 0 < at - self._at <= self.longest_gap):
+            self.clear()
+        self._geometry = geometry
+        scale = working.shape[1] / source.shape[1], working.shape[0] / source.shape[0]
+        image, colours = _pyramid(_grey(source)), _colours(source)
+        current = self._continued_source(image, colours, at) if self._image is not None and self._native_points else []
+        for x, y in _new_marks(image[0], current, self.limit, scale):
+            current.append(SeenPoint(self._number, x, y, x, y, at, at, at, 0., 1))
+            self._number += 1
+        self._native_points = self._spread(current, scale)
+        self.points = tuple(SeenPoint(p.number, p.x * scale[0], p.y * scale[1], p.old_x * scale[0], p.old_y * scale[1],
+                            p.born, p.before, p.at, p.error, p.pictures) for p in self._native_points)
+        self._image, self._colours, self._at = image, colours, at
+        return self.points
+
+    def _spread(self, points: list[SeenPoint], scale: tuple) -> tuple[SeenPoint, ...]:
+        cells: dict[tuple, list] = {}
+        for point in points:
+            cells.setdefault((int(point.y * scale[1]) // 24, int(point.x * scale[0]) // 24), []).append(point)
+        for values in cells.values():
+            values.sort(key=lambda p: (-p.pictures, p.error, p.number))
+        kept = []
+        for rank in range(max((len(values) for values in cells.values()), default=0)):
+            kept.extend(sorted((v[rank] for v in cells.values() if len(v) > rank), key=lambda p: (-p.pictures, p.error, p.number)))
+            if len(kept) >= self.limit:
+                break
+        return tuple(kept[:self.limit])
+
+    def _continued_source(self, image: list, colours: np.ndarray, at: float) -> list[SeenPoint]:
+        positions = np.asarray([(p.x, p.y) for p in self._native_points], dtype=float)
+        before = self._colours
+        rests = np.stack([abs(_sample(before[..., c], positions) - _sample(colours[..., c], positions)) for c in range(3)], axis=-1)
+        unchanged = rests.max(axis=(1, 2)) <= 1 / 255.
+        found, errors, valid = positions.copy(), rests.mean(axis=(1, 2)), unchanged.copy()
+        changed = np.flatnonzero(~unchanged)
+        if len(changed):
+            initial, forwards = _follow(self._image, image, positions[changed])
+            ends, error, angle, fitted = _refine(before, colours, positions[changed], initial)
+            reverse, backwards = _follow(image, self._image, ends)
+            starts, back_error, back_angle, back_fitted = _refine(colours, before, ends, reverse)
+            valid[changed] = (forwards & backwards & fitted & back_fitted
+                & (np.linalg.norm(starts - positions[changed], axis=1) < .5)
+                & (error < .025) & (back_error < .025) & (abs(angle + back_angle) < .08))
+            found[changed], errors[changed] = ends, error
+        height, width = image[0].shape
+        valid &= (np.isfinite(found).all(axis=1) & (found[:, 0] >= 3) & (found[:, 0] < width - 3)
+                  & (found[:, 1] >= 3) & (found[:, 1] < height - 3))
+        return [SeenPoint(p.number, float(found[i, 0]), float(found[i, 1]), p.x, p.y, p.born,
+                         self._at, at, float(errors[i]), p.pictures + 1)
+                for i, p in enumerate(self._native_points) if valid[i]]
+
+
+@invariant('perception.source_marks_return_to_one_working_geometry', scope='perception',
+           owner='core/perception/points_before_the_picture_is_reduced.py', observational=False)
+def _source_point_geometry_invariant() -> tuple:
+    point = SeenPoint(1, 60., 30., 58., 28., 0., 1., 2., .01, 3)
+    scale = .25, .5
+    exposed = SeenPoint(point.number, point.x * scale[0], point.y * scale[1],
+                        point.old_x * scale[0], point.old_y * scale[1], point.born, point.before,
+                        point.at, point.error, point.pictures)
+    assert (exposed.x, exposed.y, exposed.old_x, exposed.old_y) == (15., 15., 14.5, 14.)
+    assert exposed.number == point.number and exposed.before == point.before and exposed.at == point.at
+    return ()

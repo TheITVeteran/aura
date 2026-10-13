@@ -264,10 +264,36 @@ def _harvest_promises(store: Any, ledger: RelationalLedger) -> int:
 #: Container key, what to do with it, and what the key is for in one line.
 #: Several keys per source because the same store is registered under
 #: different names depending on which boot path ran.
+def _harvest_regard(store: Any, ledger: RelationalLedger) -> int:
+    """What she likes and dislikes becomes what is pleasant and unpleasant to her.
+
+    The record of what her turns with each thing were worth says which she
+    can state a like or a dislike for. Each is noted under the name a turn
+    would use for it, so an event about that thing or from that person is
+    appraised with it.
+    """
+    regards: dict[str, float] = {}
+    for reader in ("likes", "dislikes"):
+        read = getattr(store, reader, None)
+        if not callable(read):
+            continue
+        for thing in _entries(read()):
+            liking = _field(thing, "liking", default=None)
+            if liking is None:
+                continue
+            for name in (_field(thing, "label", default=""), _field(thing, "key", default="")):
+                name = _text(name, 160)
+                if name:
+                    regards[name] = _number(liking)
+    ledger.notes.note_regards(regards)
+    return len(regards)
+
+
 SOURCES: tuple[tuple[tuple[str, ...], Callable[[Any, RelationalLedger], int], str], ...] = (
     (("goal_hierarchy", "motivation_engine", "goals"), _harvest_goals, "goals"),
     (("phenomenal_engine", "phenomenological_experiencer"), _harvest_bonds, "bonds"),
     (("commitment_ledger", "continuity"), _harvest_promises, "commitments"),
+    (("what_she_wants",), _harvest_regard, "regard"),
 )
 
 

@@ -4,7 +4,11 @@ from types import SimpleNamespace
 import pytest
 
 from core.agency import playing_as_it_happens as play
-from core.agency.steering_from_a_model import observed_steering_model, steer_with_a_model
+from core.agency.steering_from_a_model import (
+    _turn_keys,
+    observed_steering_model,
+    steer_with_a_model,
+)
 from core.agency.which_one_answers_to_her import WhichIsHers
 from core.agency.which_way_she_faces import WhichWaySheFaces
 from core.cognition.a_guide_to_a_place import THE_GUIDE
@@ -283,3 +287,99 @@ async def test_an_old_forecast_cannot_release_a_new_press_of_the_same_control(mo
         THE_GUIDE.reset(token)
     assert actions == before and run.held == key and run.held_since == .32
     assert run._modelled_steering is None
+
+
+def _source_guide(by, *, owner='Actuator', where='Controls.update', does='moves'):
+    from core.perception.how_a_program_plays import AKey, HowItPlays
+
+    source = HowItPlays(hers={'class':owner}, keys={'opaque-a':AKey('opaque-a', does, by, where)})
+    return SimpleNamespace(controls={'opaque-a':SimpleNamespace(act='move', on='')}, code_says=source)
+
+
+@pytest.mark.parametrize('method', ['mTurn', 'turn_left', 'RotateClockwise', 'setRotation', 'mTURN'])
+def test_resolved_source_body_rotation_survives_a_generic_move_role(method):
+    guide = _source_guide(f'Actuator.{method}(1)')
+    run = SimpleNamespace(keys=['opaque-a', 'opaque-b'])
+    faces = SimpleNamespace(travel_turns=SimpleNamespace(curved=lambda _key: False))
+    token = THE_GUIDE.set(guide)
+    try:
+        assert _turn_keys(run, faces) == {'opaque-a'}
+    finally:
+        THE_GUIDE.reset(token)
+
+
+@pytest.mark.parametrize('by', [
+    'Actuator.turnOn()', 'Actuator.turnOff()', 'Actuator.turnOnMusic()', 'Actuator.rotateAudio()',
+    'Actuator.turnButton()', 'Actuator.turnFurniture()', 'Actuator.getRotation()', 'Actuator.checkTurn()',
+    'Actuator.returnLeft()', 'Furniture.rotateLeft()', 'Buttons.turnRight()', 'Music.rotatePitch()',
+    'rotateRight()', 'r17.turnLeft()', 'Actuator.moveLeft()',
+])
+def test_source_switches_other_objects_and_unresolved_calls_do_not_arm_body_turns(by):
+    guide = _source_guide(by)
+    run = SimpleNamespace(keys=['opaque-a'])
+    faces = SimpleNamespace(travel_turns=SimpleNamespace(curved=lambda _key: False))
+    token = THE_GUIDE.set(guide)
+    try:
+        assert not _turn_keys(run, faces)
+    finally:
+        THE_GUIDE.reset(token)
+
+
+@pytest.mark.parametrize('owner,does', [(None, 'moves'), ('Elsewhere', 'moves'), ('Actuator', 'does something')])
+def test_source_rotation_requires_a_resolved_controlled_class_and_movement_role(owner, does):
+    guide = _source_guide('Actuator.turnRight(1)', owner=owner, does=does)
+    run = SimpleNamespace(keys=['opaque-a'])
+    faces = SimpleNamespace(travel_turns=SimpleNamespace(curved=lambda _key: False))
+    token = THE_GUIDE.set(guide)
+    try:
+        assert not _turn_keys(run, faces)
+    finally:
+        THE_GUIDE.reset(token)
+
+
+@pytest.mark.parametrize('receiver', ['this', 'self'])
+@pytest.mark.parametrize('where,expected', [('Actuator.update', {'opaque-a'}), ('Other.update', set()),
+                                          ('Actuator.Decoration.update', set())])
+def test_a_local_rotation_call_keeps_its_lexical_class_owner(receiver, where, expected):
+    guide = _source_guide(f'{receiver}.rotateLeft(1)', where=where)
+    run = SimpleNamespace(keys=['opaque-a'])
+    faces = SimpleNamespace(travel_turns=SimpleNamespace(curved=lambda _key: False))
+    token = THE_GUIDE.set(guide)
+    try:
+        assert _turn_keys(run, faces) == expected
+    finally:
+        THE_GUIDE.reset(token)
+
+
+def test_source_roles_preserve_explicit_instructions_and_observed_curvature():
+    guide = _source_guide('Furniture.rotateLeft()')
+    guide.controls['opaque-a'].act = 'turn left'
+    run = SimpleNamespace(keys=['opaque-a', 'opaque-b'])
+    faces = SimpleNamespace(travel_turns=SimpleNamespace(curved=lambda key: key == 'opaque-b'))
+    token = THE_GUIDE.set(guide)
+    try:
+        assert _turn_keys(run, faces) == {'opaque-a', 'opaque-b'}
+    finally:
+        THE_GUIDE.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_the_actor_uses_source_rotation_as_a_provisional_hypothesis(monkeypatch):
+    now, run, hers, _mine, _moves, choosing, actions, hands, _guide = _setup(monkeypatch)
+    guide = _source_guide('Actuator.mTurn(1)')
+    before = hers.number, hers.kind, hers.identification.epoch
+    token = THE_GUIDE.set(guide)
+    try:
+        assert await steer_with_a_model(hands, run, hers, choosing, now[0], hold=play._hold)
+    finally:
+        THE_GUIDE.reset(token)
+    assert actions == [('up', 'opaque-drive'), ('down', 'opaque-a')]
+    assert run._modelled_steering[0].status == 'provisional'
+    assert not run.faces.turns_her() and not run.faces.turning_keys()
+    assert (hers.number, hers.kind, hers.identification.epoch) == before
+
+
+def test_source_turn_role_invariant():
+    from core.agency.steering_from_a_model import _source_turn_role_invariant
+
+    assert _source_turn_role_invariant() == ()

@@ -259,6 +259,13 @@ class _TicksAndShutsDown:
                 # Skip background-only phases during user-facing ticks so the
                 # response pipeline runs without waiting for slow autonomous work.
                 if self._should_skip_priority_phase(phase_name, priority=priority):
+                    # The learning waits for a background tick. What this turn
+                    # was worth to her is read now: a turn somebody was
+                    # waiting on is a turn she spent with them.
+                    if phase_name == "LearningPhase":
+                        from core.phases.learning_phase import read_what_the_turn_was_worth
+
+                        await read_what_the_turn_was_worth(state)
                     continue
 
                 # Volition-based Gating

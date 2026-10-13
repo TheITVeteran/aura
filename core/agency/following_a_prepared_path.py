@@ -26,6 +26,14 @@ class PreparedInput:
     transitions: int
 
 
+@dataclass(frozen=True)
+class StartedInput:
+    offered: PreparedInput
+    began: float
+    until: float
+    complete_by: float
+
+
 class FollowingPreparedPath:
     """Offer one input only after the remaining path still reaches its required state.
 
@@ -46,6 +54,7 @@ class FollowingPreparedPath:
         self._observed_at = -math.inf
         self._finished_at = -math.inf
         self._offered: PreparedInput | None = None
+        self._started: StartedInput | None = None
 
     def feedback(self, state: Any, *, model_identity: Hashable, observed_at: float,
                  now: float, max_age: float, advance: Callable[[Any, Hashable], Any],
@@ -106,18 +115,40 @@ class FollowingPreparedPath:
         """Consume exactly one action on its own timely completion receipt."""
         if self._offered is None or offered is not self._offered:
             return False
-        if succeeded is not True or not self.is_current(offered, at):
+        started = self._started
+        timely = (math.isfinite(at) and started.until <= at <= started.complete_by
+                  if started is not None else self.is_current(offered, at))
+        if succeeded is not True or not timely:
             self._discard()
             return False
         self.cursor += 1
         self._finished_at = at
         self._offered = None
+        self._started = None
         self.status = "needs_observation"
         return True
+
+    def started(self, offered: PreparedInput, *, at: float, duration: float, slack: float = 0.) -> StartedInput | None:
+        """A fresh dispatch acknowledgement begins a separate physical hold window."""
+        if self._offered is None or offered is not self._offered or self._started is not None:
+            return None
+        if (not self.is_current(offered, at) or any(isinstance(v, bool) for v in (at, duration, slack))
+                or not all(math.isfinite(v) for v in (duration, slack)) or duration <= 0 or slack < 0
+                or not math.isfinite(at + duration + slack) or at + duration <= at):
+            self._discard()
+            return None
+        self._started = StartedInput(offered, at, at + duration, at + duration + slack)
+        self.status = "input_started"
+        return self._started
+
+    def invalidate(self) -> None:
+        """An executor that could not complete its action retires the remaining path."""
+        self._discard()
 
     def _discard(self) -> None:
         self.plan = None
         self._offered = None
+        self._started = None
         self.status = "needs_preparation"
 
 

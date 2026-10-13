@@ -559,6 +559,7 @@ class ConationEngine:
         key: str,
         *,
         experienced_liking: float,
+        realised_pull: float | None = None,
         succeeded: bool = True,
         completeness: float = 0.0,
         prediction_error: float | None = None,
@@ -595,8 +596,12 @@ class ConationEngine:
                 intrinsic_now=last.magnitude_of(last.dominant_origin),
             )
 
+        # What the cue turned out to be worth, where the caller measured it.
+        # Without one the cached value follows its own last pull, which is
+        # below the cache at rest, so every contact lowers it whatever the
+        # contact paid.
         result = self.salience.record_outcome(
-            key, experienced_liking=experienced_liking
+            key, experienced_liking=experienced_liking, realised_pull=realised_pull
         )
         self.dynamics.observe_attempt(key, wanting=predicted_wanting, succeeded=succeeded)
         if completeness > 0.0:

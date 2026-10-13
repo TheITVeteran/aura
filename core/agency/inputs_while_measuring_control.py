@@ -89,6 +89,7 @@ class HandsWithControlReceipts:
 
         async def delivered(*args: Any, **kwargs: Any) -> Any:
             if (id(self), id(asyncio.current_task())) not in _PRIMARY.get():
+                await _end_prepared_motion(self, self.run, self.hers)
                 self._other_input(name, time.monotonic())
             return await original(*args, **kwargs)
 
@@ -127,10 +128,20 @@ def primary_delivery(hands: Any):
 
 async def hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *, trying: bool = False,
                        now: Any = None) -> None:
+    await _end_prepared_motion(hands, run, hers)
     if key == run.held:
         return
     async with _control_delivery_lock(run):
         await _hold_control(hands, run, hers, key, at, trying=trying, now=now)
+
+
+async def _end_prepared_motion(hands: Any, run: Any, hers: Any) -> None:
+    if getattr(run, '_prepared_input_set', None) is None:
+        return
+    from core.agency.acting_on_a_prepared_motion import abort_prepared_motion
+
+    if not await abort_prepared_motion(hands, run, hers):
+        raise RuntimeError("a prepared input's physical release remains unconfirmed")
 
 
 def _control_delivery_lock(run: Any) -> Any:
@@ -203,6 +214,7 @@ async def release_after_play(hands: Any, run: Any, hers: Any) -> None:
     """Stop observation tasks and close every input when its play owner leaves."""
     from core.agency.a_trial_has_a_physical_end import cancel_trial_deadline
 
+    await _end_prepared_motion(hands, run, hers)
     cancel_trial_deadline(run)
     for field in ('_steering_input_deadline', 'reading'):
         task = getattr(run, field, None)

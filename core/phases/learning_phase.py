@@ -92,6 +92,137 @@ def _record_learning_degradation(
         _mark_learning_degraded(state, stage=stage, error=error, action=action)
 
 
+def _recall_her_talk() -> int:
+    """Give her record of what she has met the conversations she already had.
+
+    A subject stands out against what she has talked about before, and on the
+    day that record is first kept it has nothing behind it. Her stored turns
+    are that history. Read once, off the loop, when the record has none.
+    """
+    import sqlite3
+
+    from core.conation.what_she_wants import get_what_she_wants
+    from core.conversation.persistence import get_persistence
+
+    try:
+        stored = get_persistence().get_recent_history(limit=4096)
+    except (sqlite3.Error, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_learning_degradation(
+            exc,
+            stage="recall_her_talk",
+            action="left her record without her earlier conversations; new subjects stand out only against later ones",
+        )
+        return 0
+    exchanges: list[tuple[str, str]] = []
+    heard = ""
+    for turn in stored:
+        role = str(turn.get("role", "")).lower()
+        content = str(turn.get("content", "") or "")
+        if role == "user":
+            heard = content
+        elif heard and content:
+            exchanges.append((heard, content))
+            heard = ""
+    return get_what_she_wants().remember_talk(exchanges)
+
+
+def _said_this_turn(state: AuraState) -> list[str]:
+    """What the last person to speak said and what she answered, once each.
+
+    A turn is read every tick, and the same exchange is still the newest one
+    on the ticks after it. It is handed over on the first of them only, so an
+    exchange is counted once in what her later ones are set against.
+    """
+    cognition = getattr(state, "cognition", None)
+    heard = answered = ""
+    # The newest thing somebody said, and what she said after it. Her answer
+    # is in working memory before it is committed as her last response.
+    for entry in list(getattr(cognition, "working_memory", []) or []):
+        if not isinstance(entry, dict):
+            continue
+        content = str(entry.get("content", "") or "")
+        if str(entry.get("role", "")).lower() == "user":
+            heard, answered = content, ""
+        elif heard and content:
+            answered = content
+    answered = answered or str(getattr(cognition, "last_response", "") or "")
+    exchange = (heard, answered)
+    if not heard or exchange == getattr(_said_this_turn, "last", None):
+        return []
+    _said_this_turn.last = exchange
+    return [heard, answered]
+
+
+def _with_the_person(about: list[str], person: str, sent_from: str) -> list[str]:
+    """A turn somebody sent has that person in it, named or not.
+
+    The loop that serves chat does not pass through the door that names her
+    partner, so a turn a person sent read as time she spent alone and nobody
+    could come to matter to her. Somebody who was not identified is whoever
+    writes to her from that place.
+    """
+    if not sent_from:
+        return about
+    who = f"person:{person.strip() or 'someone at ' + sent_from}"
+    kept = [key for key in about if key != "self" and not key.startswith("person:")]
+    return [who, *kept]
+
+
+async def read_what_the_turn_was_worth(state: AuraState, *, person: str = "", sent_from: str = "") -> None:
+    """Read the turn that just ended against what she expected, and teach by it.
+
+    Its own function because the rest of this phase waits for a background
+    tick and this cannot. The phase is skipped on every tick somebody is
+    waiting on, so while the reading lived inside it no turn she spent with a
+    person was ever read: live, 10 to 13 October, 22 of her 500 choices were
+    appraised. The kernel calls this on those ticks in the phase's place
+    (core/kernel/aura_kernel_lifecycle.py).
+    """
+    try:
+        from core.affect.what_it_was_worth import (
+            broadcast,
+            disabled,
+            read_turn,
+            teach_connections,
+        )
+
+        if not disabled():
+            reading = read_turn(state)
+            direction = broadcast(reading)
+            lessons = await asyncio.to_thread(teach_connections, reading)
+            # And what it leaves her to work on. See core/soma/reserve.py.
+            from core.affect.what_it_was_worth import dose
+            from core.soma.reserve import get_reserve_ledger
+
+            if reading.measured:
+                get_reserve_ledger().charge(dose(reading))
+            _ensure_response_modifiers(state)["worth"] = {
+                **reading.as_dict(),
+                "sent": direction,
+                "taught": sorted(lessons),
+            }
+            # And what it was worth is what the things in it were worth:
+            # her likes, dislikes and wants are read off this record.
+            # See core/conation/what_she_wants.py.
+            from core.conation.what_she_wants import get_what_she_wants
+            from core.conation.what_she_wants import read_turn as met_this_turn
+
+            if not get_what_she_wants().talked_before():
+                await asyncio.to_thread(_recall_her_talk)
+            markers = getattr(getattr(state, "affect", None), "markers", None) or {}
+            about = list((markers.get("feelings_about") or {}).get("present") or [])
+            met_this_turn(
+                _with_the_person(about, person, sent_from), reading, said=_said_this_turn(state)
+            )
+    except _LEARNING_RECOVERABLE_ERRORS as e:
+        _record_learning_degradation(
+            e,
+            stage="worth",
+            action="left this turn's payoff unread; her chemistry and connections were not taught by it",
+            state=state,
+        )
+
+
 class LearningPhase(Phase):
     """
     Post-response learning phase.
@@ -123,36 +254,7 @@ class LearningPhase(Phase):
         # What the turn was worth to her against what she expected, read before
         # anything below can return early: a turn with no reply still paid or
         # cost her something. See core/affect/what_it_was_worth.py.
-        try:
-            from core.affect.what_it_was_worth import (
-                broadcast,
-                disabled,
-                read_turn,
-                teach_connections,
-            )
-
-            if not disabled():
-                reading = read_turn(state)
-                direction = broadcast(reading)
-                lessons = await asyncio.to_thread(teach_connections, reading)
-                # And what it leaves her to work on. See core/soma/reserve.py.
-                from core.affect.what_it_was_worth import dose
-                from core.soma.reserve import get_reserve_ledger
-
-                if reading.measured:
-                    get_reserve_ledger().charge(dose(reading))
-                _ensure_response_modifiers(state)["worth"] = {
-                    **reading.as_dict(),
-                    "sent": direction,
-                    "taught": sorted(lessons),
-                }
-        except _LEARNING_RECOVERABLE_ERRORS as e:
-            _record_learning_degradation(
-                e,
-                stage="worth",
-                action="left this turn's payoff unread; her chemistry and connections were not taught by it",
-                state=state,
-            )
+        await read_what_the_turn_was_worth(state)
 
         # ISSUE-88: Self-Modification Awareness
         has_mod = False
