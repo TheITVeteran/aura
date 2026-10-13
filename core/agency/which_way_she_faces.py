@@ -109,6 +109,9 @@ class WhichWaySheFaces:
     turns_measured: bool = True
     #: Every key pressed, the last key a trial asked for, and the time of the latest picture.
     pressed: set[str] = field(default_factory=set)
+    #: Earlier owned responses can request new direction experiments; they supply no heading measurements.
+    heading_hints: set[str] = field(default_factory=set)
+    heading_requests: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     last_tried: str = ""
     now: float = 0.0
     last_picture_at: float | None = None
@@ -280,6 +283,8 @@ class WhichWaySheFaces:
         tried in a fixed order, left beside right). So each key that moved her nowhere is tried on its own, between two
         goings ahead, until it has been seen so twice; None where there is nothing left to learn this way."""
         ahead = self.ahead_key(least=1)
+        if ahead is None or self.facing is None:
+            return self._first_direction_trial(keys)
         # Only where a key has taken her ways far apart, or where two keys or more moved her nowhere while another moved
         # her (turn left, turn right): in a place whose keys move her one way, one key that moves her nowhere is a shot
         # or a jump, and needs no trial. Two that turn her, tried in turn, cancel, and she never turns to show it.
@@ -309,6 +314,18 @@ class WhichWaySheFaces:
             return None
         # Ahead, then a still key on its own, then ahead again: her facing read before and after each.
         self.last_tried = min(still, key=lambda key: observed[key]) if self.last_tried == ahead else ahead
+        return self.last_tried
+
+    def _first_direction_trial(self, keys: list[str]) -> str | None:
+        """A new measured body needs a direction before isolated turning trials can answer."""
+        if self.held in self.heading_hints and (self.last_tried == self.held or len(self.going) >= 2):
+            self.last_tried = ''
+            return ''
+        candidates = [key for key in keys if key in self.heading_hints and self.heading_requests[key] < PRESSES]
+        if not candidates:
+            return None
+        self.last_tried = min(candidates, key=lambda key: self.heading_requests[key])
+        self.heading_requests[self.last_tried] += 1
         return self.last_tried
 
     def way_of(self, key: str) -> tuple[float, float] | None:

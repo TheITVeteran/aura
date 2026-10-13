@@ -402,10 +402,14 @@ def install_realtime_control_claims(suite: Any) -> None:
 
 
 def _travel_turn_claims() -> tuple:
+    from core.agency.facing_seen_under_its_input import _fresh_heading_invariant
     from core.agency.response_in_the_body_frame import _body_heading_invariant
     from core.agency.turning_while_travelling import _travel_turns_invariant
 
     return (
+        ("a_new_heading_requires_a_current_direction_experiment", "core/agency/facing_seen_under_its_input.py",
+         "tests/test_a_new_body_requests_a_fresh_heading.py", lambda: _fresh_heading_invariant() == (),
+         "Earlier owned responses can request bounded direction trials after a body is reacquired; they grant no heading or turning measurements, and unavailable controls cannot be requested."),
         ("travel_turns_require_repeated_observed_input_contrasts", "core/agency/turning_while_travelling.py",
          "tests/test_turning_while_travelling.py", lambda: _travel_turns_invariant() == (),
          "Turning during travel requires two coherent measured input intervals and two neutral contrasts; its rate cannot establish turning at rest."),
