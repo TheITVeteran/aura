@@ -110,3 +110,13 @@ def test_the_screen_after_a_showing_is_read_whole_before_it_is_taken_for_play_ag
     assert not _signs_may_come(reflexes)                         # until the screen has been read
     reflexes.read({"text": "Excellent! But what about the next room! NEXT", "layout": [{"text": "NEXT"}]})
     assert _signs_may_come(reflexes) and reflexes.way_on_shown
+
+
+def test_things_seen_coming_along_a_line_where_nothing_asks_for_signs_are_not_answered_as_signs(monkeypatch):
+    """Offline 2026-10-12: eggs falling in a game of catching them were seen going together down a line, the line
+    was kept, and in its next two runs each egg was waited on as a sign with no key to it."""
+    given = _stretches(monkeypatch, {"judged": 13, "known": LINE})
+    reflexes = _reflexes(signs_going=LINE)                       # kept by the play of a place that asked for none
+    assert not _signs_may_come(reflexes)
+    assert asyncio.run(_answered_the_signs(reflexes, time.monotonic())) is False
+    assert not given and not reflexes.stretches

@@ -312,14 +312,18 @@ def _signs_may_come(reflexes: Any) -> bool:
     """Whether signs to be followed may be coming along a line in this place: its words ask for signs to be followed,
     and a line has been seen here or has not yet been looked for and ruled out."""
     keep = reflexes.keep
+    if not keep.get("signs_told"):
+        # Things coming along a line in a place that asks nothing of the kind are things of the place. Offline
+        # 2026-10-12 eggs falling in a game of catching them were seen going together down a line, the line was kept,
+        # and in the next two runs each egg was waited on as a sign with no key to it.
+        return False
     if keep.get("signs_showing_over"):
         # A showing has just ended: whatever screen is up is read whole before it is taken for one of play again.
         # Offline 2026-10-12 a room's last sign went by, the screen that followed offered NEXT, and it was looked
         # at as play is, quickly and without its words, for as long as the game had left.
         return False
     return bool(keep.get("signs_going") or keep.get("signs_seen")
-                or keep.get("signs_told") and not keep.get("signs_shown_in_turn")
-                and int(keep.get("signs_none") or 0) < A_LINE_LOOKED_FOR)
+                or not keep.get("signs_shown_in_turn") and int(keep.get("signs_none") or 0) < A_LINE_LOOKED_FOR)
 
 
 def a_screen_of_play_in_time(reflexes: Any, labels: Any = None) -> bool:
@@ -1045,7 +1049,7 @@ class PlayingAsItHappens:
             # Past a menu is another screen: a line not found before it may be looked for again.
             self.keep["signs_none"] = 0
             return
-        if (signs_here or self.keep.get("signs_going")) and await _answered_the_signs(self, now):
+        if signs_here and await _answered_the_signs(self, now):
             return
         # A screen whose words ask for what it shows to be done again is watched, and followed, before it is played.
         if not self.keep.get("signs_going") and await self._did_again_what_it_showed():
