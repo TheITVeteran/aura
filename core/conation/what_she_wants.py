@@ -52,13 +52,17 @@ until it recovers. Whatever comes out above nothing is a want, with the thing,
 the way she would go, and the measurements behind it.
 
 What a turn was about is read from its words as counts and never as meaning.
-A term is one of a turn's things when the exchange uses it more than her
-exchanges have before, by Dunning's log-likelihood ratio (1993), the standard
-measure of which words are key to a text against a reference. The test is
-corrected for the number of terms the exchange offers, so a word that appears
-once does not pass and one that both of them keep coming back to does. Her
-reference is every exchange she has had since this was first kept, so the
-words everybody uses stop counting after the first.
+A term is one of a turn's things when two measurements agree. The exchange
+uses it more than her exchanges have before, by Dunning's log-likelihood ratio
+(1993), the standard measure of which words are key to a text against a
+reference, corrected for the number of terms the exchange offers. And it is
+dwelt on where it comes up: it is found in fewer than half the exchanges its
+count would reach if it were spread by chance, which is a residual inverse
+document frequency above one bit (Church and Gale 1995). The second is what
+tells a subject from a word that is merely frequent in one kind of talk.
+Measured on her 351 stored exchanges on 13 October, "limpet" and "scar" read
+2.4 and 2.6 bits and "its", "home" and "watch" 0.6, 0.5 and 0.3. Her
+reference is her own exchanges, the stored ones included.
 
 Nothing here reads what a sentence says. Being told she loves something adds
 a thing she has met once and knows nothing about.
@@ -138,7 +142,7 @@ def terms_of(*texts: str) -> Counter[str]:
             found.update(f"{a} {b}" for a, b in zip(words, words[1:], strict=False))
     return found
 MAX_OPEN = 8
-SCHEMA = 1
+SCHEMA = 2
 
 
 def liking_of(reading: Any) -> float | None:
@@ -303,6 +307,10 @@ class WhatSheWants:
         #: against to say which of its terms are particular to it.
         self._said: Counter[str] = Counter()
         self._said_total = 0
+        #: How many of those exchanges each term was in, and how many there
+        #: have been: whether a term is dwelt on or spread thin.
+        self._said_in: Counter[str] = Counter()
+        self._exchanges = 0
         self._standing: list[Want] = []
         self._engine = engine
         self._path = Path(path) if path is not None else None
@@ -338,6 +346,8 @@ class WhatSheWants:
                 self._things[thing.key] = thing
             self._said = Counter({str(k): int(v) for k, v in dict(stored.get("said", {})).items()})
             self._said_total = max(0, int(stored.get("said_total", 0)))
+            self._said_in = Counter({str(k): int(v) for k, v in dict(stored.get("said_in", {})).items()})
+            self._exchanges = max(0, int(stored.get("exchanges", 0)))
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             self._things.clear()
             self._turns = self._good_turns = self._read = 0
@@ -359,6 +369,8 @@ class WhatSheWants:
             "things": [thing.to_dict() for thing in self._things.values()],
             "said": dict(self._said),
             "said_total": self._said_total,
+            "said_in": dict(self._said_in),
+            "exchanges": self._exchanges,
         }
 
     def _save(self, payload: dict[str, Any]) -> None:
@@ -409,12 +421,16 @@ class WhatSheWants:
                     ratio = 2.0 * count * math.log(count / (total * pooled))
                     if past:
                         ratio += 2.0 * past * math.log(past / (before_total * pooled))
-                    if ratio > critical:
+                    if ratio <= critical:
+                        continue
+                    # Dwelt on: with this exchange counted, the exchanges it
+                    # is in are fewer than half of those a term used this
+                    # often would be in by chance.
+                    exchanges = self._exchanges + 1
+                    by_chance = exchanges * (1.0 - math.exp(-(past + count) / exchanges))
+                    if math.log2(by_chance / (self._said_in.get(term, 0) + 1)) > 1.0:
                         scored.append((ratio, term))
-            self._said.update(here)
-            self._said_total += total
-            if len(self._said) > MAX_TERMS:
-                self._said = Counter(dict(self._said.most_common(MAX_TERMS // 2)))
+            self._count_exchange(here)
         # A pair is one thing when neither word is there without the other.
         # Then the words are the pair, and a pair one of whose words also
         # stands alone is that word beside something else.
@@ -430,6 +446,16 @@ class WhatSheWants:
             if (term in pairs) or (" " not in term and term not in inside)
         ]
 
+    def _count_exchange(self, here: Counter[str]) -> None:
+        """Add one exchange to what later ones are set against. Lock held."""
+        self._said.update(here)
+        self._said_total += sum(here.values())
+        self._said_in.update(here.keys())
+        self._exchanges += 1
+        if len(self._said) > MAX_TERMS:
+            self._said = Counter(dict(self._said.most_common(MAX_TERMS // 2)))
+            self._said_in = Counter({term: self._said_in[term] for term in self._said})
+
     def talked_before(self) -> bool:
         """Whether there is anything yet to set an exchange against."""
         with self._lock:
@@ -444,12 +470,8 @@ class WhatSheWants:
         added = 0
         with self._lock:
             for exchange in exchanges:
-                here = terms_of(*exchange)
-                self._said.update(here)
-                self._said_total += sum(here.values())
+                self._count_exchange(terms_of(*exchange))
                 added += 1
-            if len(self._said) > MAX_TERMS:
-                self._said = Counter(dict(self._said.most_common(MAX_TERMS // 2)))
             held = self._held()
         self._save(held)
         return added

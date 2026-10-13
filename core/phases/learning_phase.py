@@ -153,7 +153,22 @@ def _said_this_turn(state: AuraState) -> list[str]:
     return [heard, answered]
 
 
-async def read_what_the_turn_was_worth(state: AuraState) -> None:
+def _with_the_person(about: list[str], person: str, sent_from: str) -> list[str]:
+    """A turn somebody sent has that person in it, named or not.
+
+    The loop that serves chat does not pass through the door that names her
+    partner, so a turn a person sent read as time she spent alone and nobody
+    could come to matter to her. Somebody who was not identified is whoever
+    writes to her from that place.
+    """
+    if not sent_from:
+        return about
+    who = f"person:{person.strip() or 'someone at ' + sent_from}"
+    kept = [key for key in about if key != "self" and not key.startswith("person:")]
+    return [who, *kept]
+
+
+async def read_what_the_turn_was_worth(state: AuraState, *, person: str = "", sent_from: str = "") -> None:
     """Read the turn that just ended against what she expected, and teach by it.
 
     Its own function because the rest of this phase waits for a background
@@ -195,8 +210,10 @@ async def read_what_the_turn_was_worth(state: AuraState) -> None:
             if not get_what_she_wants().talked_before():
                 await asyncio.to_thread(_recall_her_talk)
             markers = getattr(getattr(state, "affect", None), "markers", None) or {}
-            about = (markers.get("feelings_about") or {}).get("present") or []
-            met_this_turn(about, reading, said=_said_this_turn(state))
+            about = list((markers.get("feelings_about") or {}).get("present") or [])
+            met_this_turn(
+                _with_the_person(about, person, sent_from), reading, said=_said_this_turn(state)
+            )
     except _LEARNING_RECOVERABLE_ERRORS as e:
         _record_learning_degradation(
             e,

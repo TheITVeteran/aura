@@ -82,10 +82,10 @@ def test_her_stored_conversations_are_what_a_new_subject_stands_out_against(tmp_
         assert learning_phase._recall_her_talk() == 40
         assert record.talked_before() and record.thing("topic:plan") is None
         about = record.about(
-            "The anemone let go of a small shell at the tide pools.",
-            "An anemone in the tide pools holds what smells alive.",
+            "The anemone let go of a small shell. Does an anemone prefer anything?",
+            "An anemone holds what smells alive, and that is most of what an anemone goes on.",
         )
-        assert "tide pools" in about and "anemone" in about and "the" not in about
+        assert about == ["anemone"]
     finally:
         what_she_wants.reset_for_test(tmp_path / "after.json", engine=ConationEngine())
 
@@ -116,4 +116,15 @@ def test_the_loop_that_serves_chat_reads_the_turn_once_she_has_answered():
     from core.brain import cognitive_engine_thinking_loop
 
     source = inspect.getsource(cognitive_engine_thinking_loop)
-    assert "await read_what_the_turn_was_worth(state)" in source
+    assert "await read_what_the_turn_was_worth(" in source
+    assert "sent_from=" in source and 'get("user_id")' in source
+
+
+def test_a_turn_somebody_sent_has_that_person_in_it_named_or_not():
+    from core.phases.learning_phase import _with_the_person
+
+    about = ["self", "topic:times", "attended:deliberation"]
+    assert _with_the_person(about, "bryan", "desktop_ui")[0] == "person:bryan"
+    assert _with_the_person(about, "", "desktop_ui")[0] == "person:someone at desktop_ui"
+    assert "self" not in _with_the_person(about, "", "desktop_ui")
+    assert _with_the_person(about, "", "") == about

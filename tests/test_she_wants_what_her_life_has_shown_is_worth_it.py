@@ -191,13 +191,28 @@ TIDE_TALK = (
 def test_what_an_exchange_is_about_is_what_it_says_more_than_her_exchanges_have(record):
     _has_talked_before(record)
     about = record.about(*TIDE_TALK)
-    assert about == ["anemone", "mussel", "shell", "tide pools"]
+    assert about == ["anemone"]
 
 
-def test_a_word_said_once_is_not_what_the_exchange_is_about(record):
+def test_a_word_said_in_passing_is_not_what_the_exchange_is_about(record):
+    """The anemone is said four times; the mussel twice and the meat once."""
     _has_talked_before(record)
-    assert "mussel" in record.about(*TIDE_TALK)
-    assert "meat" not in record.about(*TIDE_TALK)
+    about = record.about(*TIDE_TALK)
+    assert "anemone" in about
+    assert not {"mussel", "meat", "shell", "tide pools"} & set(about)
+
+
+def test_a_word_frequent_in_one_kind_of_talk_is_not_a_subject(record):
+    """Spread thin across many exchanges, then used four times in one."""
+    _has_talked_before(record)
+    for turn in range(30):
+        record.about(f"Its number {turn} came up.", "Noted, and its place is kept.")
+    about = record.about(
+        "The limpet left its scar. Its shell fits its scar and the limpet knows its scar.",
+        "The limpet finds the scar by fit, and its foot settles in the scar.",
+    )
+    assert "limpet" in about and "scar" in about
+    assert "its" not in about
 
 
 def test_with_nothing_to_set_it_against_nothing_is_particular(record):
@@ -213,7 +228,7 @@ def test_the_things_of_a_turn_are_its_particular_terms_in_place_of_the_topic_lab
     _has_talked_before(record)
     read_turn(["self", "topic:times", "attended:deliberation"], Worth(), record, said=TIDE_TALK)
     assert record.thing("topic:times") is None
-    assert record.thing("topic:tide pools").reachable
+    assert record.thing("topic:anemone").reachable
     assert record.thing("topic:anemone").liking > 0.0
     assert record.thing("self").contacts == 1
 
@@ -223,4 +238,4 @@ def test_what_her_exchanges_have_said_is_kept_across_a_restart(record, tmp_path)
     record.met(["self"], 0.1)
     flush_writes_behind()
     again = WhatSheWants(tmp_path / "wants.json", engine=ConationEngine())
-    assert "tide pools" in again.about(*TIDE_TALK)
+    assert "anemone" in again.about(*TIDE_TALK)

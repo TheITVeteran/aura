@@ -1094,7 +1094,11 @@ class _RunsTheThinkingLoop:
         if last_msg and not is_background:
             from core.phases.learning_phase import read_what_the_turn_was_worth
 
-            await read_what_the_turn_was_worth(state)
+            await read_what_the_turn_was_worth(
+                state,
+                person=str((context or {}).get("user_id") or ""),
+                sent_from=str(origin or "") if self._is_user_facing_origin(origin) else "",
+            )
         if last_msg:
             self.autopoiesis.experience_friction(objective[:20], 0.05)
             # Reward is no longer 1.0 for the mere existence of an
