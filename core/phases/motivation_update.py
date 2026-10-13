@@ -49,6 +49,26 @@ def _background_curiosity_allowed() -> bool:
 _DISTRESS: tuple[str, ...] = ("fear", "sadness", "anger", "frustration", "upset", "dread")
 
 
+def _what_she_wants_most() -> str:
+    """The name of the thing she most wants, as last asked, or nothing.
+
+    Her curiosity took its subject from a fixed list of interests by
+    `random.choice`. A subject she has come to want, from what her own turns
+    with it were worth, comes before the list. Read from the standing answer,
+    because asking afresh appraises every thing and this is called each tick.
+    """
+    try:
+        from core.conation.what_she_wants import get_what_she_wants
+
+        for want in get_what_she_wants().standing():
+            if want.thing.startswith("topic:") and want.label:
+                return want.label
+    # not a failure: with no record to read, the list is drawn from as before.
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return ""
+    return ""
+
+
 def met_by_somebody(points: float) -> float:
     """Somebody reached her: her need for company is met by that much of what is unmet.
 
@@ -917,7 +937,12 @@ class MotivationUpdatePhase(_ReadsTheDriveSignals, Phase):
                 return None
             # Prefer current discourse topic over random latent interests
             discourse_topic = getattr(state.cognition, "discourse_topic", None)
-            if discourse_topic:
+            wanted = _what_she_wants_most()
+            if wanted:
+                # What she is curious about is what she wants to know more
+                # of, from her own record, before any list is drawn from.
+                topic = wanted
+            elif discourse_topic:
                 topic = discourse_topic
             elif mot.latent_interests:
                 topic = random.choice(mot.latent_interests)

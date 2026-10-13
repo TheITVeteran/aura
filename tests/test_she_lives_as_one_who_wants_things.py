@@ -100,3 +100,16 @@ def test_a_game_she_played_is_on_the_record_her_talk_is_on(record):
     record.met(["self"], 0.7)
     game = record.thing("game:zap to it")
     assert game.reachable and game.ways["play"].times == 1 and game.liking > 0.0
+
+
+def test_her_curiosity_takes_its_subject_from_what_she_wants_before_any_list(record):
+    from core.phases.motivation_update import _what_she_wants_most
+
+    assert _what_she_wants_most() == ""
+    rng = random.Random(4)
+    for turn in range(24):
+        key, paid = (A, 0.6) if turn % 2 == 0 else (C, -0.5)
+        record.met(["self", key], paid + rng.uniform(-0.2, 0.2), reachable=[key], labels=LABELS)
+    _rested(record)
+    record.wants()
+    assert _what_she_wants_most() == "tide pools"
