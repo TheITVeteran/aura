@@ -87,3 +87,33 @@ layering, dependency graph, compile and lint. Smoke passed 165 tests with one
 skip in 57.74 seconds. Logs are
 `/private/tmp/codex-steer/finished-reading-checkpoint-gates.log` and
 `/private/tmp/codex-steer/finished-reading-gates-summary.log`.
+
+## Saved revision and offline rerun
+
+The implementation was rebased over intervening changes to research tools and
+reference runners. There was no overlap in the changed production files. A
+focused post-rebase run passed 29 tests in 10.99 seconds, recorded at
+`/private/tmp/codex-steer/finished-reading-rebase-tests.log`.
+
+Commit `26548a8afa27ac483a24215283627d69d32baa6a` was pushed and verified as
+`origin/main`. The clean proof worktree then ran that revision in
+`/private/tmp/codex-steer/run-18v`. It completed in 77.136 seconds without its
+process-group timeout. The campaign result was `won: false`; the final reading
+reported zero landings, one crash and zero percent success. Its `goal_reached`
+line denotes ending detection, not a successful landing.
+
+There were no observation-timeout messages in this rerun. There were also no
+retained-reading fallback messages. The rerun therefore demonstrates ordinary
+execution of the changed path, not a causal before-and-after improvement of
+fallback behavior. The tests establish that behavior under controlled delay.
+The previous and current runs did not hold machine load constant.
+
+The run reached control stretches at 22.9 and 19.7 pictures per second. It did
+not establish reliable control of the falling body. Attempts to use model-based
+visual identification also reported a missing configured vision-model path and
+admission refused because another campaign owned the exclusive model lane.
+That campaign and its server were left running.
+
+Presentation readiness remains unproven. The next timing work is to measure
+capture age, input delivery and release jitter separately, and keep initial
+perception and control from waiting behind optional inspection.
