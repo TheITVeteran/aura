@@ -74,6 +74,27 @@ async def test_a_delivered_forecast_retains_its_finite_input_window(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_the_actor_uses_accumulated_slow_motion_without_a_calibrated_driver(monkeypatch):
+    now, run, hers, mine, moves, choosing, actions, hands, guide = _setup(monkeypatch)
+    run.faces.along.clear()
+    run.faces.steering_model = None
+    choosing.ways.clear()
+    token = THE_GUIDE.set(guide)
+    try:
+        for index in range(13):
+            now[0] = mine.seen = index * .1
+            mine.x, mine.vx = 150. + 4. * now[0], 4.
+            observed_steering_model(run.faces, mine, hers, moves, now[0], run=run)
+        assert run.faces.ahead_key(least=1) is None
+        assert run.faces.steering_model.driver(run.keys, now=now[0]) == 'opaque-drive'
+        assert await steer_with_a_model(hands, run, hers, choosing, now[0], hold=play._hold)
+    finally:
+        THE_GUIDE.reset(token)
+    assert run._modelled_steering is not None and not run.faces.turns_her()
+    assert actions[0] == ('up', 'opaque-drive') and actions[1][0] == 'down'
+
+
+@pytest.mark.asyncio
 async def test_changed_birth_ends_the_previous_forecast_and_releases_its_input(monkeypatch):
     now, run, hers, mine, _moves, choosing, actions, hands, guide = _setup(monkeypatch)
     token = THE_GUIDE.set(guide)
@@ -133,6 +154,19 @@ def test_changing_coordinate_basis_discards_the_old_physical_forecast(monkeypatc
     mine.motion_position, mine.motion_measured_at, mine.seen = (151., 151.), .4, .4
     observed_steering_model(run.faces, mine, hers, moves, .4)
     assert run.faces.steering_model is not previous
+
+
+def test_a_numeric_capture_receipt_can_date_the_owned_bodys_birth(monkeypatch):
+    from core.perception.a_clock_for_drawn_frames import MeasuredFrameTime
+
+    _now, run, hers, mine, moves, _choosing, _actions, _hands, _guide = _setup(monkeypatch)
+    mine.born = MeasuredFrameTime(0., lower=0., upper=.001, arrived=.01,
+                                 source='browser-wall', source_at=1000., epoch=1)
+    observed_steering_model(run.faces, mine, hers, moves, .3)
+    assert run.faces.steering_model.owner == (1, 0., hers.identification.epoch)
+    mine.born = False
+    observed_steering_model(run.faces, mine, hers, moves, .4)
+    assert run.faces.steering_model.owner is None
 
 
 @pytest.mark.asyncio
@@ -227,3 +261,25 @@ async def test_actor_expiry_keeps_the_forecasts_pre_release_feedback(monkeypatch
     assert run._modelled_steering is None and not run.held and model.pending is None
     assert model.last_result == 'partial consistent' and model.covered_span == pytest.approx((.3, .4))
     assert sum(kind == 'up' for kind, _key in actions) == (1 if neutral else 2)
+
+
+@pytest.mark.asyncio
+async def test_an_old_forecast_cannot_release_a_new_press_of_the_same_control(monkeypatch):
+    now, run, hers, mine, _moves, choosing, actions, hands, guide = _setup(monkeypatch)
+    token = THE_GUIDE.set(guide)
+    try:
+        assert await steer_with_a_model(hands, run, hers, choosing, now[0], hold=play._hold)
+        key = run.held
+        now[0] = .31
+        await play._hold(hands, run, hers, '', now[0])
+        now[0] = .32
+        await play._hold(hands, run, hers, key, now[0], trying=True)
+        before = list(actions)
+        # The next sighting has no current motion on which to plan another input.
+        now[0] = .33
+        mine.seen = .3
+        assert not await steer_with_a_model(hands, run, hers, choosing, now[0], hold=play._hold)
+    finally:
+        THE_GUIDE.reset(token)
+    assert actions == before and run.held == key and run.held_since == .32
+    assert run._modelled_steering is None

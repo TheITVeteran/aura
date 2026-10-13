@@ -116,6 +116,7 @@ from core.agency.which_one_answers_to_her import ways_carried as ways_carried
 from core.agency.who_is_who import FRIENDLY, IN_HER_WAY
 from core.agency.who_is_who import NEVER_SHOT as NEVER_SHOT
 from core.perception.how_things_move_here import HowThingsMoveHere
+from core.perception.play_observation_without_holding_the_loop import open_play_observation
 from core.perception.seeing_play_elsewhere import eyes_for_play, short_turns_while_playing
 from core.perception.what_changed_and_stayed import WhatChangedAndStayed
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX, WhatMoves
@@ -651,7 +652,7 @@ def _what_the_place_does(run: _Run, choosing: _Choosing, moves: WhatMoves, hers:
     choosing.faces, choosing.comes, choosing.way_through = run.faces, run.comes, run.way_through
     observe_facing(run.faces, mine, hers, at)
     from core.agency.steering_from_a_model import observed_steering_model
-    observed_steering_model(run.faces, mine, hers, moves, at)
+    observed_steering_model(run.faces, mine, hers, moves, at, run=run)
     if mine is not None:
         run.comes.saw(moves.things.values(), mine)
     # Carried on by her own going, doing nothing is already what her going does; under the pointer, it is staying put.
@@ -1093,7 +1094,7 @@ async def _play_as_it_happens(
     from core.agency.when_motion_breaks_a_rule import MotionChecks
 
     motion_checks = MotionChecks(frozenset(keep.get("required_edges") or []), str(keep.get("edge_provenance") or ""))
-    moves = eyes_for_play(kinds=keep.get("kinds"))  # in a process of their own (core/perception/seeing_play_elsewhere.py)
+    moves = await open_play_observation(kinds=keep.get("kinds"), factory=eyes_for_play)
     physics: HowThingsMoveHere = keep.get("physics") or HowThingsMoveHere()
     rules = WhatTheRulesSaid.read(told) if told else None
     from core.agency.situations_she_knows import caution_of, situations_in
@@ -1217,7 +1218,10 @@ async def _play_as_it_happens(
                 run.intervals.append(at - run.picture_at)
             run.picture_at = at
             run.pictures += 1
-            happened = moves.see(picture, at)
+            happened = await moves.see(picture, at)
+            if happened is None:
+                await asyncio.sleep(0)
+                continue
             run.picture = picture
             for sound in getattr(picture, "sounds", ()):
                 run.sounds.heard_sound(sound.at, sound.sig, hers.thing(moves))
@@ -1306,6 +1310,7 @@ async def _play_as_it_happens(
             _report(run, getting_somewhere, at)
             ended = _over(run, moves, happened, at) or _nothing_answers(run, hers, meeting, at) or _said_it_is_over(run)
     finally:
+        await moves.close()
         await release_after_play(hands, run, hers)
         await run.coming.let_go(hands)
         keep["signs_going"] = run.coming.known() or keep.get("signs_going")

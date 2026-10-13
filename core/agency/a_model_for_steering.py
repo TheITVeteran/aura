@@ -39,6 +39,7 @@ class SteeringPrediction:
     endpoint: tuple[float, float]
     heading: float
     path: tuple[tuple[float, float, float, float], ...]
+    linear_error: float = 0.
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,18 @@ class _Pose:
     vx: float
     vy: float
     error: float
+    heading_error: float = 0.
+    speed_error: float = 0.
+
+
+@dataclass(frozen=True)
+class _Drive:
+    speed: float
+    heading: float
+    at: float
+    anchored: bool
+    heading_error: float
+    speed_error: float
 
 
 class ProvisionalSteeringBank:
@@ -94,7 +107,8 @@ class ProvisionalSteeringBank:
         self._origin: _Pose | None = None
         self._receipt: tuple[str, float] | None = None
         self._samples: deque[tuple[float, float, float]] = deque(maxlen=32)
-        self._drivers: dict[str, tuple[float, float, float]] = {}
+        self._positions: deque[tuple[float, float, float, float]] = deque(maxlen=128)
+        self._drivers: dict[str, _Drive] = {}
         self._prediction_id = 0
         self._delivered_at: float | None = None
         self._delay = 0.
@@ -106,6 +120,8 @@ class ProvisionalSteeringBank:
     def arm(self, turn_keys: Iterable[str], *, body_extent: float | None = None) -> None:
         """Only caller-qualified control roles may receive a turning hypothesis."""
         self.turn_keys = {key for key in turn_keys if isinstance(key, str) and key}
+        for key in self.turn_keys:
+            self._drivers.pop(key, None)
         if body_extent is not None:
             if not _finite(body_extent) or body_extent <= 0:
                 raise ValueError('invalid body extent')
@@ -119,6 +135,7 @@ class ProvisionalSteeringBank:
         self._pose = self._origin = None
         self._receipt = None
         self._samples.clear()
+        self._positions.clear()
         self._drivers.clear()
         self._delivered_at = None
         self._stationary_probe = False
@@ -126,6 +143,47 @@ class ProvisionalSteeringBank:
         self._closed_receipt = None
         self._completed = None
         self.last_result = 'unobserved'
+
+    def driver(self, keys: Iterable[str], *, now: float | None = None) -> str | None:
+        """Return a fresh non-turn response with displacement owned by one input receipt."""
+        if self._pose is None or self.owner is None:
+            return None
+        at = self._pose.at if now is None else now
+        if not _finite(at) or not 0 <= at - self._pose.at <= self.longest_gap:
+            return None
+        eligible = [(drive.at, key) for key in set(keys) - self.turn_keys
+                    if (drive := self._drivers.get(key)) is not None and drive.anchored
+                    and 0 <= at - drive.at <= self.longest_gap]
+        return max(eligible)[1] if eligible else None
+
+    def _motion_from_positions(self, key: str, at: float, x: float, y: float, error: float
+                               ) -> tuple[float, float, float, float] | None:
+        """Accumulate endpoint evidence without declaring a measured instantaneous turn."""
+        window = 8 * self.longest_gap
+        while self._positions and at - self._positions[0][0] > window:
+            self._positions.popleft()
+        if not self._positions or at - self._positions[-1][0] >= window / 127:
+            self._positions.append((at, x, y, error))
+        if not self._positions:
+            return None
+        before, ox, oy, old_error = self._positions[0]
+        span, distance = at - before, math.hypot(x - ox, y - oy)
+        uncertainty = old_error + error
+        if span <= 0 or distance <= uncertainty:
+            return None
+        speed = distance / span
+        fit = self.estimates.get(key) or self.estimates.get('')
+        rate_bound = (abs(fit.rate) + fit.uncertainty if fit else
+                      speed / self.body_extent * (2 if key in self.turn_keys else 1))
+        half_turn = rate_bound * span / 2
+        if half_turn >= math.pi / 2:
+            return None
+        # A chord points along average travel. Current direction remains a
+        # hypothesis within the bank's finite curvature family.
+        heading_error = min(math.pi, math.asin(uncertainty / distance) + half_turn)
+        curvature = half_turn / math.sin(half_turn) if half_turn > 1e-9 else 1.
+        speed_error = max(uncertainty / span, (distance + uncertainty) / span * curvature - speed)
+        return (x - ox) / span, (y - oy) / span, heading_error, speed_error
 
     def saw(self, owner: Owner | None, key: str, began: float, at: float, x: float, y: float,
             vx: float, vy: float, *, position_error: float = 1., measured: bool = True) -> None:
@@ -142,6 +200,8 @@ class ProvisionalSteeringBank:
             self.pending = None
             self._pose = None
             self._samples.clear()
+            self._positions.clear()
+            self._drivers.clear()
             self._receipt = None
             self._feedback = self.covered_span = None
             self._completed = None
@@ -154,6 +214,8 @@ class ProvisionalSteeringBank:
         if gap:
             self.pending = None
             self._samples.clear()
+            self._positions.clear()
+            self._drivers.clear()
             self._receipt = None
             self._feedback = self.covered_span = None
             self._completed = None
@@ -162,32 +224,45 @@ class ProvisionalSteeringBank:
         receipt = key, began
         closed = (self._closed_receipt is not None and receipt == self._closed_receipt[:2]
                   and at > self._closed_receipt[2])
+        if receipt != self._receipt:
+            self._receipt = receipt
+            self._samples.clear()
+            self._positions.clear()
         speed = math.hypot(vx, vy)
         interval = at - previous.at if previous is not None and not gap else None
         velocity_error = ((position_error + previous.error) / interval
                           if interval is not None and interval > 0 else math.inf)
         moving = speed > velocity_error if interval is not None else speed > 0
         heading = math.atan2(vy, vx) if moving else (previous.heading if previous and not gap else None)
-        if heading is not None and moving and key not in self.turn_keys and key and not closed:
+        heading_error = math.asin(min(1., velocity_error / speed)) if moving and interval is not None else 0.
+        speed_error = velocity_error if math.isfinite(velocity_error) else 0.
+        accumulated = self._motion_from_positions(key, at, x, y, position_error) if not closed else None
+        owned_interval = (interval is not None and previous is not None and previous.at >= began and not gap
+                          and (previous_receipt == receipt or previous.at == began))
+        anchored = moving and owned_interval
+        if not moving and accumulated is not None:
+            vx, vy, heading_error, speed_error = accumulated
+            speed, heading = math.hypot(vx, vy), math.atan2(vy, vx)
+            anchored = True
+        elif not moving and previous is not None and not gap:
+            heading_error = min(math.pi, previous.heading_error + speed / self.body_extent * (interval or 0.))
+        resolved = moving or accumulated is not None
+        if heading is not None and resolved and key not in self.turn_keys and key and not closed:
             sign = 1.
             if previous is not None and previous.heading is not None:
                 sign = 1. if math.cos(heading - previous.heading) >= 0 else -1.
             if sign < 0:
                 heading = _wrap(heading + math.pi)
-            self._drivers[key] = (sign * speed, heading, at)
-        elif heading is not None and moving and previous is not None and previous.heading is not None:
+            self._drivers[key] = _Drive(sign * speed, heading, at, bool(anchored), heading_error, speed_error)
+        elif heading is not None and resolved and previous is not None and previous.heading is not None:
             if math.cos(heading - previous.heading) < 0:
                 heading = _wrap(heading + math.pi)
-        pose = _Pose(at, x, y, heading, vx, vy, position_error)
-        if receipt != self._receipt:
-            self._receipt = receipt
-            self._samples.clear()
+        pose = _Pose(at, x, y, heading, vx, vy, position_error, heading_error, speed_error)
         if not moving or closed:
             self._samples.clear()
         # A velocity interval crossing input delivery does not belong to this input.
         if (moving and heading is not None and interval is not None and previous is not None
-                and previous.at >= began and not gap and not closed
-                and (previous_receipt == receipt or previous.at == began)):
+                and owned_interval and not closed):
             angle_error = math.asin(min(1., velocity_error / speed))
             if self._samples:
                 heading = self._samples[-1][1] + _wrap(heading - self._samples[-1][1])
@@ -249,18 +324,22 @@ class ProvisionalSteeringBank:
                 (base + prior, base_error + prior, 'moving turn prior'))
 
     def _prediction(self, pose: _Pose, speed: float, rate: float, error_rate: float, duration: float,
-                    delay: float, model: str, *, heading: float | None = None) -> SteeringPrediction:
+                    delay: float, model: str, *, heading: float | None = None,
+                    drive: _Drive | None = None) -> SteeringPrediction:
         heading = pose.heading if heading is None else heading
         assert heading is not None
         start_x, start_y = pose.x + pose.vx * delay, pose.y + pose.vy * delay
+        heading_error = max(pose.heading_error, drive.heading_error if drive is not None else 0.)
+        speed_error = max(pose.speed_error, drive.speed_error if drive is not None else 0.)
+        linear_error = speed_error + 2 * abs(speed) * math.sin(heading_error / 2)
         samples = []
         for step in range(1, 5):
             after = duration * step / 4
             x, y = _arc(start_x, start_y, heading, speed, rate, after)
-            error = pose.error + abs(speed) * error_rate * after * after / 2
+            error = pose.error + linear_error * (delay + after) + abs(speed) * error_rate * after * after / 2
             samples.append((delay + after, x, y, error))
         return SteeringPrediction(model, rate, speed, samples[-1][1:3],
-                                  _wrap(heading + rate * duration), tuple(samples))
+                                  _wrap(heading + rate * duration), tuple(samples), linear_error)
 
     def action(self, keys: Iterable[str], driver: str, target: tuple[float, float], *, horizon: float = .2,
                clearance: Callable[[float, float, float], bool] | None = None,
@@ -275,7 +354,8 @@ class ProvisionalSteeringBank:
         controls = set(keys)
         if driver not in controls:
             return None
-        driving_speed, _driver_heading, driver_at = self._drivers[driver]
+        drive = self._drivers[driver]
+        driving_speed, driver_at = drive.speed, drive.at
         if pose.at - driver_at > 4 * self.longest_gap and not self.estimates:
             return None
         signed_speed = pose.vx * math.cos(pose.heading) + pose.vy * math.sin(pose.heading)
@@ -293,7 +373,8 @@ class ProvisionalSteeringBank:
             if self._stationary_probe and key != driver:
                 continue
             for rate, rate_error, model in rates:
-                prediction = self._prediction(pose, speed, rate, rate_error, duration, delay_s, model)
+                prediction = self._prediction(pose, speed, rate, rate_error, duration, delay_s, model,
+                                              drive=drive if key == driver else None)
                 if key != driver and key and abs(speed) < 1e-9:
                     prediction = self._prediction(pose, 0., rate, rate_error, duration, delay_s, 'stationary turn prior')
                 if clearance is not None and not all(clearance(x, y, error) for _, x, y, error in prediction.path):
@@ -316,9 +397,8 @@ class ProvisionalSteeringBank:
             alternatives.extend((self._prediction(pose, signed_speed, 0., 0., duration, delay_s, 'no effect'),
                                  self._prediction(pose, signed_speed, base, base_error, duration, delay_s, 'autonomous curve')))
         else:
-            _speed, world_heading, _when = self._drivers[driver]
             alternatives.append(self._prediction(pose, driving_speed, 0., 0., duration, delay_s,
-                                                 'world-fixed drive', heading=world_heading))
+                                                 'world-fixed drive', heading=drive.heading, drive=drive))
         if clearance is not None and not all(clearance(x, y, error) for pred in alternatives for _, x, y, error in pred.path):
             return None
         self._prediction_id += 1
@@ -355,6 +435,7 @@ class ProvisionalSteeringBank:
         self._closed_receipt = action.key, began, ended_at
         self._completed = None
         self._samples.clear()
+        self._positions.clear()
         return True
 
     def _finish_window(self, ended_at: float) -> None:
@@ -378,8 +459,10 @@ class ProvisionalSteeringBank:
                         initial_heading, prediction.speed, prediction.rate, seconds)
             # Frozen angular uncertainty grows with elapsed time, rather than granting
             # a short observation the larger allowance of the intended full pulse.
-            uncertainty = max(0., prediction.path[-1][3] - origin.error)
-            bound = origin.error + uncertainty * (seconds / action.duration) ** 2 + pose.error
+            linear = prediction.linear_error * (self._delay + action.duration)
+            uncertainty = max(0., prediction.path[-1][3] - origin.error - linear)
+            bound = (origin.error + prediction.linear_error * (self._delay + seconds)
+                     + uncertainty * (seconds / action.duration) ** 2 + pose.error)
             errors.append(math.dist((x, y), (pose.x, pose.y)) <= bound)
         if math.hypot(pose.vx, pose.vy) == 0 and action.key in self.turn_keys:
             return 'heading unobserved'
@@ -445,4 +528,22 @@ def _forecast_window_invariant() -> tuple:
     assert model.last_result == 'partial consistent' and model.covered_span == (.3, .4)
     model.saw((1, 0., 1), '', .45, .5, 20., 20., 30., 0., position_error=.01)
     assert model.last_result == 'partial consistent' and model.covered_span == (.3, .4)
+    return ()
+
+
+@invariant('agency.slow_motion_keeps_its_input_and_pixel_uncertainty', scope='agency',
+           owner='core/agency/a_model_for_steering.py', observational=False)
+def _slow_motion_invariant() -> tuple:
+    model = ProvisionalSteeringBank()
+    model.arm(['b'], body_extent=16.)
+    for index in range(13):
+        at = .05 * index
+        model.saw((1, 0., 1), 'a', 0., at, 4 * at, 0., 0., 0., position_error=1.)
+    assert model.driver(['a', 'b']) == 'a'
+    assert not model.estimates
+    action = model.action(['a', 'b'], 'a', (20., 20.))
+    assert action is not None and action.status == 'provisional'
+    assert all(p.linear_error > 0 for p in action.predictions)
+    model.saw((1, 0., 1), 'a', 0., .65, 2.6, 0., 0., 0., measured=False)
+    assert model.driver(['a', 'b']) is None
     return ()

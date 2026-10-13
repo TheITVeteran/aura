@@ -82,3 +82,14 @@ async def test_expiry_and_new_input_delivery_share_one_serial_boundary():
     await asyncio.wait_for(asyncio.gather(expiry, next_input), timeout=1.)
     assert actions == [('down', 'a'), ('up', 'a'), ('down', 'b')]
     assert run.held == 'b'
+
+
+@pytest.mark.asyncio
+async def test_a_late_deadline_task_does_not_add_another_pulse_duration():
+    run, hers, actions, hands = _setup()
+    await hold_control(hands, run, hers, 'a', time.monotonic())
+    until = time.monotonic() + .01
+    await asyncio.sleep(.02)
+    await asyncio.wait_for(_release_after_prediction(hands, run, hers, 'a', run.held_since, .2,
+                                                    until=until), timeout=.1)
+    assert not run.held and actions == [('down', 'a'), ('up', 'a')]

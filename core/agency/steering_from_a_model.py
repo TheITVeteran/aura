@@ -13,7 +13,7 @@ from core.runtime.task_ownership import fire_and_forget
 from core.verify import invariant
 
 
-def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: float) -> None:
+def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: float, *, run: Any = None) -> None:
     """Feed current owned pixels and delivered input into a provisional physical model."""
     from core.agency.a_model_for_steering import ProvisionalSteeringBank
 
@@ -28,6 +28,8 @@ def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: fl
     if owner is not None and getattr(faces, 'steering_basis', basis) != basis:
         model = faces.steering_model = ProvisionalSteeringBank()
     faces.steering_basis = basis
+    if run is not None:
+        model.arm(_turn_keys(run, faces), body_extent=max(mine.w, mine.h) if mine is not None else None)
     key, began = (receipt[1], receipt[0]) if receipt is not None else ('', at)
     x, y = measured_position(mine) if mine is not None else (0., 0.)
     vx, vy = (float(mine.vx), float(mine.vy)) if mine is not None else (0., 0.)
@@ -42,7 +44,8 @@ def _owner(hers: Any, mine: Any) -> tuple | None:
         return None
     born = getattr(mine, 'born', None)
     epoch = getattr(hers.identification, 'epoch', None)
-    if type(born) not in (int, float) or not math.isfinite(born) or type(epoch) is not int or epoch < 0:
+    if (isinstance(born, bool) or not isinstance(born, (int, float)) or not math.isfinite(born)
+            or type(epoch) is not int or epoch < 0):
         return None
     return mine.number, float(born), epoch
 
@@ -100,7 +103,7 @@ async def steer_with_a_model(hands: Any, run: Any, hers: Any, choosing: Any, at:
     if active is not None:
         action, until, since, source_model = active
         same = (owner == action.owner and model is source_model and run.held == action.key and run.held_since == since)
-        contradicted = model is not None and model.pending is None and model.last_result == 'contradicted'
+        contradicted = model is not None and model.last_result in ('contradicted', 'partial contradicted')
         ended = math.isfinite(at) and max(at, time.monotonic()) >= until
         if same and not contradicted and math.isfinite(at) and not ended:
             return True
@@ -108,9 +111,12 @@ async def steer_with_a_model(hands: Any, run: Any, hers: Any, choosing: Any, at:
         if deadline is not None and not deadline.done():
             deadline.cancel()
         run._model_offers_calibration = True
-        if (not same or contradicted or ended) and run.held == action.key:
-            await hold(hands, run, hers, '', at, trying=False)
-            if not action.key:
+        if (not same or contradicted or ended) and run.held == action.key and run.held_since == since:
+            from core.agency.inputs_while_measuring_control import release_control_if_owned
+
+            if action.key:
+                await release_control_if_owned(hands, run, hers, action.key, since)
+            else:
                 source_model.ended(action, since, max(at, time.monotonic()))
             run._modelled_steering = None
             return True
@@ -127,7 +133,8 @@ async def steer_with_a_model(hands: Any, run: Any, hers: Any, choosing: Any, at:
     if faces.turns_her():
         return False
     turn_keys = _turn_keys(run, faces)
-    driver = faces.ahead_key(least=1)
+    model.arm(turn_keys, body_extent=max(mine.w, mine.h))
+    driver = faces.ahead_key(least=1) or model.driver(run.keys, now=time.monotonic())
     if not turn_keys or driver not in run.keys:
         return False
     (gx, gy), why, _aim = choosing.target()
@@ -137,7 +144,6 @@ async def steer_with_a_model(hands: Any, run: Any, hers: Any, choosing: Any, at:
     target = (x if gx is None else gx, y if gy is None else gy)
     if math.dist((x, y), target) <= max(mine.w, mine.h) / 2:
         return False
-    model.arm(turn_keys, body_extent=max(mine.w, mine.h))
     horizon = min(.35, max(.06, 2 * choosing.next_picture_s))
     now = time.monotonic()
     delay = max(0., choosing.response_s, now - at)
@@ -158,16 +164,18 @@ async def steer_with_a_model(hands: Any, run: Any, hers: Any, choosing: Any, at:
     run._modelled_steering = action, max(run.held_since, time.monotonic()) + action.duration, run.held_since, model
     if action.key:
         run._steering_input_deadline = fire_and_forget(
-            _release_after_prediction(hands, run, hers, action.key, run.held_since, action.duration),
+            _release_after_prediction(hands, run, hers, action.key, run.held_since, action.duration,
+                                      until=run._modelled_steering[1]),
             name='provisional_steering_input_deadline', owner='realtime_control', bounded=True)
     return True
 
 
-async def _release_after_prediction(hands: Any, run: Any, hers: Any, key: str, since: float, duration: float) -> None:
+async def _release_after_prediction(hands: Any, run: Any, hers: Any, key: str, since: float, duration: float,
+                                    *, until: float | None = None) -> None:
     """End a provisional press even when the next picture arrives late."""
     from core.agency.inputs_while_measuring_control import release_control_if_owned
 
-    await asyncio.sleep(duration)
+    await asyncio.sleep(max(0., until - time.monotonic()) if until is not None else duration)
     await release_control_if_owned(hands, run, hers, key, since)
 
 

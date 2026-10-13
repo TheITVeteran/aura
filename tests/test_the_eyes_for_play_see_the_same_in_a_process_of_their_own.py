@@ -76,7 +76,9 @@ def test_the_play_loop_opens_its_eyes_this_way():
 
     from core.agency import playing_as_it_happens
 
-    assert "eyes_for_play(kinds=keep.get(\"kinds\"))" in inspect.getsource(playing_as_it_happens._play_as_it_happens)
+    source = inspect.getsource(playing_as_it_happens._play_as_it_happens)
+    assert "await open_play_observation(kinds=keep.get(\"kinds\"), factory=eyes_for_play)" in source
+    assert "await moves.see(picture, at)" in source
 
 
 def test_while_she_plays_the_interpreter_changes_hands_often_and_as_before_after():

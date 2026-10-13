@@ -45,6 +45,7 @@ class PageFrames:
         self._arrived = asyncio.Event()
         self._acks: set[asyncio.Task] = set()
         self._clock = DrawingClock()
+        self._generation = 0
         self.every_nth_frame = max(1, every_nth_frame)
         self.unavailable = False
 
@@ -56,33 +57,52 @@ class PageFrames:
         from core.runtime import browser_calls_read_no_files
 
         browser_calls_read_no_files.install()
+        self._generation += 1
+        generation, session = self._generation, None
+        clock = DrawingClock()
+        clock.epoch = generation
         try:
             session = await self.page.context.new_cdp_session(self.page)
+            if generation != self._generation:
+                await session.detach()
+                return False
             self._session = session
-            session.on("Page.screencastFrame", self._frame)
-            await self._clock.calibrate(session, time.monotonic)
+            self._clock = clock
+            session.on("Page.screencastFrame", lambda params: self._frame(
+                params, source_session=session, generation=generation))
+            await clock.calibrate(session, time.monotonic)
+            if not self._owns_session(session, generation):
+                return False
             # At the page's own size: a window on a high-density screen
             # otherwise sends each frame at twice that in each direction, and
             # encoding it is most of what a frame costs.
             wide, tall = await self.page.evaluate("[innerWidth, innerHeight]")
+            if not self._owns_session(session, generation):
+                return False
             await session.send("Page.startScreencast", {
                 "format": "jpeg", "quality": 80, "everyNthFrame": self.every_nth_frame,
                 "maxWidth": int(wide), "maxHeight": int(tall),
             })
         except Exception as why:  # noqa: BLE001 - any engine without a screencast: screenshots instead
             logger.info("frames cannot be streamed from this page (%s); taking screenshots", why)
-            self.unavailable = True
-            await self.close()
+            if generation == self._generation:
+                self.unavailable = True
+                await self.close()
             return False
-        return True
+        return self._owns_session(session, generation)
 
-    def _frame(self, params: dict[str, Any]) -> None:
-        metadata = dict(params.get("metadata") or {})
-        captured = self._clock.frame(metadata, time.monotonic())
-        if captured is not None:
-            self._latest = (str(params.get("data") or ""), metadata, captured)
-            self._arrived.set()
-        session = self._session
+    def _owns_session(self, session: Any, generation: int) -> bool:
+        return self._session is session and self._generation == generation
+
+    def _frame(self, params: dict[str, Any], *, source_session: Any = None, generation: int | None = None) -> None:
+        session = self._session if source_session is None else source_session
+        owned = self._owns_session(session, self._generation if generation is None else generation)
+        if owned:
+            metadata = dict(params.get("metadata") or {})
+            captured = self._clock.frame(metadata, time.monotonic())
+            if captured is not None:
+                self._latest = (str(params.get("data") or ""), metadata, captured)
+                self._arrived.set()
         if session is not None:
             task = asyncio.create_task(self._ack(session, params.get("sessionId")))
             self._acks.add(task)
@@ -98,12 +118,15 @@ class PageFrames:
         """The newest frame and its source capture bounds; receipt time where no source clock was given."""
         if not await self._start():
             return None
+        generation, session = self._generation, self._session
         if self._latest is None or self._latest[2] <= self._taken_at:
             self._arrived.clear()
             try:
                 await asyncio.wait_for(self._arrived.wait(), timeout=STILL_AFTER_S)
             except TimeoutError:
                 pass
+        if not self._owns_session(session, generation):
+            return None
         if self._latest is None:
             return None
         data, metadata, captured = self._latest
@@ -117,10 +140,13 @@ class PageFrames:
             return None
         if picture is None:
             return None
+        if not self._owns_session(session, generation):
+            return None
         return picture, captured
 
     async def close(self) -> None:
         session, self._session = self._session, None
+        self._generation += 1
         self._clock.reset()
         self._latest, self._taken_at = None, -1.0
         acks = list(self._acks)
@@ -155,6 +181,19 @@ def _frame_time_invariant() -> tuple:
     assert not _new_frame(2., 2.)
     assert not _new_frame(1., 2.)
     assert not _new_frame(float('nan'), 2.)
+    return ()
+
+
+@invariant('perception.a_stream_frame_keeps_its_session_owner', scope='perception',
+           owner='core/perception/frames_as_they_are_drawn.py', observational=False)
+def _frame_session_invariant() -> tuple:
+    source = PageFrames(None)
+    session = object()
+    source._session, source._generation = session, 1
+    assert source._owns_session(session, 1)
+    assert not source._owns_session(session, 0)
+    source._session = object()
+    assert not source._owns_session(session, 1)
     return ()
 
 

@@ -479,6 +479,7 @@ def _control_discovery_claims() -> tuple:
 
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
+    from core.agency.a_model_for_steering import _slow_motion_invariant
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.controls_that_take_time_to_build import _stored_response_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
@@ -500,7 +501,13 @@ def _visual_motion_claims() -> tuple:
     from core.perception.activity_in_the_picture import _picture_activity_invariant
     from core.perception.background_visible_beside_a_patch import _exposed_background_invariant
     from core.perception.boundary_support_for_translation import _visible_boundary_invariant
-    from core.perception.frames_as_they_are_drawn import _frame_time_invariant
+    from core.perception.frames_as_they_are_drawn import (
+        _frame_session_invariant,
+        _frame_time_invariant,
+    )
+    from core.perception.play_observation_without_holding_the_loop import (
+        _owned_play_observation_invariant,
+    )
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.position_from_the_same_points import (
         _point_handoff_invariant,
@@ -517,6 +524,15 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("worker_observations_keep_their_private_state", "core/perception/play_observation_without_holding_the_loop.py",
+         "tests/test_play_observation_keeps_input_deadlines_alive.py", lambda: _owned_play_observation_invariant() == (),
+         "A pending picture leaves input deadlines runnable; worker-owned mutable state reaches the public view only through a detached completed snapshot."),
+        ("slow_motion_keeps_its_input_and_pixel_uncertainty", "core/agency/a_model_for_steering.py",
+         "tests/test_slow_observed_motion_can_anchor_a_steering_model.py", lambda: _slow_motion_invariant() == (),
+         "Slow motion accumulates displacement within one observed input receipt; unresolved pixel jitter cannot supply a driver, and chord uncertainty stays in provisional forecasts."),
+        ("a_stream_frame_keeps_its_session_owner", "core/perception/frames_as_they_are_drawn.py",
+         "tests/test_a_stream_callback_keeps_its_producing_session.py", lambda: _frame_session_invariant() == (),
+         "A browser callback, calibration and decoded frame belong to their producing stream generation; an old session cannot publish or acknowledge through its replacement."),
         ("queued_frames_keep_the_drawing_clock", "core/perception/a_clock_for_drawn_frames.py",
          "tests/test_streamed_frames_use_their_drawing_clock.py", lambda: _drawing_clock_invariant() == (),
          "A bracketed browser clock maps drawing times into a fixed stream epoch; queued delivery preserves source cadence, repeated or invalid source timestamps cannot renew a frame, and capture bounds retain their provenance."),

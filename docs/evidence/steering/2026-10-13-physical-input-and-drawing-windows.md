@@ -125,3 +125,36 @@ its raw metadata and correlation records are
 `/private/tmp/codex-steer/source-clock-browser-proof.json`.
 This measures the production stream's clock handling on a private visual
 fixture. It is not a normal Aura prompt or an original-game win.
+
+## Integrated checkpoint and original-program failure
+
+Checkpoint `0a92d2be26677b7adb6a1085ce513c55c6617767` was pushed to main.
+After integration with concurrent work, the expanded suite returned 312
+passed in 36.66 seconds. All nine source gates passed; smoke returned
+165 passed and 1 skipped in 65.85 seconds.
+
+The next owned original-program run lasted 191.77032916701864 seconds.
+It returned no win and no harness error. Instrumentation recorded 1,544
+actor frames, including 358 with a claimed body, and zero model actions.
+The stream published 3,486 pictures with browser-wall source metadata.
+The longest completed calibration presses were about 1.36 and 1.31
+seconds. Body claims and bounded presses did not produce successful play.
+
+The current model still depended on a calibrated driver selected by a
+fixed speed gate. Claimed-body observations included slower measured
+motion, while the calibrated driver remained unavailable. Another gap is
+that synchronous observation still occupied the input event loop, even
+when its image processing ran in another process. Both need causal
+repairs and new original-program evidence.
+
+The run is `/private/tmp/codex-steer/run-9-input-drawing-windows-1013/`.
+Its actor, worker and capture-clock traces are separate evidence streams.
+This result does not establish independent body identity, task completion,
+desktop-prompt performance or presentation readiness.
+
+A concurrent source audit found another upstream rejection: a thing's
+birth could retain a numeric capture-receipt subclass, while the steering
+owner check accepted only exact `int` and `float` types. That check could
+discard an otherwise claimed body before the driver gate. Concurrent work
+normalizes retained sighting times; the control seam also needs to accept
+finite numeric receipt values while excluding booleans.
