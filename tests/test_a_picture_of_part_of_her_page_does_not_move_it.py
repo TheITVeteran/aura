@@ -62,3 +62,21 @@ def test_at_the_screens_own_pixels_it_is_twice_the_size():
     picture = asyncio.run(pictures.picture_of(_Page(_Window()), {"x": 300, "y": 300, "width": 400, "height": 300}, css=False,
                                               kind="png"))
     assert picture.shape == (600, 800, 3) and np.all(picture[300, 400] == (200, 30, 30))
+
+
+@pytest.mark.unit
+def test_a_picture_that_loses_nothing_is_packed_for_speed_and_still_loses_nothing():
+    """A PNG loses nothing however hard it is packed; packed for speed it is taken and unpacked sooner."""
+    window = _Window()
+    picture = asyncio.run(pictures.picture_of(_Page(window), {"x": 300, "y": 300, "width": 400, "height": 300}, css=True,
+                                              kind="png"))
+    assert window.asked == [("Page.captureScreenshot", {"format": "png", "optimizeForSpeed": True})]
+    assert tuple(picture[150, 200]) == (200, 30, 30)
+    # Packed hardest or fastest, the same pixels come back.
+    image = Image.fromarray(np.random.default_rng(0).integers(0, 256, (60, 80, 3), dtype=np.uint8))
+    packed = []
+    for level in (0, 1, 9):
+        out = io.BytesIO()
+        image.save(out, format="PNG", compress_level=level)
+        packed.append(np.asarray(Image.open(io.BytesIO(out.getvalue())).convert("RGB")))
+    assert all(np.array_equal(packed[0], other) for other in packed[1:])
