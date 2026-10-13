@@ -46,6 +46,14 @@ class MotionEstimate:
         return self.at == self.observed_at and self.observations >= 3 and self.status == 'observed'
 
 
+@dataclass(frozen=True)
+class MeasuredMotionBox:
+    """The visible box belonging to one measured state, before later projections."""
+
+    state: MotionEstimate
+    box: tuple[float, float, float, float]
+
+
 @dataclass(init=False, eq=False)
 class _MotionLaw:
     """One small Gaussian state; all measurements name position only."""
@@ -223,6 +231,7 @@ def observe_thing_motion(thing: Any, at: float, shape: tuple) -> None:
     estimate = belief.observe((thing.number, float(thing.born)), basis, at, measured_position(thing), error=error)
     if estimate is not None:
         thing.motion_estimate = estimate
+        thing.measured_motion_box = MeasuredMotionBox(estimate, (thing.x, thing.y, thing.w, thing.h))
     elif previous is not None and previous.observed_at != at:
         thing.motion_estimate = None
 
@@ -248,21 +257,32 @@ def predicted_box_from_motion(thing: Any, at: float) -> tuple | None:
     Existing appearance, support and shape checks must still admit the match.
     """
     belief = getattr(thing, 'motion_belief', None)
-    estimate = current_motion_estimate(thing, getattr(thing, 'seen', None))
-    path = getattr(thing, 'path', None)
-    if belief is None or estimate is None or not path:
+    anchor = getattr(thing, 'measured_motion_box', None)
+    if belief is None or anchor is None:
+        return None
+    estimate = anchor.state
+    if (not estimate.current or estimate.owner != (thing.number, thing.born)
+            or estimate.owner != belief.owner or estimate.basis != belief.basis
+            or estimate.observed_at != belief.at):
+        return None
+    from core.perception.translation_from_visible_support import motion_was_measured
+
+    # A current measured reference change invalidates the old history. A
+    # missing or unmeasured observation may retain only its bounded proposal.
+    if (motion_was_measured(thing, thing.seen)
+            and estimate.basis != _measured_basis(thing, thing.seen, estimate.basis[0])):
         return None
     if math.hypot(*estimate.velocity) < 1. and math.hypot(*estimate.acceleration) < 1.:
         return None
-    key = at, estimate, tuple(path[-1]), thing.w, thing.h
+    key = at, anchor
     cached = getattr(thing, 'motion_proposal', None)
     if cached is not None and cached[0] == key:
         return cached[1]
     future = belief.forecast(at)
-    if future is None or future.position_error > max(thing.w, thing.h):
+    if future is None or future.position_error > max(anchor.box[2:]):
         thing.motion_proposal = key, None
         return None
-    x, y = path[-1][1:]
+    x, y = anchor.box[:2]
     dx, dy = np.subtract(future.position, estimate.position)
     proposal = float(x + dx), float(y + dy), 3. * future.position_error
     thing.motion_proposal = key, proposal
@@ -296,6 +316,7 @@ def _motion_proposal_invariant() -> tuple:
     thing = SimpleNamespace(number=1, born=0., seen=belief.at, motion_measured_at=belief.at,
                             motion_evidence='measured', motion_position=None, motion_belief=belief,
                             motion_estimate=state, path=[(belief.at, *state.position)], w=10., h=12.)
+    thing.measured_motion_box = MeasuredMotionBox(state, (*state.position, 10., 12.))
     before = predicted_box_from_motion(thing, belief.at + .2)
     thing.x, thing.y = -900., 900.
     assert predicted_box_from_motion(thing, belief.at + .2) == before

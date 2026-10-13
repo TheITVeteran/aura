@@ -193,6 +193,7 @@ class Thing:
     motion_belief: Any = field(default=None, repr=False, compare=False)
     motion_estimate: Any = field(default=None, repr=False, compare=False)
     motion_proposal: Any = field(default=None, repr=False, compare=False)
+    measured_motion_box: Any = field(default=None, repr=False, compare=False)
 
     @property
     def size(self) -> float:
@@ -989,6 +990,7 @@ class WhatMoves:
             thing.number, thing.path, thing.born, thing.moved = before.number, before.path, before.born, True
             thing.vx, thing.vy, thing.again = before.vx, before.vy, True
             thing.motion_belief = before.motion_belief
+            thing.measured_motion_box = before.measured_motion_box
         thing.path.append((at, thing.x, thing.y))
         thing.least = thing.size  # as it first stands out, before it has left anything behind
         thing.announced = not self.view_is_moving

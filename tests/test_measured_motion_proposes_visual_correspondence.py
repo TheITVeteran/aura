@@ -63,6 +63,30 @@ def test_the_last_measured_box_survives_projection_of_a_missing_picture():
     assert after == before
 
 
+def test_an_unmeasured_detection_can_keep_a_proposal_without_refreshing_control_state():
+    from core.perception.motion_kept_between_pictures import current_motion_estimate
+
+    _eyes, body = _tracked_body()
+    observed_at = body.seen
+    before = predicted_box_from_motion(body, observed_at + .2)
+    body.seen += .1
+    body.x, body.y = -900., 500.
+    body.motion_evidence, body.motion_measured_at = 'unavailable', None
+    body.motion_estimate = None
+    assert predicted_box_from_motion(body, observed_at + .2) == before
+    assert current_motion_estimate(body, body.seen) is None
+    assert body.motion_belief.at == observed_at
+    assert body.measured_motion_box.state.observed_at == observed_at
+    assert predicted_box_from_motion(body, observed_at + 1.1) is None
+
+
+def test_an_unmeasured_replacement_cannot_borrow_the_proposal_of_another_birth():
+    _eyes, body = _tracked_body()
+    body.born = body.seen
+    body.motion_evidence, body.motion_measured_at = 'unavailable', None
+    assert predicted_box_from_motion(body, body.seen + .2) is None
+
+
 @pytest.mark.parametrize('departure', ['shape', 'appearance', 'time', 'reference'])
 def test_a_trajectory_cannot_override_departed_visible_evidence(departure):
     eyes, body = _tracked_body()
