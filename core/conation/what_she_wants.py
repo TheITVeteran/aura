@@ -835,15 +835,18 @@ def read_turn(
 
     `present` is what the turn was about, as core/affect/feelings_about.py
     names it, and `reading` is what the turn was worth. `said` is what was
-    said in it, by anybody. Where something was said, the subjects are the
-    terms particular to the exchange, in place of the one topic label the
-    turn arrived with.
+    said in it, by anybody. The subjects are the terms the exchange dwells
+    on, and the one topic label the turn arrived with is not used.
     """
     record = record or get_what_she_wants()
     keys = [str(key) for key in present if str(key).strip()]
     words = [str(text) for text in said if str(text or "").strip()]
+    # The topic label a turn arrives with is one word for a whole conversation
+    # and stays on her state after it: live, 13 October, it read "times"
+    # through a morning about tide pools and on the ticks after it. Subjects
+    # come from what was said, and a turn in which nothing was said has none.
+    keys = [key for key in keys if not key.startswith("topic:")]
     if words:
-        keys = [key for key in keys if not key.startswith("topic:")]
         keys.extend(f"topic:{term}" for term in record.about(*words))
     reachable = [key for key in keys if ":" in key and key.split(":", 1)[0] in REACHABLE_KINDS]
     labels = {key: key.split(":", 1)[1].strip() for key in reachable}

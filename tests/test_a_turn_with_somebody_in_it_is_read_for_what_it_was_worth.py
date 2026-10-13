@@ -17,16 +17,24 @@ from core.phases.learning_phase import LearningPhase, read_what_the_turn_was_wor
 from core.runtime.pipeline_blueprint import BACKGROUND_ONLY_PHASES
 
 
-def _state(valence: float, topic: str):
+def _state(valence: float, turn: int):
+    """A turn with somebody in it, in which the two of them dwell on anemones."""
     return SimpleNamespace(
         affect=SimpleNamespace(
             valence=valence,
             arousal=0.5,
             emotions={},
-            markers={"feelings_about": {"present": ["person:ines", f"topic:{topic}"]}},
+            markers={"feelings_about": {"present": ["person:ines", "topic:times"]}},
         ),
         motivation=SimpleNamespace(budgets={}, forces={}),
-        cognition=SimpleNamespace(active_goals=[]),
+        cognition=SimpleNamespace(
+            active_goals=[],
+            working_memory=[
+                {"role": "user", "content": f"Visit {turn}: the anemone closed again. Does an anemone tire?"},
+                {"role": "assistant", "content": "An anemone does not tire the way we do; the anemone resets."},
+            ],
+            last_response="",
+        ),
         response_modifiers={},
     )
 
@@ -34,15 +42,19 @@ def _state(valence: float, topic: str):
 def test_reading_a_turn_puts_its_worth_on_the_state_and_its_things_on_her_record(tmp_path):
     what_it_was_worth.reset_for_test()
     record = what_she_wants.reset_for_test(tmp_path / "wants.json", engine=ConationEngine())
+    record.remember_talk(
+        [("What do you think of the plan, and has the time come?", "I think the plan is fine, and the time has come.")] * 60
+    )
     try:
         for turn, valence in enumerate([0.1, 0.4, -0.2, 0.5, -0.3, 0.6, 0.2, 0.7]):
-            state = _state(valence, "tide pools")
+            state = _state(valence, turn)
             asyncio.run(read_what_the_turn_was_worth(state))
             assert "worth" in state.response_modifiers, turn
         assert state.response_modifiers["worth"]["measured"] is True
-        thing = record.thing("topic:tide pools")
+        thing = record.thing("topic:anemone")
         assert thing is not None and thing.contacts >= 1 and thing.reachable
         assert record.thing("person:ines").contacts == thing.contacts
+        assert record.thing("topic:times") is None
     finally:
         what_it_was_worth.reset_for_test()
         what_she_wants.reset_for_test(tmp_path / "after.json", engine=ConationEngine())
