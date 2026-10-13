@@ -300,7 +300,7 @@ async def act_on_prepared_motion(hands: Any, run: Any, moves: Any, hers: Any, at
         if not viable:
             await abort_prepared_motion(hands, run, hers)
         return True
-    if observed is None or not getattr(moves, 'seeing', True) or run.letting_go or run.charging.key:
+    if observed is None or run.letting_go or run.charging.key:
         return False
     lower, _upper = _capture_bounds(at)
     offered = binding.follower.feedback(copy.deepcopy(observed.state), model_identity=binding.identity,
@@ -327,4 +327,32 @@ def _prepared_input_set_invariant() -> tuple:
     run = SimpleNamespace(_prepared_input_set=fresh, _prepared_key_owners={'a':fresh, 'b':old})
     assert _owns_key(run, fresh, 'a') and not _owns_key(run, old, 'a')
     assert not _owns_key(run, fresh, 'b') and not _owns_key(run, old, 'b')
+    return ()
+
+
+@invariant('agency.prepared_motion_requires_its_current_qualified_state', scope='agency',
+           owner='core/agency/acting_on_a_prepared_motion.py', observational=False)
+def _prepared_state_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    from core.agency.solving_for_a_required_state import RequiredStatePlan
+    from core.agency.which_one_answers_to_her import WhichIsHers
+
+    at = time.monotonic()
+    hers = WhichIsHers()
+    hers.number, hers.kind = 1, 0
+    body = SimpleNamespace(number=1, born=0., seen=at, x=0., motion_evidence='direct')
+    moves = SimpleNamespace(things={1: body}, seeing=False)
+    owner = 1, 0., hers.identification.epoch
+    identity = 'measured model', owner, 'state coordinates', 'destination'
+    follower = FollowingPreparedPath(RequiredStatePlan((0,), (0., 1.), True, 1, True), identity)
+    binding = PreparedMotionBinding(follower, *identity,
+        observe=lambda world, mine, captured: ObservedMotion(mine.thing(world).x, captured, owner, identity[2], identity[3]),
+        advance=lambda state, _action: state + 1., outcome=lambda state: state == 1.,
+        actions={0: TimedKeys(frozenset({'opaque'}), .03)})
+    assert _observed(binding, moves, hers, at) is not None
+    body.motion_evidence, body.motion_measured_at = 'unavailable', None
+    assert _observed(binding, moves, hers, at) is None
+    body.motion_evidence, body.born = 'direct', .1
+    assert _observed(binding, moves, hers, at) is None
     return ()

@@ -13,15 +13,26 @@ from core.verify import invariant
 def observe_facing(faces: Any, mine: Any, hers: Any, at: float) -> None:
     """A prediction or an overlapping input cannot teach a direction or a stationary turn."""
     identity = body_epoch(hers)
-    if faces.body_epoch != identity:
+    birth = _current_birth(mine, hers, at)
+    changed = faces.body_epoch != identity
+    continuing = (changed and birth is not None and faces.body_birth == birth
+                  and faces.body_epoch is not None and identity is not None
+                  and faces.body_epoch[0] == identity[0] and faces.body_epoch[2] == identity[2])
+    replacement = (identity is not None and mine is not None and getattr(mine, 'number', None) == hers.number
+                   and getattr(mine, 'seen', None) == at
+                   and faces.body_birth != birth)
+    if (changed and not continuing) or replacement:
         faces.__init__()
-        faces.body_epoch = identity
         if identity is not None:
             # These are experiment requests, not heading measurements.
             faces.pressed.update(key for key in hers._hers.free if key)
             faces.heading_hints.update(key for key in hers._hers.free if key
                 and (velocity := hers._hers.typical(key)) is not None
                 and all(math.isfinite(v) for v in velocity) and math.hypot(*velocity) >= MOVING)
+    faces.body_epoch = identity
+    if (identity is not None and mine is not None and getattr(mine, 'number', None) == hers.number
+            and getattr(mine, 'seen', None) == at):
+        faces.body_birth = birth
     hers.facing_controls = faces
     receipt = hers._held_at(at)
     key, began = (receipt[1], receipt[0]) if receipt is not None else ("", None)
@@ -30,6 +41,43 @@ def observe_facing(faces: Any, mine: Any, hers: Any, at: float) -> None:
                 and at >= hers._beside_until)
     vx, vy = (float(mine.vx), float(mine.vy)) if mine is not None else (0., 0.)
     faces.saw(vx, vy, key, at, measured=measured, began=began)
+
+
+def _current_birth(mine: Any, hers: Any, at: float) -> float | None:
+    """A visible track keeps its birth while its colour or pose is classified anew.
+
+    Offline 2026-10-13 a continuing turning body changed visual kind. Its
+    heading model was cleared despite the same number, birth and experiment.
+    """
+    born = getattr(mine, 'born', None)
+    if (mine is None or hers.number is None or getattr(mine, 'number', None) != hers.number
+            or getattr(mine, 'seen', None) != at
+            or isinstance(born, bool) or not isinstance(born, (int, float)) or not math.isfinite(born)):
+        return None
+    return float(born)
+
+
+@invariant('agency.a_continuing_body_keeps_heading_when_its_look_changes', scope='agency',
+           owner='core/agency/facing_seen_under_its_input.py', observational=False)
+def _heading_lineage_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import WhichIsHers
+    from core.agency.which_way_she_faces import WhichWaySheFaces
+
+    hers, faces = WhichIsHers(), WhichWaySheFaces()
+    hers.number, hers.kind = 1, 1
+    hers.holding('drive', 0.)
+    body = SimpleNamespace(number=1, born=0., seen=.3, vx=80., vy=0., motion_evidence='direct')
+    observe_facing(faces, body, hers, .3)
+    faces.along['drive'] = [80., 80.]
+    hers.kind, body.seen = 2, .4
+    observe_facing(faces, body, hers, .4)
+    assert faces.along['drive'] == [80., 80.]
+    body.born, body.seen = .45, .5
+    observe_facing(faces, body, hers, .5)
+    assert not faces.along
+    return ()
 
 
 @invariant("agency.facing_keeps_observed_motion_and_input_custody", scope="agency",

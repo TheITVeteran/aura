@@ -128,6 +128,42 @@ async def test_neutral_model_actions_have_a_full_physical_window_too():
     assert not raw.events and run.prepared_motion_binding.follower.cursor == 1
 
 
+async def test_qualified_public_state_can_start_before_the_pixel_backdrop_settles():
+    run, moves, hers, raw, hands, at = fixture()
+    moves.seeing = False
+    await _act(hands, run, moves, hers, None, SimpleNamespace(), at)
+    assert raw.held == KEYS and run.prepared_motion_binding.follower.status == 'input_started'
+    await complete(run)
+    assert not raw.held and run.prepared_motion_binding.follower.cursor == 1
+
+
+@pytest.mark.parametrize('missing', ('motion', 'owner', 'age'))
+async def test_an_unsettled_backdrop_cannot_fill_a_missing_model_observation(missing):
+    run, moves, hers, raw, hands, at = fixture()
+    moves.seeing = False
+    if missing == 'motion':
+        moves.things[1].motion_evidence = 'unavailable'
+        moves.things[1].motion_measured_at = None
+    elif missing == 'owner':
+        moves.things[1].born = .1
+    else:
+        at -= run.prepared_motion_binding.max_age_s + .1
+        moves.things[1].seen = at
+    assert not await prepared.act_on_prepared_motion(hands, run, moves, hers, at)
+    assert not raw.events and run.prepared_motion_binding.follower.cursor == 0
+
+
+async def test_the_qualified_prepared_state_boundary_has_a_registered_measurement():
+    from core.organism.claims_realtime_control import install_realtime_control_claims
+    from core.organism.model_validation import ValidationSuite
+
+    assert prepared._prepared_state_invariant() == ()
+    suite = ValidationSuite()
+    install_realtime_control_claims(suite)
+    check = next(t for t in suite.tests() if t.name == 'prepared_motion_requires_its_current_qualified_state')
+    assert check.predict(None) is True and any(c.test == check.name for c in suite.claims())
+
+
 async def test_partial_down_acknowledgement_releases_every_attempted_key_without_advancing():
     run, moves, hers, raw, hands, at = fixture()
     raw.failed_down.add('opaque-b')

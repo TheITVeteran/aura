@@ -78,6 +78,7 @@ def install_realtime_control_claims(suite: Any) -> None:
 
     for name, owner, fixture, probe, statement in (
         *_visual_motion_claims(),
+        *_body_state_claims(),
         *_control_discovery_claims(),
         *_bounded_pixel_claims(),
         *_travel_turn_claims(),
@@ -399,6 +400,20 @@ def install_realtime_control_claims(suite: Any) -> None:
         test=name, owner=owner, asserted_in=owner, evidence=Evidence.MEASURED_SYNTHETIC,
         evidence_note="Lane ownership measured; autonomous repair and use require separate live evidence.",
     ))
+
+
+def _body_state_claims() -> tuple:
+    from core.agency.acting_on_a_prepared_motion import _prepared_state_invariant
+    from core.agency.facing_seen_under_its_input import _heading_lineage_invariant
+
+    return (
+        ("a_continuing_body_keeps_heading_when_its_look_changes", "core/agency/facing_seen_under_its_input.py",
+         "tests/test_a_continuing_body_keeps_its_heading.py", lambda: _heading_lineage_invariant() == (),
+         "A current track with the same birth and experiment retains heading through visual reclassification; a replacement clears the earlier measurements."),
+        ("prepared_motion_requires_its_current_qualified_state", "core/agency/acting_on_a_prepared_motion.py",
+         "tests/test_prepared_motion_keeps_its_input_set.py", lambda: _prepared_state_invariant() == (),
+         "Prepared motion requires fresh measured state with the same body and model context; a pixel backdrop is not a state measurement."),
+    )
 
 
 def _travel_turn_claims() -> tuple:

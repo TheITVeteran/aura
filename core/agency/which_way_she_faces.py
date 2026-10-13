@@ -120,6 +120,7 @@ class WhichWaySheFaces:
         moving=MOVING, settle_s=SETTLE_S, gap_s=OBSERVATION_GAP_S, turns=TURNS))
     steering_model: Any = None
     steering_basis: bool | None = None
+    body_birth: float | None = None
 
     def saw(self, vx: float, vy: float, held: str, at: float, *, measured: bool = True,
             began: float | None = None) -> None:

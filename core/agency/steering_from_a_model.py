@@ -28,7 +28,7 @@ def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: fl
     if owner is not None and getattr(faces, 'steering_basis', basis) != basis:
         model = faces.steering_model = ProvisionalSteeringBank()
     faces.steering_basis = basis
-    if run is not None:
+    if run is not None and owner is not None:
         model.arm(_turn_keys(run, faces), body_extent=max(mine.w, mine.h) if mine is not None else None)
     key, began = (receipt[1], receipt[0]) if receipt is not None else ('', at)
     x, y = measured_position(mine) if mine is not None else (0., 0.)
@@ -58,7 +58,7 @@ def _turn_keys(run: Any, faces: Any) -> set[str]:
     controls = getattr(guide, 'controls', {}) or {}
     source = getattr(guide, 'code_says', None)
     named = set()
-    for key in run.keys:
+    for key in getattr(run, 'keys', ()):
         control = controls.get(key)
         action = ' '.join(str(getattr(control, field, '')) for field in ('act', 'on')).replace('_', ' ').replace('-', ' ')
         if re.search(r'\b(?:steer|rotate)\b|\bturn(?:s|ing)?\s+(?:left|right|clockwise|counterclockwise)\b', action, re.I):

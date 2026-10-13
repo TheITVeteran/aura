@@ -47,3 +47,30 @@ are `/private/tmp/codex-steer/source-points-cost.json`.
 The production implementation still requires a fresh original-program
 retest. The private prototype result cannot be substituted for that test,
 and neither result qualifies a normal desktop prompt or presentation.
+
+## Original-program retest and paired replay
+
+The first production retest at `52a907506` returned no win in
+194.16459745902102 seconds. It recorded 1,157 actor frames, zero claimed
+bodies, zero model actions and 364 frames holding a key. The run is
+`/private/tmp/codex-steer/run-9-production-source-points-1013/`.
+
+A paired perception replay compared 140 identical saved source pictures.
+The full-resolution production policy and private prototype produced
+734 frames of object point-path support each, spread over seven tracks.
+These are object observations, including scenery; they are not independently
+verified controlled-body frames. The bounded production policy produced
+791 such observations over nine tracks. This replay does not establish
+that a larger pixel budget repairs identity or control. It also cannot
+attribute the earlier separate runs' differences to RGB refinement.
+Its synthetic 0.2-second cadence does not reproduce the physical input
+history. Records are `/private/tmp/codex-steer/source-point-paired-replay.json`.
+
+A further instrumented original run at the same revision lasted
+195.39973124995595 seconds and again returned no win. It recorded
+1,012 actor frames, 226 claimed-body frames and ten frames with active
+model actions, representing three distinct actions across body owners.
+These counts do not verify the claimed identities or task completion.
+The run is `/private/tmp/codex-steer/run-9-identity-rejections-1013/`.
+It exposed a heading reset when the same current track changed visual
+kind. That reset is addressed by the separate heading-lineage repair.
