@@ -399,6 +399,7 @@ def _visual_motion_claims() -> tuple:
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
     from core.agency.inputs_while_measuring_control import _single_input_interval_invariant
+    from core.agency.solving_for_a_required_state import _required_state_invariant
     from core.agency.time_from_picture_to_control import _picture_age_invariant
     from core.agency.what_a_press_does import _settled_trial_invariant, _unchanged_input_invariant
     from core.agency.what_follows_the_pointer import _pointer_body_continuity_invariant
@@ -416,6 +417,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("known_transition_plans_preserve_failure_boundaries", "core/agency/solving_for_a_required_state.py",
+         "tests/test_solving_for_a_required_state.py", lambda: _required_state_invariant() == (),
+         "Bounded inverse planning accepts explicit known mechanics and outcomes; a failed intermediate state cannot be repaired into predicted success later in the same path."),
         ("repeated_stream_frames_keep_their_original_time", "core/perception/frames_as_they_are_drawn.py",
          "tests/test_a_frame_keeps_its_capture_time.py", lambda: _frame_time_invariant() == (),
          "A consumed stream frame cannot become a fresh observation through silence; canvas and screenshot requests retain their start time through slow completion."),
