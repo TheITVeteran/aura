@@ -169,8 +169,8 @@ async def rebuild(
         else:
             await _say(tell, f"{program or genome.name} does {len(genome.features)} things a person uses: " + ", ".join(f.name for f in genome.features) + ".")
         folder = _a_new_folder(Path(where), genome.name)
-        (folder / "what_it_does.json").write_text(json.dumps(genome.model_dump(), indent=1), "utf-8")
-        _the_build_is(folder, program, asked, finished=False)
+        await asyncio.to_thread((folder / "what_it_does.json").write_text, json.dumps(genome.model_dump(), indent=1), "utf-8")
+        await asyncio.to_thread(_the_build_is, folder, program, asked, finished=False)
         return await _building(program, ask, folder, record, sources, named, began, tell=tell, browser=browser, deadline_s=deadline_s, asked=asked)
     except HerModelIsAwayError as why:
         return await asyncio.to_thread(_as_far_as_it_got, program, asked, Path(where), named, time.monotonic() - began, str(why))
@@ -184,7 +184,7 @@ async def _building(program: str, ask: Asker, folder: Path, record: list[Path], 
     if genome.kind.strip().lower() == "code":
         built = await _as_code(genome, ask, folder, tell)
         await asyncio.to_thread(keep_the_record, folder, built)
-        _the_build_is(folder, program, asked, finished=True)
+        await asyncio.to_thread(_the_build_is, folder, program, asked, finished=True)
         return Rebuilt(program or genome.name, genome, built, named, time.monotonic() - began)
     # Parts she already knows how to make, and what the frame already does, are given by code with their checks
     # (core/rebuilding/parts_a_maker_knows.py, core/rebuilding/what_the_frame_gives.py); her model writes the rest.
@@ -210,7 +210,7 @@ async def _building(program: str, ask: Asker, folder: Path, record: list[Path], 
         for at in range(0, len(asked_of_her), FEATURES_AT_ONCE):
             written.extend(await checks_for(genome, asked_of_her[at : at + FEATURES_AT_ONCE], ask, sources=sources, asked=asked))
         checks = await checks_that_mean_something(written, folder / "empty.html", browser=browser)
-        (folder / "checks.json").write_text(json.dumps([c.model_dump() for c in checks], indent=1), "utf-8")
+        await asyncio.to_thread((folder / "checks.json").write_text, json.dumps([c.model_dump() for c in checks], indent=1), "utf-8")
         await _say(tell, f"Before any code, I wrote {len(written)} checks a person would make of it; "
                          + ("all of them" if len(checks) == len(written) else f"{len(checks)} of them")
                          + " fail on an empty program, so each tests something real.")
@@ -219,7 +219,7 @@ async def _building(program: str, ask: Asker, folder: Path, record: list[Path], 
                            given={name: gift.part for name, gift in given.items()}, so_far=await asyncio.to_thread(so_far_in, folder, genome),
                            page=knows.page)
     await asyncio.to_thread(keep_the_record, folder, built)
-    _the_build_is(folder, program, asked, finished=True)
+    await asyncio.to_thread(_the_build_is, folder, program, asked, finished=True)
     return Rebuilt(program or genome.name, genome, built, named, time.monotonic() - began)
 
 
