@@ -376,9 +376,9 @@ class WhatMoves:
     """
 
     def __init__(self, *, width: int = WORKING_WIDTH, kinds: list[Kind] | None = None) -> None:
-        from core.perception.points_that_keep_their_motion import FollowingPoints
+        from core.perception.points_before_the_picture_is_reduced import PointsBeforeReduction
 
-        self.points = FollowingPoints()
+        self.points = PointsBeforeReduction()
         self._point_motion: dict = {}
         from core.perception.what_the_points_on_a_thing_say import WhatThePointsSay
 
@@ -963,7 +963,10 @@ class WhatMoves:
             self._still = np.where(changed, np.float32(0.0), before + np.float32(dt))
         else:
             self._still = np.zeros(small.shape[:2], np.float32)
-        self.points.see(small, at)
+        if hasattr(self.points, 'see_source'):
+            self.points.see_source(np.asarray(picture), small, at)
+        else:
+            self.points.see(small, at)
         self._point_motion = {thing.number: motion
                               for thing in [*self.things.values(), *self.pending.values()]
                               if (motion := self.points.motion_of(thing, at)) is not None}

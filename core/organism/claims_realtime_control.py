@@ -517,6 +517,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.play_observation_without_holding_the_loop import (
         _owned_play_observation_invariant,
     )
+    from core.perception.points_before_the_picture_is_reduced import (
+        _source_point_geometry_invariant,
+    )
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.position_from_the_same_points import (
         _point_handoff_invariant,
@@ -533,6 +536,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("source_marks_return_to_one_working_geometry", "core/perception/points_before_the_picture_is_reduced.py",
+         "tests/test_source_points_keep_their_visible_detail.py", lambda: _source_point_geometry_invariant() == (),
+         "Source-resolution marks retain their identities and observation times when mapped to working coordinates; changed geometry breaks their correspondence."),
         ("prepared_motion_releases_only_its_owned_input_set", "core/agency/acting_on_a_prepared_motion.py",
          "tests/test_prepared_motion_keeps_its_input_set.py", lambda: _prepared_input_set_invariant() == (),
          "A prepared model action owns its acknowledged key set and finite physical hold; interruption releases its own inputs without advancing an incomplete path."),
