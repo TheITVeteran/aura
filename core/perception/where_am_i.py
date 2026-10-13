@@ -88,6 +88,7 @@ def where_am_i(
     *,
     lattice: Any = None,
     asked_for: str = "",
+    aimed_at: str = "",
 ) -> WhereSheIs:
     """Whether the thing she means to act in is what is in front of her.
 
@@ -95,6 +96,9 @@ def where_am_i(
     the question: the thing she is acting in is the thing whose places she has
     been acting on. Everything else is a fallback for before she has been
     anywhere.
+
+    ``aimed_at`` is the thing she is about to click or carry, as she saw it in
+    this same look: where there is one, there is something in front of her.
     """
     filled = int(getattr(reading, "occupied", lambda: 0)() or 0)
     rows = int(getattr(reading, "rows", 0) or 0)
@@ -105,6 +109,12 @@ def where_am_i(
     # in the thing she had just started (live, 2026-09-17).
     seen_places = bool(getattr(reading, "places_seen", False)) and rows >= 2 and columns >= 2
     if reading is None or (not filled and not seen_places):
+        # A picture with no words in it is not nothing. Where she is about to act on a thing she saw in this very look
+        # (a door, an object, a place where the pointer turns into a hand), the thing is in front of her: she is
+        # aiming at it. Offline 2026-10-12 a game played among the rooms of a house had no words on its screen of play,
+        # and she declined every click on the doors and things she had found for two minutes, until it was lost.
+        if str(aimed_at or "").strip():
+            return WhereSheIs(True, "what I am about to act on is in front of me")
         return WhereSheIs(False, "I cannot read anything here", _what_this_looks_like(reading))
 
     if lattice is not None and getattr(lattice, "held", False):

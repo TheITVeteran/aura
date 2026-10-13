@@ -64,5 +64,12 @@ def test_the_pursuit_names_the_acts_she_has_not_taken():
     source = pursuit_loop_source()
     at = source.index("worth_finding_out(", source.index("telling = "))
     nearby = source[at : at + 600]
-    assert "never_tried=[" in nearby
-    assert 'responds["state"].tried' in nearby
+    assert 'never_tried=_never_tried_here(available, responds["state"], can_do)' in nearby
+    # What she was seen to take, and what her map of the screen says was taken there.
+    from types import SimpleNamespace
+
+    from core.skills.screen_pursuit_decision import _never_tried_here
+
+    offered = [SimpleNamespace(name=name) for name in ("up", "down", "left")]
+    taken_here = SimpleNamespace(leads=SimpleNamespace(taken_here=lambda act: act == "left"))
+    assert _never_tried_here(offered, SimpleNamespace(tried={"up"}), taken_here) == ["down"]

@@ -384,11 +384,13 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
     def tried(self, key: str, changed: bool | None, *, before: Mapping[str, Any] | None = None,
               after: Mapping[str, Any] | None = None, transfer: Any = None) -> None:
         """One input, and whether the world answered it."""
-        if changed is None:
-            return
         name = str(key or "").strip()
         name = name if what_is_clicked(name) is not None or two_places_of(name) else name.lower()
         if not name:
+            return
+        # That she took it is so whether or not she could tell what it did.
+        self.leads.took(name)
+        if changed is None:
             return
         if what_is_clicked(name) is not None:
             self.clicked_on(name, before.get("clickable", ()) if before is not None else self.seen_before, changed)

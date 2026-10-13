@@ -125,6 +125,8 @@ class WhereThingsLead:
     _before: int | None = None
     _labels_before: frozenset[str] = frozenset()
     _labels_now: frozenset[str] = frozenset()
+    #: This sitting: "screen|act" -> how many times the act was taken on the screen, whatever came of it.
+    _taken: dict[str, int] = field(default_factory=dict)
 
     def which(self, words: frozenset[str], selector_view: SelectorView | UnknownSelectorView | None = None) -> int | None:
         """Resolve OCR identity and confirmed selector contents within bounded memory."""
@@ -164,6 +166,24 @@ class WhereThingsLead:
         self._labels_before, self._labels_now = self._labels_now, frozenset(_label(label) for label in labels)
         if here is not None and here not in self._been:
             self._been.append(here)
+
+    def took(self, act: str) -> None:
+        """She took ``act`` on the screen before this look, whether or not she could make out what came of it."""
+        if self._before is not None and act:
+            key = f"{self._before}|{act}"
+            self._taken[key] = self._taken.get(key, 0) + 1
+
+    def taken_here(self, act: str) -> bool:
+        """Whether ``act`` has been taken on this screen: this sitting, whatever came of it, or before, by what it did.
+        What came of an act can be past making out (a picture that changed only a little, a look that came too soon);
+        that she took it is not. LIVE-like 2026-10-12 a panel's arrow whose effect could not be told was "never tried"
+        after thirty presses, and kept the worth of a first try over every other thing on the screen."""
+        # Screens with nothing to read are one place however many there are: what was taken on one is not known taken
+        # on the next.
+        if self._here is None or self._here == WORDLESS or not act:
+            return False
+        key = f"{self._here}|{act}"
+        return bool(self._taken.get(key)) or key in self.went
 
     def acted(self, act: str, changed: bool) -> None:
         """The act she took on the screen before this look, and whether anything answered it."""

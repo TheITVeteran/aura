@@ -767,6 +767,13 @@ def _it_did_nothing_from_here(pending: Any, laid_out: Any, key: str, changed: bo
     if changed is None:
         return
     view = _the_view(laid_out) if laid_out is not None else ""
+    # Done from one view and looked at from another, it did not do nothing from the view she is looking at now,
+    # whatever the measure of its answer said: offline 2026-10-12 a page of a game's rules turned under her "next" while
+    # its drawing played on, the turn was not told from the drawing, and the next page's own "next" was left out as
+    # having done nothing there.
+    came_from = pending.get("arranged")
+    if came_from is not None and _the_view(came_from) and _the_view(came_from) != view:
+        changed = True
     if changed or not view:
         pending.pop("did_nothing_from", None)
         return

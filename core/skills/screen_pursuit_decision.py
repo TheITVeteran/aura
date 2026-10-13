@@ -23,6 +23,7 @@ from .screen_pursuit_decision_lesson import (  # noqa: F401  (re-exported: they 
     _as_checked,
     _first_what_goes_on,
     _go_on_from_a_pause,
+    _never_tried_here,
     _once_chosen_go_on,
     _reaching_what_the_next_step_needs,
     _the_lesson_first,
@@ -1354,11 +1355,7 @@ async def decide_the_next_move(
             ahead,
             # And, before any of that can mean anything, the acts she has
             # not taken here.
-            never_tried=[
-                option.name
-                for option in available
-                if option.name not in responds["state"].tried
-            ],
+            never_tried=_never_tried_here(available, responds["state"], can_do),
         ))
         from core.cognition.a_guide_to_a_place import THE_GUIDE
 

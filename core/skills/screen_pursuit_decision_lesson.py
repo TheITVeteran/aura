@@ -33,6 +33,14 @@ def _first_what_goes_on(can_do: Any, telling: dict[str, float]) -> dict[str, flo
                                                  can_do))
 
 
+def _never_tried_here(available: Any, responds: Any, can_do: Any) -> list[str]:
+    """The acts on offer she has not taken here: not among those she was seen to take, nor taken on this screen by her
+    map of it, whether or not what they did could be made out (core/agency/where_things_lead.py)."""
+    taken_here = getattr(getattr(can_do, "leads", None), "taken_here", lambda _act: False)
+    tried = getattr(responds, "tried", set())
+    return [option.name for option in available if option.name not in tried and not taken_here(option.name)]
+
+
 #: How much more a move that does the lesson's next step is worth than the best of the rest, and how much less a move
 #: its rules forbid is.
 NEXT_STEP, FORBIDDEN = 1.5, 0.1

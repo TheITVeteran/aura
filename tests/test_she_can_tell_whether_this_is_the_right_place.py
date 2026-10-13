@@ -102,3 +102,13 @@ def test_a_keystroke_needs_something_bound_to_receive_it():
     assert _bound_to_a_window("right", "Google Chrome")
     # Except the one key that declines and commits to nothing.
     assert _bound_to_a_window("escape", "")
+
+
+def test_a_picture_without_words_is_not_nothing_when_she_aims_at_a_thing_in_it():
+    """A screen of play may have no words at all: a house of rooms, doors, things to pick up. What she is about to
+    click was seen in this same look, so there is something in front of her; a key pressed into a blank reading is
+    still pressed into nothing."""
+    blank = _read("")
+    assert where_am_i(blank, aimed_at="the one that stands out at 40% across, 30% down").the_thing_is_here
+    assert not where_am_i(blank).the_thing_is_here
+    assert not where_am_i(blank, lattice=_held()).the_thing_is_here

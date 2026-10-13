@@ -56,6 +56,21 @@ def test_a_changed_view_offers_everything_again():
     assert not ended
 
 
+def test_an_act_that_took_her_to_another_view_did_not_do_nothing_there():
+    """Its answer can be missed (a drawing playing on beside the page that turned), but the view she acted from is not
+    the one she is looking at: the next page's own "next" is not left out as having done nothing there."""
+    pending: dict = {"arranged": _view("Welcome to the island / back next")}
+    rules = _view("How to hold the club / back next")
+    _it_did_nothing_from_here(pending, rules, "next", False)
+    left, _ended = _leaving_out_what_just_did_nothing(_options("back", "next"), pending, rules)
+    assert [option.name for option in left] == ["back", "next"]
+    # From the same view, it did nothing, and is left out while the view stays.
+    pending = {"arranged": rules}
+    _it_did_nothing_from_here(pending, rules, "next", False)
+    left, _ended = _leaving_out_what_just_did_nothing(_options("back", "next"), pending, rules)
+    assert [option.name for option in left] == ["back"]
+
+
 def test_an_act_that_changed_something_clears_the_record():
     pending: dict = {}
     board = _view("a board")
