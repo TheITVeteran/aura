@@ -150,16 +150,16 @@ def best_plan(choosing: Any, held: str, goal: tuple[float | None, float | None],
     plans = plans_to_imagine(["", *scene.ways], list(scene.paths), held)
     arrival = None
     if arrive_at is not None and scene.pushes is not None:
-        scene.arriving = True
         cadence = max(STEP_S, float(getattr(choosing, "next_picture_s", STEP_S)))
         near = ((scene.size[0] + arrive_at.w) / 2, (scene.size[1] + arrive_at.h) / 2)
         gentle = choosing.meeting.gentle_below(arrive_at.kind) if hasattr(choosing.meeting, "gentle_below") else None
         if gentle is None:
             gentle = GENTLE_SHARE * max(math.hypot(*p) for p in scene.pushes.values())
-        scene.arrival_near, scene.arrival_gentle = near, gentle
         arrival = arrival_holds(scene.start, scene.going, goal, scene.pushes, scene.times.tolist(), cadence, held,
                                 near=near, gentle=gentle)
         if arrival:
+            scene.arriving = True
+            scene.arrival_near, scene.arrival_gentle = near, gentle
             plans.append(Plan(arrival))
     imagined = [_run(scene, plan, goal, held, choosing.caution) for plan in plans]
     best = max(imagined, key=lambda one: one.worth)

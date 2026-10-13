@@ -14,7 +14,7 @@ from core.agency.arriving_by_her_pushes import (
     arrival_key,
 )
 from core.agency.choosing_where_to_be import _Choosing
-from core.agency.imagining_ahead import _the_scene
+from core.agency.imagining_ahead import _the_scene, best_plan
 from core.agency.what_meeting_things_does import WhatMeetingDoes
 from core.agency.which_one_answers_to_her import WhichIsHers
 from core.perception.what_moves_in_the_picture import Thing
@@ -138,6 +138,22 @@ def test_unknown_held_push_cannot_supply_a_delivery_prediction():
     choosing = _Choosing(moves, hers, WhatMeetingDoes(), ["first", "second"], response_s=.2)
     choosing.held_now = "unmeasured"
     assert _the_scene(choosing, 1.2) is None
+
+
+@pytest.mark.parametrize("missing", ["", "first", "second"])
+def test_an_unavailable_arrival_path_preserves_the_ordinary_plan(missing):
+    body, moves, hers = _learn(100., 0)
+    body.x, body.y, body.vx, body.vy = 400., 100., 80., 0.
+    destination = _body(2, 1, 600., 100., 36.)
+    meeting = WhatMeetingDoes()
+    choosing = _Choosing(moves, hers, meeting, ["first", "second"])
+    measured = hers.push_of
+    hers.push_of = lambda key: None if key == missing else measured(key)
+    ordinary = best_plan(choosing, "", (600., None))
+    unavailable_arrival = best_plan(choosing, "", (600., None), arrive_at=destination)
+    assert unavailable_arrival.plan == ordinary.plan
+    assert unavailable_arrival.worth == ordinary.worth
+    assert unavailable_arrival.decides == ordinary.decides
 
 
 def test_other_bodies_also_move_while_a_command_is_being_delivered():
