@@ -410,7 +410,10 @@ def _travel_turn_claims() -> tuple:
     from core.agency.calibration_for_a_current_body import _current_body_calibration_invariant
     from core.agency.facing_seen_under_its_input import _fresh_heading_invariant
     from core.agency.response_in_the_body_frame import _body_heading_invariant
-    from core.agency.steering_from_a_model import _provisional_steering_input_invariant
+    from core.agency.steering_from_a_model import (
+        _provisional_steering_input_invariant,
+        _source_turn_role_invariant,
+    )
     from core.agency.turning_while_travelling import (
         _travel_segments_invariant,
         _travel_turns_invariant,
@@ -418,6 +421,9 @@ def _travel_turn_claims() -> tuple:
     from core.runtime.task_ownership import _unstarted_task_cleanup_invariant
 
     return (
+        ("source_turn_roles_only_arm_a_body_hypothesis", "core/agency/steering_from_a_model.py",
+         "tests/test_steering_hypotheses_reach_the_actor.py", lambda: _source_turn_role_invariant() == (),
+         "A resolved source rotation method on the controlled class can arm a provisional turn; unrelated calls cannot confer a turn role or measured control."),
         ("a_forecast_ends_at_its_actual_input_window", "core/agency/a_model_for_steering.py",
          "tests/test_a_forecast_keeps_its_actual_observation_window.py", lambda: _forecast_window_invariant() == (),
          "A provisional forecast retains only measured pictures inside its actual delivered input interval; a physical release preserves partial coverage without treating a later picture as evidence of the old press."),
@@ -480,10 +486,12 @@ def _control_discovery_claims() -> tuple:
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
     from core.agency.a_model_for_steering import _slow_motion_invariant
+    from core.agency.acting_on_a_prepared_motion import _prepared_input_set_invariant
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.controls_that_take_time_to_build import _stored_response_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
     from core.agency.following_a_prepared_path import _prepared_path_invariant
+    from core.agency.how_a_game_works import _parsed_body_trial_invariant
     from core.agency.inputs_while_measuring_control import _single_input_interval_invariant
     from core.agency.room_to_finish_a_required_motion import _preparation_room_invariant
     from core.agency.solving_for_a_required_state import _required_state_invariant
@@ -495,6 +503,7 @@ def _visual_motion_claims() -> tuple:
         _measured_prefix_invariant,
         _motion_segments_invariant,
     )
+    from core.cognition.what_its_code_says import _parsed_control_priority_invariant
     from core.perception.a_clock_for_drawn_frames import _drawing_clock_invariant
     from core.perception.a_reading_before_more_detail import _finished_reading_invariant
     from core.perception.a_reference_kept_by_visible_support import _reference_bridge_invariant
@@ -524,6 +533,15 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("prepared_motion_releases_only_its_owned_input_set", "core/agency/acting_on_a_prepared_motion.py",
+         "tests/test_prepared_motion_keeps_its_input_set.py", lambda: _prepared_input_set_invariant() == (),
+         "A prepared model action owns its acknowledged key set and finite physical hold; interruption releases its own inputs without advancing an incomplete path."),
+        ("parsed_body_controls_reach_finite_discovery", "core/agency/how_a_game_works.py",
+         "tests/test_a_parsed_body_has_its_named_control_trials.py", lambda: _parsed_body_trial_invariant() == (),
+         "A resolved current source method on the controlled class reaches finite input discovery when a caller omits its key; that experiment cannot replace measured role or body identity."),
+        ("parsed_controls_keep_their_source_priority", "core/cognition/what_its_code_says.py",
+         "tests/test_a_code_control_survives_lower_priority_readings.py", lambda: _parsed_control_priority_invariant() == (),
+         "A control parsed from the current program retains its known role and source when a lower-priority reading names a conflicting action."),
         ("worker_observations_keep_their_private_state", "core/perception/play_observation_without_holding_the_loop.py",
          "tests/test_play_observation_keeps_input_deadlines_alive.py", lambda: _owned_play_observation_invariant() == (),
          "A pending picture leaves input deadlines runnable; worker-owned mutable state reaches the public view only through a detached completed snapshot."),

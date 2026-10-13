@@ -51,19 +51,52 @@ def _owner(hers: Any, mine: Any) -> tuple | None:
 
 
 def _turn_keys(run: Any, faces: Any) -> set[str]:
-    """Explicit turning instructions or observed curved trials arm the structural prior."""
+    """Explicit body-turn roles or observed curved trials arm the structural prior."""
     from core.cognition.a_guide_to_a_place import THE_GUIDE
 
-    controls = getattr(THE_GUIDE.get(), 'controls', {}) or {}
+    guide = THE_GUIDE.get()
+    controls = getattr(guide, 'controls', {}) or {}
+    source = getattr(guide, 'code_says', None)
     named = set()
     for key in run.keys:
         control = controls.get(key)
         action = ' '.join(str(getattr(control, field, '')) for field in ('act', 'on')).replace('_', ' ').replace('-', ' ')
         if re.search(r'\b(?:steer|rotate)\b|\bturn(?:s|ing)?\s+(?:left|right|clockwise|counterclockwise)\b', action, re.I):
             named.add(key)
+        if _source_turns_body(source, key):
+            named.add(key)
         if faces.travel_turns.curved(key):
             named.add(key)
     return named
+
+
+def _source_turns_body(source: Any, key: str) -> bool:
+    """A resolved body method name may arm a provisional rotation family."""
+    source_keys = getattr(source, 'keys', {}) or {}
+    hers = getattr(source, 'hers', {}) or {}
+    if not isinstance(source_keys, dict) or not isinstance(hers, dict):
+        return False
+    control = source_keys.get(key)
+    owner = hers.get('class')
+    if (not isinstance(owner, str) or not re.fullmatch(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*', owner)
+            or getattr(control, 'does', None) != 'moves'):
+        return False
+    by = getattr(control, 'by', None)
+    if not isinstance(by, str):
+        return False
+    call = re.match(r'\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.([A-Za-z_$][\w$]*)\s*\(', by)
+    if call is None:
+        return False
+    receiver, method = call.groups()
+    local = receiver in ('this', 'self') and str(getattr(control, 'where', '')).rsplit('.', 1)[0] == owner
+    if receiver != owner and not local:
+        return False
+    words = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', method).replace('_', ' ').replace('$', ' ').lower()
+    if re.search(r'\bturn(?:s|ing)?\s+(?:on|off)\b|\b(?:music|audio|sound|mute|power|button|buttons|furniture)\b', words):
+        return False
+    if re.search(r'\b(?:get|read|is|has|can|test|check)\b', words):
+        return False
+    return bool(re.search(r'\b(?:turn(?:s|ing)?|rotat(?:e|es|ing|ion))\b', words))
 
 
 def _clearance(choosing: Any):
@@ -201,4 +234,18 @@ def _provisional_steering_input_invariant() -> tuple:
         assert _turn_keys(run, faces) == {'a'}
     finally:
         THE_GUIDE.reset(token)
+    return ()
+
+
+@invariant('agency.source_turn_roles_only_arm_a_body_hypothesis', scope='agency',
+           owner='core/agency/steering_from_a_model.py', observational=False)
+def _source_turn_role_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    source = SimpleNamespace(hers={'class':'Vehicle'}, keys={
+        'a':SimpleNamespace(does='moves', by='Vehicle.mTurn(1)', where='Controls.update'),
+        'b':SimpleNamespace(does='moves', by='Vehicle.turnOnMusic()', where='Controls.update'),
+        'c':SimpleNamespace(does='moves', by='Furniture.rotateLeft()', where='Controls.update')})
+    assert _source_turns_body(source, 'a')
+    assert not _source_turns_body(source, 'b') and not _source_turns_body(source, 'c')
     return ()

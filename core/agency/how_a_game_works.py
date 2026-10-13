@@ -123,6 +123,8 @@ class HowItWorks:
     against: Answer = field(default_factory=Answer)
     #: What each input does, as said: "the pointer" -> "throw", "space" -> "dodge food".
     inputs: dict[str, str] = field(default_factory=dict)
+    #: Current source bindings qualify experiments; they do not identify a visible body.
+    body_keys_from_code: tuple[str, ...] = ()
 
     # -- what follows from it ---------------------------------------------------------------------------------------
 
@@ -143,7 +145,7 @@ class HowItWorks:
         Offline 2026-10-12 a body named for the keys was never found while its
         menu's pointer controls kept the loop sweeping for a following body.
         """
-        if self.me.known() and self.me.value in (STEERED, AIMS_FROM_A_BODY):
+        if self.body_keys_from_code or self.me.known() and self.me.value in (STEERED, AIMS_FROM_A_BODY):
             return False
         if self.me.known() and self.me.value == FOLLOWS:
             return True
@@ -153,7 +155,9 @@ class HowItWorks:
         """Controls of the body are tried within one play state; the interface keeps its other controls."""
         from core.agency.body_trials_keep_the_world import keys_for_body_trials
 
-        return keys_for_body_trials(keys, self.inputs, body_known=self.has_a_body() is True)
+        candidates = list(dict.fromkeys([*keys, *self.body_keys_from_code]))
+        return keys_for_body_trials(candidates, self.inputs,
+                                    body_known=self.has_a_body() is True or bool(self.body_keys_from_code))
 
     def against_someone(self) -> bool:
         """Whether the place is played against someone on the other side, as far as she understands it."""
@@ -207,6 +211,16 @@ def _known_body_controls_invariant() -> tuple:
     return ()
 
 
+@invariant("agency.parsed_body_controls_reach_finite_discovery", scope="agency",
+           owner="core/agency/how_a_game_works.py", observational=False)
+def _parsed_body_trial_invariant() -> tuple:
+    how = HowItWorks(me=Answer(POINTS, SEEN_SURE), body_keys_from_code=('j',))
+    assert not how.try_pointer_first(True)
+    assert how.keys_for_body_trials([]) == ['j']
+    assert how.me.value == POINTS, "an experiment replaced measured understanding"
+    return ()
+
+
 def understood(guide: Any, also: str = "") -> HowItWorks:
     """What she understands now of the place ``guide`` is to: from everything it has read, ``also`` (what is on the
     screen in front of her and not taken in yet), and what her play there has shown, which outweighs what was said.
@@ -224,7 +238,30 @@ def understood(guide: Any, also: str = "") -> HowItWorks:
     how = kept[1]
     for axis, answer in (getattr(guide, "how_seen", None) or {}).items():
         getattr(how, axis).held_to(answer.value, answer.sure, answer.why[0] if answer.why else "")
+    how.body_keys_from_code = _body_controls_from_code(guide)
     return how
+
+
+def _body_controls_from_code(guide: Any) -> tuple[str, ...]:
+    """Current parsed methods name body experiments even when another reading omitted their keys."""
+    from core.cognition.what_its_code_says import CODE
+
+    plays = getattr(guide, 'code_says', None)
+    details = getattr(plays, 'hers', None)
+    body = details.get('class', '') if isinstance(details, dict) else ''
+    if not isinstance(body, str) or not re.fullmatch(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*', body):
+        return ()
+    controls = getattr(guide, 'controls', None) or {}
+    found = []
+    for key, what in (getattr(plays, 'keys', None) or {}).items():
+        if (getattr(what, 'does', '') not in ('moves', 'jumps', 'ducks', 'acts')
+                or getattr(controls.get(key), 'source', '') != CODE):
+            continue
+        by, where = str(getattr(what, 'by', '')), str(getattr(what, 'where', ''))
+        receiver = re.match(r'([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.', by)
+        if receiver is not None and (receiver[1] == body or receiver[1] in ('this', 'self') and where.rsplit('.', 1)[0] == body):
+            found.append(key)
+    return tuple(found)
 
 
 def seen_going_on_by_itself(guide: Any, going: bool) -> None:

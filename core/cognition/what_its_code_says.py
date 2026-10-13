@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 from core.cognition.a_guide_to_a_place import CODE
+from core.verify import invariant
 
 __all__ = ["CODE", "in_plain_words", "take_in_how_it_plays"]
 
@@ -72,3 +73,18 @@ def take_in_how_it_plays(guide: Any, plays: Any, at: float) -> list[str]:
     guide.code_says = plays
     guide.sources.add(CODE)
     return news
+
+
+@invariant("cognition.parsed_controls_keep_their_source_priority", scope="cognition",
+           owner="core/cognition/what_its_code_says.py", observational=False)
+def _parsed_control_priority_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    from core.cognition.a_guide_to_a_place import PROGRAM, Guide
+
+    guide = Guide()
+    plays = SimpleNamespace(keys={'j': SimpleNamespace(does='moves')}, ends=[])
+    take_in_how_it_plays(guide, plays, 1.)
+    guide.take_in(PROGRAM, ['Press J to quit.'], 2.)
+    assert guide.controls['j'].act == 'move' and guide.controls['j'].source == CODE
+    return ()

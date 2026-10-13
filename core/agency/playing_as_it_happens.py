@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.agency.a_choice_and_its_reasons import chose_in_play
+from core.agency.acting_on_a_prepared_motion import act_on_prepared_motion
 from core.agency.building_up import builds_up
 from core.agency.choosing_where_to_be import (  # noqa: F401 (the existing decision API)
     CARRIED_AHEAD_S,
@@ -388,6 +389,7 @@ class _Run:
     #: Where she faces, where her keys turn her and take her the way she faces (core/agency/which_way_she_faces.py),
     #: and how many trials it has asked for.
     faces: Any = None
+    prepared_motion_binding: Any = None
     facing_trials: int = 0
     facing_trial: Any = None
     #: The things that come for her, told from those that go their own way (core/agency/what_comes_for_her.py).
@@ -472,11 +474,7 @@ async def _burst(hands: Any, run: _Run, at: float, *, say: Any = None) -> None:
     run.burst_at = at
 
 
-# -- deciding -----------------------------------------------------------------
-
-
 # -- the loop -----------------------------------------------------------------
-
 
 #: How long a line once said is not said again, word for word, in the same game: a watcher heard it.
 REPEAT_AFTER_S = 90.0
@@ -1172,6 +1170,7 @@ async def _play_as_it_happens(
     from core.agency.which_way_she_faces import WhichWaySheFaces
 
     run.faces = keep.get("faces") or WhichWaySheFaces()
+    run.prepared_motion_binding = keep.get("observed_model_binding")
     from core.agency.what_comes_for_her import WhatComesForHer
 
     run.comes = keep.get("comes") or WhatComesForHer()
@@ -1347,6 +1346,8 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
             await hands.up(run.held)
             run.held = ""
         await run.shown.press(hands, say=lambda line: _say(run, say, line, at, once="keys shown"))
+        return
+    if await act_on_prepared_motion(hands, run, moves, hers, at):
         return
     # A key pressed before she can see what it does tells her nothing: the first look at a screen takes its measure.
     if not getattr(moves, "seeing", True):
