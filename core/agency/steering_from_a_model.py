@@ -43,12 +43,15 @@ def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: fl
     x, y = measured_position(mine) if mine is not None else (0., 0.)
     vx, vy = (float(mine.vx), float(mine.vy)) if mine is not None else (0., 0.)
     estimate = current_motion_estimate(mine, at)
+    velocity_error = None
     if estimate is not None and estimate.velocity_error <= max(2., .5 * math.hypot(*estimate.velocity)):
         vx, vy = estimate.velocity
+        velocity_error = estimate.velocity_error
     motion = getattr(moves, '_point_motion', {}).get(getattr(mine, 'number', None))
     fit = getattr(motion, 'rigid', None)
     error = max(1., float(fit.error)) if basis and fit is not None else 1. if basis else 2.
-    model.saw(owner, key, began, at, x, y, vx, vy, position_error=error, measured=measured)
+    model.saw(owner, key, began, at, x, y, vx, vy, position_error=error, measured=measured,
+              measured_velocity_error=velocity_error)
 
 
 def _owner(hers: Any, mine: Any) -> tuple | None:
@@ -77,38 +80,60 @@ def _turn_keys(run: Any, faces: Any) -> set[str]:
             named.add(key)
         if _source_turns_body(source, key):
             named.add(key)
-        if faces.travel_turns.curved(key):
+        if faces.travel_turns.curved(key) and not _source_drives_body(source, key):
             named.add(key)
     return named
 
 
-def _source_turns_body(source: Any, key: str) -> bool:
-    """A resolved body method name may arm a provisional rotation family."""
+def _source_body_method(source: Any, key: str) -> str | None:
+    """Resolve the controlled receiver and method before assigning a structural role."""
     source_keys = getattr(source, 'keys', {}) or {}
     hers = getattr(source, 'hers', {}) or {}
     if not isinstance(source_keys, dict) or not isinstance(hers, dict):
-        return False
+        return None
     control = source_keys.get(key)
     owner = hers.get('class')
     if (not isinstance(owner, str) or not re.fullmatch(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*', owner)
             or getattr(control, 'does', None) != 'moves'):
-        return False
+        return None
     by = getattr(control, 'by', None)
     if not isinstance(by, str):
-        return False
+        return None
     call = re.match(r'\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.([A-Za-z_$][\w$]*)\s*\(', by)
     if call is None:
-        return False
+        return None
     receiver, method = call.groups()
     local = receiver in ('this', 'self') and str(getattr(control, 'where', '')).rsplit('.', 1)[0] == owner
     if receiver != owner and not local:
+        return None
+    return re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', method).replace('_', ' ').replace('$', ' ').lower()
+
+
+def _source_turns_body(source: Any, key: str) -> bool:
+    """A resolved body method name may arm a provisional rotation family."""
+    words = _source_body_method(source, key)
+    if words is None:
         return False
-    words = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', method).replace('_', ' ').replace('$', ' ').lower()
     if re.search(r'\bturn(?:s|ing)?\s+(?:on|off)\b|\b(?:music|audio|sound|mute|power|button|buttons|furniture)\b', words):
         return False
     if re.search(r'\b(?:get|read|is|has|can|test|check)\b', words):
         return False
     return bool(re.search(r'\b(?:turn(?:s|ing)?|rotat(?:e|es|ing|ion))\b', words))
+
+
+def _source_drives_body(source: Any, key: str) -> bool:
+    """A drive's curved path alone does not establish a rotation input.
+
+    Acceleration may follow an already turned body or a collision. Offline
+    2026-10-13 such curves removed both drive keys from provisional steering.
+    This preserves a structural prior, never measured control status.
+    """
+    words = _source_body_method(source, key)
+    if words is None or _source_turns_body(source, key):
+        return False
+    if re.search(r'\b(?:get|read|is|has|can|test|check|music|audio|sound|mute|power)\b', words):
+        return False
+    return bool(re.search(r'\b(?:accel(?:erate|erates|eration|erating)?|thrust|brak(?:e|es|ing)|propel|drive|drives)\b', words))
 
 
 def _clearance(choosing: Any):

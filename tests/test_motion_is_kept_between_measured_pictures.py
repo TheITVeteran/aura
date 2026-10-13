@@ -116,6 +116,7 @@ def test_current_public_state_reaches_the_steering_model_and_missing_motion_teac
     observed_steering_model(faces, body, hers, SimpleNamespace(), at)
     assert faces.steering_model._pose.vx == pytest.approx(estimate.velocity[0])
     assert faces.steering_model._pose.vy == pytest.approx(estimate.velocity[1])
+    assert faces.steering_model._pose.speed_error == pytest.approx(estimate.velocity_error)
     body.motion_evidence, body.motion_measured_at = 'unavailable', None
     assert current_motion_estimate(body, at) is None
     observed_steering_model(faces, body, hers, SimpleNamespace(), at + .1)

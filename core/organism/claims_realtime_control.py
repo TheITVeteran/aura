@@ -500,7 +500,10 @@ def _control_discovery_claims() -> tuple:
 
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
-    from core.agency.a_model_for_steering import _slow_motion_invariant
+    from core.agency.a_model_for_steering import (
+        _slow_motion_invariant,
+        _velocity_uncertainty_invariant,
+    )
     from core.agency.acting_on_a_prepared_motion import _prepared_input_set_invariant
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.controls_that_take_time_to_build import _stored_response_invariant
@@ -571,6 +574,9 @@ def _visual_motion_claims() -> tuple:
         ("worker_observations_keep_their_private_state", "core/perception/play_observation_without_holding_the_loop.py",
          "tests/test_play_observation_keeps_input_deadlines_alive.py", lambda: _owned_play_observation_invariant() == (),
          "A pending picture leaves input deadlines runnable; worker-owned mutable state reaches the public view only through a detached completed snapshot."),
+        ("steering_preserves_measured_velocity_uncertainty", "core/agency/a_model_for_steering.py",
+         "tests/test_steering_keeps_measured_velocity_uncertainty.py", lambda: _velocity_uncertainty_invariant() == (),
+         "A current measured velocity keeps its uncertainty across the steering boundary; invalid uncertainty retires the current pose."),
         ("slow_motion_keeps_its_input_and_pixel_uncertainty", "core/agency/a_model_for_steering.py",
          "tests/test_slow_observed_motion_can_anchor_a_steering_model.py", lambda: _slow_motion_invariant() == (),
          "Slow motion accumulates displacement within one observed input receipt; unresolved pixel jitter cannot supply a driver, and chord uncertainty stays in provisional forecasts."),
