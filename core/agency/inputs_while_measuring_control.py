@@ -14,6 +14,7 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from typing import Any
 
+from core.runtime.lockdep import checked_async_lock
 from core.verify import invariant
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,30 @@ def primary_delivery(hands: Any):
 
 async def hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *, trying: bool = False,
                        now: Any = None) -> None:
+    if key == run.held:
+        return
+    async with _control_delivery_lock(run):
+        await _hold_control(hands, run, hers, key, at, trying=trying, now=now)
+
+
+def _control_delivery_lock(run: Any) -> Any:
+    lock = getattr(run, '_control_delivery_lock', None)
+    if lock is None:
+        lock = run._control_delivery_lock = checked_async_lock('realtime_control_delivery')
+    return lock
+
+
+async def release_control_if_owned(hands: Any, run: Any, hers: Any, key: str, since: float) -> bool:
+    """A physical input deadline can release only its own delivered receipt."""
+    async with _control_delivery_lock(run):
+        if run.held != key or run.held_since != since:
+            return False
+        await _hold_control(hands, run, hers, '', time.monotonic(), trying=False)
+        return True
+
+
+async def _hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *, trying: bool = False,
+                        now: Any = None) -> None:
     """A changed physical input starts one trial; a changed policy cannot."""
     if key == run.held:
         return

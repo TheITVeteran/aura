@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.verify import invariant
 
 logger = logging.getLogger("Aura.Runtime.TaskOwnership")
 
@@ -58,6 +59,16 @@ def close_awaitable(awaitable: Any) -> None:
     if callable(cancel):
         with suppress(Exception):
             cancel()
+
+
+def _close_unstarted_coroutine(awaitable: Any) -> None:
+    """A finished wrapper cannot leave its still-unstarted coroutine open.
+
+    Offline 2026-10-13 cancelling an input deadline before its tracked
+    wrapper began left the owned coroutine unawaited.
+    """
+    if inspect.iscoroutine(awaitable) and inspect.getcoroutinestate(awaitable) == inspect.CORO_CREATED:
+        awaitable.close()
 
 
 def _create_owned_asyncio_task(awaitable: Awaitable[Any], *, name: str | None) -> asyncio.Task:
@@ -141,6 +152,7 @@ def create_tracked_task(
                     record_degradation('task_ownership', exc)
                     logger.debug("Failed to observe fallback task %s: %s", name or task, exc)
 
+        task.add_done_callback(lambda _task: _close_unstarted_coroutine(awaitable))
         if on_done is not None:
             task.add_done_callback(on_done)
         return task
@@ -148,6 +160,19 @@ def create_tracked_task(
         if cancel_on_fail:
             close_awaitable(awaitable)
         raise
+
+
+@invariant('runtime.completed_task_closes_its_unstarted_coroutine', scope='runtime',
+           owner='core/runtime/task_ownership.py', observational=False)
+def _unstarted_task_cleanup_invariant() -> tuple:
+    async def work() -> None:
+        return None
+
+    pending = work()
+    assert inspect.getcoroutinestate(pending) == inspect.CORO_CREATED
+    _close_unstarted_coroutine(pending)
+    assert inspect.getcoroutinestate(pending) == inspect.CORO_CLOSED
+    return ()
 
 
 async def drain_owned_awaitable[T](

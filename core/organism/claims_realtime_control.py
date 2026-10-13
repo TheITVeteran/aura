@@ -402,15 +402,27 @@ def install_realtime_control_claims(suite: Any) -> None:
 
 
 def _travel_turn_claims() -> tuple:
+    from core.agency.a_model_for_steering import _provisional_steering_invariant
     from core.agency.calibration_for_a_current_body import _current_body_calibration_invariant
     from core.agency.facing_seen_under_its_input import _fresh_heading_invariant
     from core.agency.response_in_the_body_frame import _body_heading_invariant
+    from core.agency.steering_from_a_model import _provisional_steering_input_invariant
     from core.agency.turning_while_travelling import (
         _travel_segments_invariant,
         _travel_turns_invariant,
     )
+    from core.runtime.task_ownership import _unstarted_task_cleanup_invariant
 
     return (
+        ("completed_task_closes_its_unstarted_coroutine", "core/runtime/task_ownership.py",
+         "tests/test_a_cancelled_wrapper_closes_unstarted_work.py", lambda: _unstarted_task_cleanup_invariant() == (),
+         "A completed tracked task closes its still-unstarted native coroutine, including cancellation before its wrapper starts; running work keeps its cancellation and completion semantics."),
+        ("provisional_steering_keeps_its_observed_owner", "core/agency/a_model_for_steering.py",
+         "tests/test_a_steering_model_can_be_used_before_calibration.py", lambda: _provisional_steering_invariant() == (),
+         "A structural steering model can propose finite physical predictions from current owned motion; its assumed signs and rates remain provisional, and changed birth or epoch invalidates its parameters and forecast."),
+        ("provisional_steering_keeps_input_ownership", "core/agency/steering_from_a_model.py",
+         "tests/test_steering_hypotheses_reach_the_actor.py", lambda: _provisional_steering_input_invariant() == (),
+         "Provisional physical forecasts can deliver bounded goal-directed inputs before complete steering calibration, without granting body identity or measured control; ownership changes and contradictions end their input."),
         ("calibration_belongs_to_the_current_owned_body", "core/agency/calibration_for_a_current_body.py",
          "tests/test_a_current_body_has_its_own_calibration_budget.py", lambda: _current_body_calibration_invariant() == (),
          "A current matched body receives its own finite calibration programme; missing ownership cannot renew a budget, and issued requests do not establish measured control."),

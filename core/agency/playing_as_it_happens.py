@@ -648,6 +648,8 @@ def _what_the_place_does(run: _Run, choosing: _Choosing, moves: WhatMoves, hers:
     choosing.gone_for, choosing.urgency = run.gone_for, run.pressures.urgency()
     choosing.faces, choosing.comes, choosing.way_through = run.faces, run.comes, run.way_through
     observe_facing(run.faces, mine, hers, at)
+    from core.agency.steering_from_a_model import observed_steering_model
+    observed_steering_model(run.faces, mine, hers, moves, at)
     if mine is not None:
         run.comes.saw(moves.things.values(), mine)
     # Carried on by her own going, doing nothing is already what her going does; under the pointer, it is staying put.
@@ -1379,6 +1381,9 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
         await _fire_while_finding_herself(hands, run, hers, moves, rules, at)
     if _still_trying_keys(run, hers, choosing, trying_the_pointer, at=at):
         await _try_the_keys(hands, run, hers, at, moves)
+        return
+    from core.agency.steering_from_a_model import steer_with_a_model
+    if await steer_with_a_model(hands, run, hers, choosing, at, hold=_hold):
         return
     if await _a_facing_trial(hands, run, hers, choosing, at):
         return

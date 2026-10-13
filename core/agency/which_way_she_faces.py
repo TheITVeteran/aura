@@ -19,6 +19,7 @@ import math
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import Any
 
 from core.agency.turning_while_travelling import TurningWhileTravelling
 from core.verify import invariant
@@ -117,6 +118,8 @@ class WhichWaySheFaces:
     last_picture_at: float | None = None
     travel_turns: TurningWhileTravelling = field(default_factory=lambda: TurningWhileTravelling(
         moving=MOVING, settle_s=SETTLE_S, gap_s=OBSERVATION_GAP_S, turns=TURNS))
+    steering_model: Any = None
+    steering_basis: bool | None = None
 
     def saw(self, vx: float, vy: float, held: str, at: float, *, measured: bool = True,
             began: float | None = None) -> None:
