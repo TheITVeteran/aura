@@ -264,3 +264,35 @@ def test_unknown_action_text_cannot_make_unnamed_scenery_a_control_target():
         control.on = ''
         using.worked.add(('left', 'blue patch'))
         assert _a_use_for(guide, using, spot, 1.) is control
+
+
+@pytest.mark.asyncio
+async def test_a_use_that_brings_back_only_what_it_brought_before_is_left_for_other_things():
+    """A cupboard opened, shut and opened again shows what it showed: after two uses that bring back only what they
+    brought before, it is left, and the door across the room is tried. LIVE 2026-10-13 she stood in a kitchen opening a
+    closet again and again, with the way out in sight."""
+    from core.agency.using_a_control_on_a_thing import AGAIN_AFTER_S, SAME_AGAIN_TWICE
+
+    guide = _guide("Click on the doors to open them.")
+    token = THE_GUIDE.set(guide)
+    try:
+        hands = _Hands()
+        cupboard, far_door = _thing(2, 5, 120.0, 150.0), _thing(3, 5, 330.0, 150.0)
+        moves, hers, run = _world([cupboard, far_door])
+        shut = np.zeros((300, 400, 3), np.uint8)
+        shut[100:200, 80:160] = 90
+        opened = shut.copy()
+        opened[100:200, 80:160] = 230
+        picture, at = shut, 0.0
+        for _ in range(8):
+            before = len(hands.done)
+            await use_controls_on_things(hands, run, moves, hers, [], at, picture=picture)
+            if hands.done[before:] == [("click", (0.3, 0.5))]:            # the cupboard, opened or shut by the click
+                cupboard.w = 40.0 if cupboard.w == 20.0 else 20.0
+                picture = opened if picture is shut else shut
+            at += JUDGED_AFTER_S + AGAIN_AFTER_S
+        at_the_cupboard = hands.done.count(("click", (0.3, 0.5)))
+        assert at_the_cupboard == 2 + SAME_AGAIN_TWICE                    # open, shut, and twice more what they were
+        assert ("click", (0.82, 0.5)) in hands.done                       # then the door across the room
+    finally:
+        THE_GUIDE.reset(token)

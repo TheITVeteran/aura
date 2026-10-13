@@ -20,6 +20,12 @@ kind wherever she meets it. If nothing changed after two presses at one kind of 
 that kind. Clicks go to the thing itself, wherever it is. Keys are pressed only beside it, the way the game's words
 say.
 
+And what a press did once is not news the third time. A closet opened, shut, and opened again shows what it showed;
+a person who has looked in it goes to look somewhere else. So what the screen looked like after each use of a control
+on a thing is kept, coarsely, and a use that brings back only what that use has brought before is doing nothing new:
+after two such, that thing is left for others, until something about it changes. LIVE 2026-10-13 she stood in a
+game's kitchen opening a closet and looking at what was in it, again and again, with the way out of the room in sight.
+
 Nothing here knows a game.
 """
 from __future__ import annotations
@@ -47,6 +53,13 @@ AGAIN_AFTER_S = 2.5
 NEARER_BY = 0.6
 #: Presses at one kind that did nothing before the key is no longer used on that kind.
 NOTHING_TWICE = 2
+#: Uses of a control on one thing that brought back only what that use had brought before, before the thing is left;
+#: and how coarsely the screen is remembered after a use: a grid of cells, each by how bright it is in steps of this
+#: many levels, two screens being the same where no more than this many cells differ by more than a step.
+SAME_AGAIN_TWICE = 2
+OUTCOME_GRID = (6, 8)
+OUTCOME_STEP = 32
+OUTCOME_CELLS_APART = 3
 #: Acts that are held while they last (a ladder is climbed for as long as the key is held), and how long.
 _HELD_ACTS = frozenset({"climb", "push", "pull", "dig", "hold", "drag", "swim", "charge", "fill", "pump"})
 HELD_FOR_S = 0.9
@@ -165,6 +178,10 @@ class UsingOnThings:
     worked: set[tuple[str, str]] = field(default_factory=set)
     #: When each thing was last pressed at.
     last: dict[tuple[Any, ...], float] = field(default_factory=dict)
+    #: For each use of a control on a thing (the control, the thing's name, about where it is): the screens it has been
+    #: seen to bring about, coarsely, and how many uses running brought only one of those again.
+    outcomes: dict[tuple[Any, ...], list[Any]] = field(default_factory=dict)
+    same_again: dict[tuple[Any, ...], int] = field(default_factory=dict)
     pending: _Press | None = None
     screens: int = 0
     screen_since: float | None = None
@@ -205,6 +222,8 @@ class UsingOnThings:
             did = _changed_there(press, moves, picture)
         did = did or near_it or self.screens != press.screens
         pair = (press.key, spot.name)
+        if did and picture is not None:
+            self._brought_about(press, moves, picture)
         if did:
             self.worked.add(pair)
             self.nothing.pop(pair, None)
@@ -216,6 +235,25 @@ class UsingOnThings:
             self.nothing[pair] = self.nothing.get(pair, 0) + 1
         return press, did
 
+    def _brought_about(self, press: _Press, moves: Any, picture: Any) -> None:
+        """What the screen looks like now, after a use that did something, kept for that use; and whether it is only
+        what that use has brought about before."""
+        now = _the_screen_coarsely(picture, _around(press.spot, moves))
+        if now is None:
+            return
+        use = _a_use(press.key, press.spot, moves)
+        seen = self.outcomes.setdefault(use, [])
+        if any(_alike(now, before) for before in seen):
+            self.same_again[use] = self.same_again.get(use, 0) + 1
+        else:
+            seen.append(now)
+            del seen[:-8]
+            self.same_again[use] = 0
+
+    def nothing_new_from(self, key: str, spot: _Spot, moves: Any) -> bool:
+        """Whether using ``key`` on ``spot`` has lately brought about only what it had brought about before."""
+        return self.same_again.get(_a_use(key, spot, moves), 0) >= SAME_AGAIN_TWICE
+
     def place_to_go(self, guide: Any, moves: Any, hers: Any, at: float) -> tuple[tuple[float, float], _Spot, Any] | None:
         """The nearest thing standing still that a key she has been told of is for, not yet given up on: where it is,
         the thing, and the control. None where there is none."""
@@ -226,7 +264,7 @@ class UsingOnThings:
         for spot in _spots(guide, moves, mine, self.landmarks):
             if spot.number is not None and moves.things[spot.number].moved:
                 continue
-            control = _a_use_for(guide, self, spot, at, waiting=False)
+            control = _a_use_for(guide, self, spot, at, waiting=False, moves=moves)
             if control is None or control.key == "the pointer":
                 continue
             found.append((abs(spot.x - mine.x) + abs(spot.y - mine.y), spot, control))
@@ -308,6 +346,71 @@ def _crop(picture: Any, box: tuple[float, float, float, float]) -> tuple[Any, tu
     if right - left < 2 or bottom - top < 2:
         return None
     return frame[top:bottom, left:right, :3].astype(np.int16), (left, top, right, bottom)
+
+
+def _a_use(key: str, spot: _Spot, moves: Any) -> tuple[Any, ...]:
+    """A use of a control on a thing, as it is remembered: the control, the thing's name, and about where it is."""
+    share = getattr(moves, "share", None)
+    x, y = float(getattr(spot, "x", 0.0) or 0.0), float(getattr(spot, "y", 0.0) or 0.0)
+    if callable(share):
+        x, y = share(x, y)
+    return key, getattr(spot, "name", ""), round(float(x) * 10), round(float(y) * 10)
+
+
+def _around(spot: _Spot, moves: Any) -> tuple[float, float, float, float] | None:
+    """The neighbourhood of a thing, twice its size every way, as shares of the picture."""
+    share = getattr(moves, "share", None)
+    if not callable(share):
+        return None
+    reach_x, reach_y = 2 * max(float(spot.w), 1.0), 2 * max(float(spot.h), 1.0)
+    left, top = share(spot.x - reach_x, spot.y - reach_y)
+    right, bottom = share(spot.x + reach_x, spot.y + reach_y)
+    return max(0.0, left), max(0.0, top), min(1.0, right), min(1.0, bottom)
+
+
+def _coarsely(grey: Any) -> Any | None:
+    """A picture as a small grid of how bright each part of it is, in steps: what a glance keeps of it."""
+    import numpy as np
+
+    rows, columns = OUTCOME_GRID
+    tall, wide = grey.shape
+    if tall < rows or wide < columns:
+        return None
+    cells = grey[: tall - tall % rows, : wide - wide % columns].reshape(rows, tall // rows, columns, wide // columns)
+    return (cells.mean(axis=(1, 3)) // OUTCOME_STEP).astype(np.int16)
+
+
+def _the_screen_coarsely(picture: Any, around: tuple[float, float, float, float] | None = None) -> Any | None:
+    """What a glance keeps of the screen after a use, at two sizes: the whole screen, and the thing's neighbourhood,
+    where a small thing's change is not lost among the rest."""
+    import numpy as np
+
+    frame = np.asarray(picture)
+    if frame.ndim != 3:
+        return None
+    grey = frame[..., :3].astype(np.float32).mean(axis=2)
+    whole = _coarsely(grey)
+    if whole is None:
+        return None
+    near = None
+    if around is not None:
+        tall, wide = grey.shape
+        left, top, right, bottom = (int(around[0] * wide), int(around[1] * tall), int(around[2] * wide),
+                                    int(around[3] * tall))
+        near = _coarsely(grey[top:bottom, left:right]) if bottom > top and right > left else None
+    return whole, near
+
+
+def _alike(one: Any, other: Any) -> bool:
+    """Two glances at the screen after a use are of the same outcome where they are alike at both sizes."""
+    import numpy as np
+
+    def same(a: Any, b: Any) -> bool:
+        if a is None or b is None:
+            return a is None and b is None
+        return bool(a.shape == b.shape and int((np.abs(a - b) > 1).sum()) <= OUTCOME_CELLS_APART)
+
+    return same(one[0], other[0]) and same(one[1], other[1])
 
 
 def _changed_there(press: _Press, moves: Any, picture: Any) -> bool:
@@ -413,10 +516,14 @@ def _spots(guide: Any, moves: Any, mine: Any, landmarks: list[Any]) -> list[_Spo
     return spots
 
 
-def _a_use_for(guide: Any, using: UsingOnThings, spot: _Spot, at: float, *, waiting: bool = True) -> Any | None:
+def _a_use_for(guide: Any, using: UsingOnThings, spot: _Spot, at: float, *, waiting: bool = True,
+               moves: Any = None) -> Any | None:
     if waiting and at - using.last.get(spot.mark, -AGAIN_AFTER_S) < AGAIN_AFTER_S:
         return None
     for control in _the_controls_with_a_use(guide):
+        # What it does to this thing has been seen, twice over: the thing is left for others.
+        if using.nothing_new_from(control.key, spot, moves):
+            continue
         # Given up on only where it has never done anything: a door that once opened to it is worth pressing at again.
         pair = (control.key, spot.name)
         if pair not in using.worked and using.nothing.get(pair, 0) >= NOTHING_TWICE:
@@ -450,7 +557,7 @@ async def use_controls_on_things(hands: Any, run: Any, moves: Any, hers: Any, ha
         return False
     spots = _spots(guide, moves, mine, using.landmarks)
     for spot in sorted(spots, key=lambda s: abs(s.x - mine.x) + abs(s.y - mine.y) if mine else s.x):
-        control = _a_use_for(guide, using, spot, at)
+        control = _a_use_for(guide, using, spot, at, moves=moves)
         if control is None:
             continue
         pointer = control.key == "the pointer"
