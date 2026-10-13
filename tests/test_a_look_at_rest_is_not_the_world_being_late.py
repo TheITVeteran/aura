@@ -134,3 +134,16 @@ async def test_a_world_still_changing_look_after_look_is_going_on_and_is_not_wai
     patch_pursuit(monkeypatch, "read_screen", read)
     seen, moved = await looking._settled_after(_board("before", settled=True), "a game", patience=30.0)
     assert moved and len(looks) == looking.GOING_ON_AFTER_LOOKS
+
+
+@pytest.mark.asyncio
+async def test_a_world_whose_reading_changes_look_after_look_is_going_on_where_stillness_is_not_measured(monkeypatch):
+    looks: list[int] = []
+
+    async def read(app, over=None):
+        looks.append(1)
+        return _board(f"court {len(looks)}")
+
+    patch_pursuit(monkeypatch, "read_screen", read)
+    seen, moved = await looking._settled_after(_board("before"), "a game", patience=30.0)
+    assert moved and len(looks) == looking.GOING_ON_AFTER_LOOKS
