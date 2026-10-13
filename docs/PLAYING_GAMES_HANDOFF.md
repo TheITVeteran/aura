@@ -61,12 +61,26 @@ uneven by up to 30%, the floor's marks seen
 
 | Decisions a second | Won | Lives lost of 18 | Slowest win |
 |---|---|---|---|
-| 2 | 2 | 15 | 90 s |
-| 3 | 6 | 6 | 69 s |
+| 2 | 2 | 16 | 89 s |
+| 3 | 6 | 1 | 68 s |
+| 4 | 6 | 0 | 56 s |
 | 15, keys on time | 6 | 0 | 50 s |
 
-With plans that change keys before her next decision, she won 5 at three a
-second and lost 8 lives, and none at two a second, losing every life.
+With plans that change keys before her next decision, she lost 7 lives at three
+a second and 1 at four.
+
+**She plays game 25 from its own card.** `tests/fixtures/worlds_that_move/paintcan.html`
+is Camp Lazlo: Paintcan Panic as its hand-read card says it plays, held to the
+card by `tests/test_a_world_made_from_a_game_s_card_plays_as_its_card_says.py`.
+Given only what her reading of a Flash program gives, on seeds 1 to 12: level 7
+at three decisions a second, 6 won; level 20 at eight a second, 12 won. Her
+chasers are imagined turning as fast as they have been seen to where she
+answers slowly; imagined going straight on, level 7 at three a second gave 1
+(`tests/test_a_thing_that_comes_for_her_turns_as_fast_as_it_was_seen_to.py`).
+
+**The keys she takes from the 56 games' own words are the keys their code
+listens for**, game by game, where both were read
+(`tests/test_the_keys_a_game_s_words_name_are_the_keys_its_code_listens_for.py`).
 
 **At 15 decisions a second the code's ground decides it.** On seeds 1 to 6:
 with the code's ground and plans worth the cells they cover, six wins, the
@@ -107,6 +121,13 @@ with a test.
    held now counts (`core/agency/which_one_answers_to_her.py`, `went_at`).
 6. **Code paces were applied before she knew she follows the pointer.**
    Fixed by order (`core/agency/choosing_where_to_be.py`).
+7. **On Bounce she watched the ball fall three times, game after game.** The
+   ball set going by her click on PLAY was counted as the click's answer, not
+   as the world moving, so the start of play looked like a scene to wait out
+   (`core/perception/watching_it_happen.py`, `in_motion`).
+8. **Four games' words were misread for their keys**: a key named in quotes,
+   "Enter" as a verb, "pick it up Press", and number keys
+   (`core/agency/the_controls_a_game_names.py`).
 
 After the fixes, from the title screen with nothing remembered: the first
 game was lost at 67% painted in 59 s, the second won in 77 s with no life
@@ -133,11 +154,14 @@ the age of the picture she decides on is the work that most changes this.
   and 20 with them alone. This session measured only this container.
 - **Two decisions a second.** With a decision's delay of half a second she
   won the paint world on 2 seeds of 6 in its own code.
-- **Nineteen tests fail in this container on the code as it was before this
-  session's changes, and the same nineteen after.** Among them the brawl
-  punch, the beam charge, the needle press, the paddle's returns, the order
-  of key trials, OCR word mending and the eyes in a process of their own.
-  Whether each is this container or a real fault is not known.
+- **Of nineteen tests that failed here on the code before this session, six
+  still fail**: the brawl punch, the beam charge, the needle press and the
+  paddle's returns (each played in a browser in real time, and slower here
+  than where they were written), and two of the code executor's, which need a
+  sandbox this container lacks. Fixed: the key-trial tests (their fakes lacked
+  a field), the eyes in a process of their own (shared memory left open), the
+  async write ratchet (two writes on the loop). The word-mending tests needed
+  the system word list, which macOS has; it was installed here.
 
 ## Run it on the Mac
 
@@ -171,9 +195,9 @@ cd ~/.aura/flash-campaign/offline-bundle && git init -b main && git add -A \
 
 1. Get the 56 games where a session can play them, and put each program's
    reading to its running, as was done here for the test worlds.
-2. Find out which of the nineteen failing tests are this container and which
-   are faults, starting with the ones that play: the paddle, the punch, the
-   charge and the needle.
+2. Find out whether the punch, charge, needle and paddle tests are this
+   container or faults: run them on the Mac. On brawl the whole of her play
+   gave up after five runs as "not getting better at it".
 3. Her eyes cost 190 ms of a 270 ms picture in the whole of her play here
    (`WhatMoves.see`). Exact speed-ups not yet tried: gradients computed once
    a picture in `_refine`, `_with_the_view` (8 ms), `_blobs` (16 ms). A

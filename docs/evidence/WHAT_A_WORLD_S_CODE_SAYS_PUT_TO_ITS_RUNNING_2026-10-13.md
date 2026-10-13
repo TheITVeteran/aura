@@ -173,3 +173,48 @@ that time.
 Nineteen tests fail in this container on the code before these changes and
 the same nineteen after them, among them the brawl punch, the beam charge,
 the needle press, the paddle's returns, and the eyes in a process of their own.
+
+## Game 25 from its card, the 56 games' words against their code, and a correction
+
+**A correction to the section above.** The harness that feeds her choosing the
+world's state (`tools/oracles/her_choices_on_a_world.py`) followed a thing from
+one choice to the next only within 12 pixels of her picture. At three choices a
+second the paint world's bugs go 13 pixels between choices, so each was taken
+for a new thing standing still. Followed as far as each was going, half again:
+at three a second she won all six, the slowest in 68 s, losing 1 life, not 6;
+with plans that change before her next decision, all six and 7 lives. At two a
+second, two won and 16 lives lost; plans changing too soon, one won and 16. At
+four a second, all six both ways, 0 lives lost and 1.
+
+**Camp Lazlo: Paintcan Panic, from its card.** `tests/fixtures/worlds_that_move/paintcan.html`
+is game 25 as `tests/fixtures/flash_games_as_their_code_says/25.json` says it
+plays, at 0.8 of its stage and its own 31 frames a second, each number not in
+the card marked so. Her choosing was handed what her reading of a Flash program
+gives (her pace, the field, the grid, nothing of the chasers but that touching
+costs her). Seeds 1 to 12, keys a choice late, waits uneven by up to 30%:
+
+| Level | Choices a second | Chasers imagined going on | Turning as fast as seen |
+|---|---|---|---|
+| 7 (65%, three chasers) | 3 | 1 won | 6 won |
+| 20 (90%, three chasers) | 8 | 12 won, 3 touches | 11 won, 7 touches |
+
+Imagined pushed toward her and held back by drag instead: 3 and 9 won. A chaser
+is now imagined turning only where she takes 0.3 s or more to answer; so
+switched, 6 and 12 won. Its jump, which nothing can hit while it lasts, was
+made a press that lets harm pass: 3 won at three a second and 11 at eight, and
+it was taken out.
+
+**The whole of her play on Bounce.** Every game was over in 4.24 s with no point:
+after clicking PLAY she watched the ball fall three times as "something playing
+out on its own". The ball moving in every frame was counted as her click's
+answer for two seconds, not as the world moving. It is now counted as the world
+moving, whoever set it going.
+
+**The 56 games' words against their code.** For each of the 45 games read, the
+keys she takes from its words were held against the keys its program listens for
+(`docs/design-docs/what_it_takes_to_beat.json`). Four were misread: Krakken
+Attack's "'Up' arrow key ... 'Space' bar" as four arrows and no space; Mini Golf's
+"Enter your name" as the Enter key; Blind Fooled's "pick it up Press" as the up
+arrow; Battle Bowlers' "hit 1", "hit 2" as no key. Each is fixed. Four games' words
+name keys the code reading missed (Z, X, WASD, number keys), which the words say
+plainly.
