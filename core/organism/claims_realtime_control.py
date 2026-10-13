@@ -469,6 +469,7 @@ def _visual_motion_claims() -> tuple:
         _point_path_invariant,
     )
     from core.perception.reading_again_after_loss import _reading_renewal_invariant
+    from core.perception.rigid_motion_from_named_points import _rigid_motion_invariant
     from core.perception.texture_that_continues_when_outlines_join import (
         _continuing_texture_invariant,
     )
@@ -478,6 +479,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("rigid_point_motion_requires_spread_consensus", "core/perception/rigid_motion_from_named_points.py",
+         "tests/test_rotating_points_keep_their_reference.py", lambda: _rigid_motion_invariant() == (),
+         "A rigid point transform needs a bounded consensus of continuing noncollinear correspondences; a rotating path retains its measured reference rather than a changing box centre."),
         ("control_trials_reserve_their_observation_samples", "core/agency/time_to_observe_a_control.py",
          "tests/test_control_trials_use_the_observed_cadence.py", lambda: _observation_time_invariant() == (),
          "Measured picture cadence reserves a bounded observation interval after input settlement; each delivered trial keeps its deadline and time alone grants no learned response."),

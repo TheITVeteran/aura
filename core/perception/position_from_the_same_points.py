@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 
+from core.perception.rigid_motion_from_named_points import rigid_motion
 from core.verify import invariant
 
 
@@ -62,8 +63,9 @@ def position_from_points(thing: Any, blob: dict, motion: Any, at: float) -> tupl
     middle = np.median(shifts, axis=0)
     coherent = np.linalg.norm(shifts - middle, axis=1) <= 1.
     if coherent.sum() < 3 or coherent.mean() < .7 or not _spread(starts[coherent]):
-        thing.point_pose = seed
-        return None
+        return _continue_rotating_marks(thing, previous, current, names, starts, ends, motion, at, seed)
+    if getattr(motion, 'rigid', None) is not None:
+        return _continue_rotating_marks(thing, previous, current, names, starts, ends, motion, at, seed)
     middle = np.median(shifts[coherent], axis=0)
     position = tuple(float(v) for v in np.asarray(previous.origin) + middle)
     step = np.subtract(position, previous.position)
@@ -84,8 +86,34 @@ def position_from_points(thing: Any, blob: dict, motion: Any, at: float) -> tupl
     return before, position
 
 
+def _continue_rotating_marks(thing: Any, previous: PointPose, current: dict, names: set,
+                            starts: np.ndarray, ends: np.ndarray, motion: Any, at: float, seed: PointPose) -> tuple | None:
+    """Rotate the retained origin with its original marks; admit new marks through that same transform."""
+    thing.point_pose = seed
+    fit = rigid_motion(starts, ends)
+    if fit is None:
+        return None
+    position = tuple(float(v) for v in fit.apply(previous.origin))
+    current_fit = getattr(motion, 'rigid', None)
+    expected = (current_fit.apply(previous.position) if current_fit is not None
+                else np.asarray(previous.position) + (motion.dx, motion.dy))
+    if math.dist(position, expected) > 1.:
+        return None
+    ordered = list(names)
+    qualified = [ordered[i] for i in fit.inliers]
+    anchors = {name: previous.anchors[name] for name in qualified}
+    for name in sorted(current.keys() - names)[:len(qualified) // 2]:
+        anchors[name] = tuple(float(v) for v in fit.inverse(current[name]))
+    before = previous.position
+    previous.anchors, previous.position, previous.at = anchors, position, at
+    thing.point_pose = previous
+    return before, position
+
+
 def _owned_marks(thing: Any, blob: dict, motion: Any, at: float) -> dict | None:
     """The current motion must name unique marks inside current observed support."""
+    if getattr(motion, 'rigid', None) is not None and not motion.has_rigid_pose():
+        return None
     if (motion is None or motion.before != thing.seen or motion.at != at
             or not all(math.isfinite(v) for v in (at, thing.seen, thing.born, motion.dx, motion.dy))
             or not all(math.isfinite(blob[key]) for key in ("x", "y", "w", "h"))

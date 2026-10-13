@@ -693,7 +693,7 @@ class WhatMoves:
         if motion is not None and motion.before == thing.seen and motion.at == at:
             if not motion.inside(blob):
                 return math.inf
-            px, py = px + motion.dx, py + motion.dy
+            px, py = motion.rigid.apply((px, py)) if motion.has_rigid_pose() else (px + motion.dx, py + motion.dy)
             # An outline may change with articulation. Its changed half-size
             # bounds how far the centre can move without its texture moving.
             reach = 3.0 + .5 * math.hypot(blob["w"] - thing.w, blob["h"] - thing.h)
@@ -709,7 +709,11 @@ class WhatMoves:
             return math.inf
         # Equal area and colour do not make a tall object a wide one.
         # Otherwise a control can retain its identity when replaced by text.
-        aspect = (blob["w"] / max(1.0, blob["h"])) / (thing.w / max(1.0, thing.h))
+        expected_w, expected_h = thing.w, thing.h
+        if current_points and motion.has_rigid_pose():
+            c, s = abs(math.cos(motion.rigid.angle)), abs(math.sin(motion.rigid.angle))
+            expected_w, expected_h = c * thing.w + s * thing.h, s * thing.w + c * thing.h
+        aspect = (blob["w"] / max(1.0, blob["h"])) / (expected_w / max(1.0, expected_h))
         if max(aspect, 1.0 / max(1e-6, aspect)) > 2.5:
             return math.inf
         ratio = max(blob["w"] * blob["h"], thing.size) / max(1.0, min(blob["w"] * blob["h"], thing.size))

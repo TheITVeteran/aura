@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 from scipy import ndimage
 
+from core.perception.rigid_motion_from_named_points import RigidMotion, rigid_motion
 from core.verify import invariant
 
 
@@ -44,6 +45,15 @@ class PointMotion:
     at: float
     points: tuple[int, ...] = ()
     locations: tuple[tuple[float, float], ...] = ()
+    rigid: RigidMotion | None = None
+
+    def has_rigid_pose(self) -> bool:
+        pose = self.rigid
+        return (pose is not None and len(pose.offset) == 2
+                and all(math.isfinite(v) for v in (pose.angle, *pose.offset, pose.error))
+                and 0. <= pose.error <= .75 and self.support >= 3 and self.support == len(self.points) == len(self.locations)
+                and len(set(self.points)) == self.support
+                and all(len(p) == 2 and all(math.isfinite(v) for v in p) for p in self.locations))
 
     def inside(self, blob: dict) -> bool:
         """A proposed outline must still contain most of the texture that supplied its motion."""
@@ -224,16 +234,25 @@ class FollowingPoints:
         differences = np.array([(p.x - p.old_x, p.y - p.old_y) for p in points])
         middle = np.median(differences, axis=0)
         coherent = np.linalg.norm(differences - middle, axis=1) < 1.
+        rigid = None
         if coherent.sum() < 3 or coherent.mean() < .7:
-            return None
+            starts = np.array([(p.old_x, p.old_y) for p in points])
+            ends = np.array([(p.x, p.y) for p in points])
+            rigid = rigid_motion(starts, ends)
+            if rigid is None:
+                return None
+            coherent = np.zeros(len(points), dtype=bool)
+            coherent[list(rigid.inliers)] = True
         support = [p for p, keep in zip(points, coherent, strict=True) if keep]
         places = np.array([(p.old_x, p.old_y) for p in support])
         if np.max(np.ptp(places, axis=0) / np.maximum((thing.w, thing.h), 1.)) < .3:
             return None
         middle = np.median(differences[coherent], axis=0)
+        if rigid is not None:
+            middle = rigid.apply((thing.x, thing.y)) - (thing.x, thing.y)
         return PointMotion(float(middle[0]), float(middle[1]), max(p.error for p in support),
                            len(support), thing.seen, at, tuple(p.number for p in support),
-                           tuple((p.x, p.y) for p in support))
+                           tuple((p.x, p.y) for p in support), rigid)
 
 
 @invariant("perception.point_identity_needs_current_pixels", scope="perception",
