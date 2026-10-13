@@ -57,3 +57,13 @@ def test_play_that_knows_its_game_stopped_ends_the_run_at_a_way_back_seen_before
     reflexes = _played(["play again"])
     reflexes.play_stopped = True
     assert reflexes.run_is_over(_screen("SONIC LINK N SMASH LEVEL SCORE 2440 Play Again", "Play Again"))
+
+
+def test_wont_is_will_not_and_says_nobody_won():
+    """Offline 2026-10-13 a game's instructions, "you won't score as well", were read as the game saying she had won,
+    on its first screen."""
+    from core.language.how_a_game_ended import how_it_ended, what_says_the_game_is_over
+
+    rules = "If your supply runs out, you'll have to retry the level, and you won't score as well."
+    assert what_says_the_game_is_over(rules) == "" and how_it_ended(rules) == ""
+    assert what_says_the_game_is_over("YOU WON!") == "you won" and how_it_ended("YOU WON!") == "won"

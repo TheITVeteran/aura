@@ -95,6 +95,9 @@ def _plain(text: str) -> str:
     # A zero drawn in a game's font is read as a letter as often as a digit
     # ("Computer o", "You Ø"); standing alone where a score stands, it is one.
     value = re.sub(r"(?<=\s)[oOØø](?=\s|$)", "0", str(text or ""))
+    # "Won't" is "will not", not "won": offline 2026-10-13 a game's instructions, "you won't score as well", were read
+    # as the game saying she had won it, on its first screen.
+    value = re.sub(r"\bwon\s?['’`]\s?t\b", "will not", value, flags=re.IGNORECASE)
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     return " ".join(value.casefold().split())
 
