@@ -49,6 +49,8 @@ class HandsWithControlReceipts:
         return delivered
 
     def _other_input(self, name: str, at: float) -> None:
+        if hasattr(self.run, 'previous_control'):
+            self.run.previous_control = None
         held = self.hers._held_at(at)
         if held is not None:
             began, key, _trying = held
@@ -83,6 +85,7 @@ async def hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *, 
     if key == run.held:
         return
     now = now or time.monotonic
+    began = now()
     with primary_delivery(hands):
         if run.held:
             await hands.up(run.held)
@@ -95,8 +98,11 @@ async def hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *, 
         if run.presses is not None:
             run.presses.pressed(key, now(), run.things.values(), hers.number,
                                 epoch=hers.identification.epoch, independent=trying)
-        run.responses.append(max(0.0, now() - at))
     delivered = now()
+    run.responses.append(max(0.0, delivered - at))
+    timing = getattr(run, 'control_timing', None)
+    if timing is not None:
+        run.control_delivery = timing.delivered(at, began, delivered)
     if key:
         hers.tapped(key, delivered, began=dispatched)
     run.held, run.held_since, run.held_trying = key, delivered, trying

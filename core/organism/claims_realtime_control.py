@@ -399,6 +399,7 @@ def _visual_motion_claims() -> tuple:
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
     from core.agency.inputs_while_measuring_control import _single_input_interval_invariant
+    from core.agency.time_from_picture_to_control import _picture_age_invariant
     from core.agency.what_a_press_does import _settled_trial_invariant, _unchanged_input_invariant
     from core.agency.what_follows_the_pointer import _pointer_body_continuity_invariant
     from core.agency.which_one_answers_to_her import _motion_segments_invariant
@@ -414,6 +415,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("control_prediction_uses_the_current_picture_age", "core/agency/time_from_picture_to_control.py",
+         "tests/test_control_uses_this_pictures_age.py", lambda: _picture_age_invariant() == (),
+         "Prediction refreshes the current picture age before steering and keeps measured delivery and post-acknowledgement response separate."),
         ("finished_readings_survive_only_with_their_current_capture", "core/perception/a_reading_before_more_detail.py",
          "tests/test_a_finished_reading_survives_slow_detail.py", lambda: _finished_reading_invariant() == (),
          "Optional inspection timeouts can retain completed scoped readings only after a new capture agrees; incomplete, changed or refused captures remain unavailable."),

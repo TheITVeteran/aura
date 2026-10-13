@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import statistics
+import time
 from typing import Any
 
 from core.agency.a_response_worth_measuring_again import response_worth_repeating
@@ -20,7 +21,10 @@ async def try_controls(hands: Any, run: Any, hers: Any, at: float, moves: Any, *
         elapsed = at - run.held_since if run.held_since is not None else 0.
         remaining = max(0., seconds - elapsed) if run.held_trying and elapsed < seconds else seconds
         measured_delays = run.motion_responses if len(run.motion_responses) >= 3 else run.responses
-        delay = max(RESPONSE_S, statistics.median(measured_delays) if measured_delays else RESPONSE_S)
+        timing = getattr(run, "control_timing", None)
+        current_delay = timing.ahead(at, time.monotonic()) if timing is not None else None
+        delay = max(RESPONSE_S, current_delay if current_delay is not None else
+                    statistics.median(measured_delays) if measured_delays else RESPONSE_S)
         observation = control_before_the_next_trial(hers, moves, at, run.keys, remaining + SETTLE_S + delay)
         if observation is not None:
             await hold(hands, run, hers, observation.key, at, trying=False)

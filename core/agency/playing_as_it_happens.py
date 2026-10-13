@@ -89,6 +89,8 @@ from core.agency.reading_while_playing import (  # noqa: F401  (re-exported: the
 )
 from core.agency.signs_that_come_along import told_to_follow_signs
 from core.agency.the_controls_a_game_names import controls_named_in
+from core.agency.time_from_picture_to_control import ControlTiming, allow_for_picture_age
+from core.agency.time_from_picture_to_control import measure_velocity_response as _measure_response
 from core.agency.using_a_control_on_a_thing import (
     UsingOnThings,
     a_place_to_go,
@@ -331,6 +333,8 @@ class _Run:
     intervals: deque[float] = field(default_factory=lambda: deque(maxlen=12))
     responses: deque[float] = field(default_factory=lambda: deque(maxlen=12))
     motion_responses: deque[float] = field(default_factory=lambda: deque(maxlen=12))
+    control_timing: ControlTiming = field(default_factory=ControlTiming)
+    control_delivery: Any = None
     previous_control: tuple[Any, ...] | None = None
     gains: int = 0
     losses: int = 0
@@ -459,27 +463,6 @@ async def _burst(hands: Any, run: _Run, at: float, *, say: Any = None) -> None:
 
 
 # -- deciding -----------------------------------------------------------------
-
-
-def _measure_response(run: _Run, mine: Any, at: float) -> None:
-    """Fit the old command's remaining motion at a visible command transition."""
-    previous, run.previous_control = run.previous_control, None
-    if previous is None or mine is None:
-        return
-    number, x, y, then, before, after = previous
-    dt = at - then
-    if mine.number != number or not 0.0 < dt <= 0.25:
-        return
-    change = (before[0] - after[0], before[1] - after[1])
-    norm = change[0] ** 2 + change[1] ** 2
-    if norm < 20.0 ** 2:
-        return
-    error = (mine.x - x - after[0] * dt, mine.y - y - after[1] * dt)
-    delay = (error[0] * change[0] + error[1] * change[1]) / norm
-    # A result outside this interval does not identify this transition: a
-    # boundary, a collision or another motion changed what the key could do.
-    if -0.1 * dt <= delay <= 1.1 * dt:
-        run.motion_responses.append(min(dt, max(0.0, delay)))
 
 
 # -- the loop -----------------------------------------------------------------
@@ -1254,8 +1237,7 @@ async def _play_as_it_happens(
                 run.covered.add((int(mine.x // run.cell), int(mine.y // run.cell)))
             choosing = _Choosing(moves, hers, meeting, run.keys, physics,
                                  next_picture_s=statistics.median(run.intervals) if run.intervals else 1 / 30,
-                                 response_s=(statistics.median(run.motion_responses) if len(run.motion_responses) >= 3
-                                             else statistics.median(run.responses) if run.responses else 0.0),
+                                 response_s=run.control_timing.ahead(at, time.monotonic()) or 0.,
                                  covered=(run.covered | run.barred, run.cell) if goes_over and run.cell else None,
                                  barred=(run.barred, run.cell) if run.cell else None, presses=run.presses,
                                  reach=run.reach)
@@ -1458,6 +1440,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
             await _click_things(hands, run, moves, meeting, at)
             await _click_the_picture(hands, run, moves, at)
         return
+    allow_for_picture_age(run, choosing, at, time.monotonic())
     untried = [k for k in run.keys if not has_a_measured_response(hers, k) and k not in choosing.ways]
     # Where she means to go and no way she knows takes her nearer, a way she has not learned yet is tried now: LIVE
     # 2026-10-07 her hero stood still beside the thing it meant to go to, left being the one arrow not yet learned.
@@ -1473,14 +1456,15 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
     part = imagined if imagined is not None else run.meeting_now
     shift = part * ((choosing.mine.h if choosing.line() == 0 else choosing.mine.w) / 2 if choosing.mine is not None else 0.0)
     offset = (0.0, shift) if choosing.line() == 0 else (shift, 0.0) if choosing.line() == 1 else (0.0, 0.0)
+    allow_for_picture_age(run, choosing, at, time.monotonic())
     key, why, aim = choosing.key(run.held, offset=offset)
     chose_in_play(run.choices, choosing, key, why, aim, at, lambda line, once: _say(run, say, line, at, once=once))
     before = choosing.ways.get(run.held, (0.0, 0.0))
     after = choosing.ways.get(key, (0.0, 0.0))
-    if key != run.held:
-        mine = choosing.mine
-        run.previous_control = (mine.number, mine.x, mine.y, at, before, after)
+    mine = choosing.mine
+    transition = (mine.number, mine.x, mine.y, at, before, after) if key != run.held and not getattr(hers, "carried", False) else None
     await _hold(hands, run, hers, key, at)
+    run.previous_control = (*transition, run.control_delivery) if transition is not None else None
     await _press_to_get_clear(hands, run, hers, choosing, key, at, say)
     await _trigger(hands, run, hers, choosing, aim, why, at, rules=rules)
 
@@ -1514,7 +1498,9 @@ def _found_by_her_presses(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: fl
 
 async def _press_in_time(hands: Any, run: _Run, moves: WhatMoves, at: float, say: Any) -> bool:
     """A press timed to where the things that keep moving will be; whether she is playing by timing presses."""
-    ahead = statistics.median(run.responses) if run.responses else RESPONSE_S
+    ahead = run.control_timing.ahead(at, time.monotonic()) or 0.
+    if not run.control_timing.deliveries:
+        ahead += RESPONSE_S
     if run.building_up and not run.timing.pays():
         # Building up, a press drops the piece: square over the top of what is built, until a press has paid elsewhere.
         from core.agency.building_up import drop_now
@@ -1527,13 +1513,17 @@ async def _press_in_time(hands: Any, run: _Run, moves: WhatMoves, at: float, say
     if not run.keys:
         _say(run, say, "Nothing here follows the mouse; I'm timing each click to where the moving thing is, and keeping "
              "to the places where a click has paid.", at, once="timing")
+        began = time.monotonic()
         await hands.click(0.5, 0.5)
+        run.control_timing.delivered(at, began, time.monotonic())
         run.last_click, run.clicks = at, getattr(run, "clicks", 0) + 1
     else:
         key = run.keys[0]
         _say(run, say, f"Nothing here moves when I press {key}; I'm timing each press to where the moving thing is, "
              "and keeping to the places where a press has paid.", at, once="timing")
+        began = time.monotonic()
         await hands.down(key)
+        run.control_timing.delivered(at, began, time.monotonic())
         run.input_key_downs[key] += 1
         await asyncio.sleep(PRESSED_FOR_S)
         await hands.up(key)
