@@ -264,7 +264,7 @@ def read_program(data: bytes, name: str = "") -> ProgramRead:
         code = "\n".join(statements)
         from core.perception.how_a_program_plays import how_it_plays
 
-        plays = how_it_plays(statements)
+        plays = how_it_plays(statements, got.get("stage") or (0.0, 0.0))
         names = list(dict.fromkeys([*got["symbols"], *got["instances"], *got["fields"], *got["as3_names"]]))
         texts = [*got["texts"], *(s for s in got["as3_strings"] if " " in s)]
         kind = "flash (AS3)" if got["as3_names"] else "flash"

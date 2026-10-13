@@ -117,6 +117,11 @@ class HowItPlays:
     keys: dict[str, AKey] = field(default_factory=dict)
     hers: dict[str, Any] = field(default_factory=dict)
     ends: list[AnEnd] = field(default_factory=list)
+    #: The stage it draws on, in its own pixels, where the file said.
+    stage: tuple[float, float] = (0.0, 0.0)
+    #: Where a level is passed by covering ground: the cells it marks as covered (width, height, in stage pixels),
+    #: the rectangle play is kept inside (left, top, right, bottom) where it says, and what counts the cells.
+    covers: dict[str, Any] = field(default_factory=dict)
 
     def keys_for(self, does: str) -> list[str]:
         return [key for key, what in self.keys.items() if what.does == does]
@@ -447,15 +452,73 @@ def _returns(functions: list[AFunction]) -> dict[str, str]:
     return out
 
 
-def how_it_plays(code: Iterable[str]) -> HowItPlays:
-    """What a program's statements say of how it is played (see the module's words)."""
+#: A cell of a grid marked: ``grid[Math.floor((x / 30))][Math.floor((y / 25))] = 1``.
+_A_CELL_MARKED = re.compile(r"\[Math\.floor\((.+?)\)\]\[Math\.floor\((.+?)\)\]\s*=\s*(?:1|true)\s*$")
+_DIVIDED_BY = re.compile(r"/\s*(\d+(?:\.\d+)?)\)")
+_COUNTED = re.compile(r"^([\w$.]+)\s*=\s*\(\1\s*\+\s*1\)$")
+_A_RECT = re.compile(r"^([\w$.]+)\s*=\s*new\s+[\w$.]*Rect(?:angle)?\((-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?),\s*"
+                     r"(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)$")
+
+
+def _covers(functions: list[AFunction], ends: list[AnEnd], hers: dict[str, Any]) -> dict[str, Any]:
+    """Whether a level is passed by covering ground: a function marks a cell of a grid, by a place divided by the cell's
+    width and height, and counts it; and what a level is passed by is made of that count. The cell, the rectangle
+    play is kept inside where her class keeps her in one, and the count."""
+    passing = " ".join(end.when + " " + " ".join(end.made_of.values()) for end in ends if end.kind == "passed")
+    for function in functions:
+        plain = [_plain(line) for line in function.body]
+        for line in plain:
+            marked = _A_CELL_MARKED.search(line)
+            if not marked:
+                continue
+            across, down = (_DIVIDED_BY.findall(part) for part in marked.groups())
+            if not across or not down:
+                continue
+            counts = [m.group(1) for other in plain for m in [_COUNTED.match(other)] if m]
+            counted = [c for c in counts if c.split(".")[-1] in passing]
+            if not counted:
+                continue
+            found = {"cell": (float(across[-1]), float(down[-1])), "counted_by": counted[0].split(".")[-1],
+                     "marked_in": f"{function.owner}.{function.name}" if function.owner else function.name}
+            field_ = _kept_inside(functions, hers)
+            if field_:
+                found["field"] = field_
+            return found
+    return {}
+
+
+def _kept_inside(functions: list[AFunction], hers: dict[str, Any]) -> tuple[float, float, float, float] | None:
+    """The rectangle her class keeps her inside: one made with four numbers and named, whose name her class's
+    methods test her place against."""
+    rects: dict[str, tuple[float, float, float, float]] = {}
+    for function in functions:
+        for line in function.body:
+            found = _A_RECT.match(_plain(line))
+            if found:
+                rects[found.group(1).split(".")[-1]] = tuple(float(v) for v in found.groups()[1:])
+    owner = hers.get("class")
+    for function in functions:
+        if not owner or function.owner != owner:
+            continue
+        text = " ".join(function.body)
+        for name, rect in rects.items():
+            if re.search(rf"\b{re.escape(name)}\b", text):
+                return rect
+    return None
+
+
+def how_it_plays(code: Iterable[str], stage: tuple[float, float] = (0.0, 0.0)) -> HowItPlays:
+    """What a program's statements say of how it is played (see the module's words); ``stage`` is the size of what it
+    draws on, where its file says."""
     lines = [line for line in code if isinstance(line, str)]
     if not lines:
         return HowItPlays()
     functions = functions_of(lines)
     constants = _constants(lines)
     keys = _keys(functions, constants)
-    return HowItPlays(keys=keys, hers=_hers(functions, keys, lines, constants), ends=_ends(functions, _returns(functions)))
+    hers = _hers(functions, keys, lines, constants)
+    ends = _ends(functions, _returns(functions))
+    return HowItPlays(keys=keys, hers=hers, ends=ends, stage=tuple(stage), covers=_covers(functions, ends, hers))
 
 
 def kept(plays: HowItPlays | None) -> dict[str, Any]:
@@ -463,7 +526,9 @@ def kept(plays: HowItPlays | None) -> dict[str, Any]:
     if not plays:
         return {}
     return {"keys": {k: [a.does, a.by, a.where] for k, a in plays.keys.items()}, "hers": dict(plays.hers),
-            "ends": [[e.kind, e.happens, e.when, e.where, dict(e.made_of)] for e in plays.ends]}
+            "ends": [[e.kind, e.happens, e.when, e.where, dict(e.made_of)] for e in plays.ends],
+            "stage": list(plays.stage), "covers": {k: list(v) if isinstance(v, tuple) else v
+                                                   for k, v in plays.covers.items()}}
 
 
 def unkept(held: Any) -> HowItPlays | None:
@@ -471,8 +536,9 @@ def unkept(held: Any) -> HowItPlays | None:
     if not isinstance(held, dict) or not held:
         return None
     try:
+        covers = {k: tuple(v) if isinstance(v, list) else v for k, v in (held.get("covers") or {}).items()}
         return HowItPlays(keys={k: AKey(k, *v) for k, v in (held.get("keys") or {}).items()},
-                          hers=dict(held.get("hers") or {}),
-                          ends=[AnEnd(*e) for e in held.get("ends") or []]) or None
+                          hers=dict(held.get("hers") or {}), ends=[AnEnd(*e) for e in held.get("ends") or []],
+                          stage=tuple(held.get("stage") or (0.0, 0.0)), covers=covers) or None
     except TypeError:
         return None

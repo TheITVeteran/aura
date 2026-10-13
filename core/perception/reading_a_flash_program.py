@@ -103,8 +103,8 @@ def _cstr(data: bytes, pos: int) -> tuple[str, int]:
         return raw.decode("latin-1"), end + 1
 
 
-def _body(raw: bytes) -> tuple[int, bytes]:
-    """The file's version and its tags, unpacked."""
+def _body(raw: bytes) -> tuple[int, bytes, tuple[float, float, float]]:
+    """The file's version, its tags unpacked, and its stage (``_stage_of``)."""
     sig, version = raw[:3], raw[3]
     if sig == b"FWS":
         data = raw[8:]
@@ -119,7 +119,18 @@ def _body(raw: bytes) -> tuple[int, bytes]:
         data = lzma.LZMADecompressor(format=lzma.FORMAT_ALONE).decompress(header + raw[17:], MOST_UNPACKED)
     else:
         raise ValueError("not a Flash file")
-    return version, data[_rect_end(data, 0) + 4:]
+    return version, data[_rect_end(data, 0) + 4:], _stage_of(data)
+
+
+def _stage_of(data: bytes) -> tuple[float, float, float]:
+    """The size of the stage a file draws on, in its own pixels, and its frames a second: its header's rectangle (in
+    twentieths of a pixel) and rate (8.8 fixed point)."""
+    b = _Bits(data, 0)
+    n = b.u(5)
+    xmin, xmax, ymin, ymax = (b.s(n) for _ in range(4))
+    end = b.align()
+    rate = struct.unpack("<H", data[end:end + 2])[0] / 256 if len(data) >= end + 2 else 0.0
+    return (xmax - xmin) / 20, (ymax - ymin) / 20, rate
 
 
 def _tags(data: bytes, pos: int = 0, end: int | None = None) -> Iterator[tuple[int, bytes]]:
@@ -615,10 +626,12 @@ def _abc_strings(abc: bytes) -> tuple[list[str], list[str]]:
 
 def read_flash(raw: bytes) -> dict[str, Any]:
     """Everything a Flash file holds that can be read: ``code`` (statements), ``texts`` (its screens' words), ``labels``
-    (frame labels), ``symbols`` (exported names), ``fields`` (text field names), ``as3_strings`` and ``as3_names``."""
-    version, data = _body(raw)
+    (frame labels), ``symbols`` (exported names), ``fields`` (text field names), ``as3_strings`` and ``as3_names``; and
+    the ``stage`` it draws on (width, height, in its own pixels) and its ``frames_a_second``."""
+    version, data, (width, height, rate) = _body(raw)
     got: dict[str, Any] = {"version": version, "code": [], "texts": [], "labels": [], "symbols": [], "fields": [],
-                           "instances": [], "as3_strings": [], "as3_names": []}
+                           "instances": [], "as3_strings": [], "as3_names": [], "stage": (width, height),
+                           "frames_a_second": rate}
     fonts: dict[int, list[int]] = {}
     pending: list[tuple[int, bytes]] = []
     _walk(_tags(data), "the main timeline", version, got, fonts, pending)

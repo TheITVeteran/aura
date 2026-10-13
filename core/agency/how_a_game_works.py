@@ -293,7 +293,9 @@ def _inputs(guide: Any) -> dict[str, str]:
     out = {}
     for key, control in controls.items():
         act = " ".join(part for part in (getattr(control, "act", ""), getattr(control, "on", "")) if part)
-        if act and act not in ("play", "start", "begin", "continue"):
+        # What only stops, silences, leaves or cheats the place is no control of play, and is not said as one.
+        if act and act not in ("play", "start", "begin", "continue", "pause", "mute", "sound", "quit", "menu", "help",
+                               "cheat"):
             out[key] = act
     for name, keys in _TOGETHER:
         acts = {out.get(key) for key in keys}

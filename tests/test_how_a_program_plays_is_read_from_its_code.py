@@ -27,7 +27,8 @@ def _played(game: int):
     path = _MUSEUM / f"{game}.swf"
     if not path.exists():
         pytest.skip("the offline museum of Flash games is not on this machine")
-    return how_it_plays(read_flash(path.read_bytes())["code"])
+    got = read_flash(path.read_bytes())
+    return how_it_plays(got["code"], got["stage"])
 
 
 def test_a_coverage_game_is_read_as_its_code_says():
@@ -153,3 +154,35 @@ def test_what_a_program_says_of_how_it_plays_is_kept_with_its_read():
     again = unkept(kept(plays))
     assert again.keys["space"].does == "jumps" and again.hers == plays.hers
     assert unkept({}) is None and kept(None) == {}
+
+
+def test_what_its_code_says_a_key_does_is_not_undone_by_a_misread_screen_nor_said_where_it_is_no_part_of_play():
+    """Offline 2026-10-13 "Use the arrow keys to move", misread off the screen as "mave", replaced what the code said
+    the arrows do, and she told her watcher "w to cheat" as one of the controls she plays by."""
+    from core.agency.how_a_game_works import understood
+    from core.cognition.a_guide_to_a_place import SCREEN, Guide
+    from core.cognition.what_its_code_says import take_in_how_it_plays
+
+    code = ["  // anonymous function ()", "  if !Key.isDown(37) goto +20", "  r1.moveDir('w')",
+            "  if !Key.isDown(32) goto +9", "  r1.jump()", "Hero.prototype.keys = function () {...}",
+            "  // anonymous function ()", "  if !(Key.getCode() == 87) goto +16", "  r1.endLevel('pass')",
+            "  if !(Key.getCode() == 80) goto +14", "  r1._paused = !r1._paused", "Board.onKeyUp = function () {...}"]
+    guide = Guide(place="A Run")
+    take_in_how_it_plays(guide, how_it_plays(code), 0.0)
+    guide.take_in(SCREEN, "Use the left arrow to mave. Press SPACE to jump.")
+    assert guide.controls["left"].act == "move"
+    said = understood(guide).said()
+    assert "left to move" in said and "space to jump" in said
+    assert "cheat" not in said and "pause" not in said
+
+
+def test_the_stage_a_flash_file_draws_on_is_read_from_its_header():
+    from core.perception.reading_a_flash_program import read_flash
+
+    path = _MUSEUM / "25.swf"
+    if not path.exists():
+        pytest.skip("the offline museum of Flash games is not on this machine")
+    got = read_flash(path.read_bytes())
+    assert got["stage"] == (600.0, 400.0) and got["frames_a_second"] == 31.0
+    plays = _played(25)
+    assert plays.covers["cell"] == (30.0, 25.0) and plays.covers["field"] == (10.0, 110.0, 590.0, 390.0)

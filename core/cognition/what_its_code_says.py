@@ -15,10 +15,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-__all__ = ["CODE", "in_plain_words", "take_in_how_it_plays"]
+from core.cognition.a_guide_to_a_place import CODE
 
-#: The source what a place's code says is kept under.
-CODE = "its code"
+__all__ = ["CODE", "in_plain_words", "take_in_how_it_plays"]
 
 #: What a key does, as the guide names a control's act.
 _ACTS = {"moves": "move", "jumps": "jump", "ducks": "duck", "acts": "act", "pauses": "pause", "sounds": "mute",

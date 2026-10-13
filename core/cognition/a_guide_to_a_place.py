@@ -56,7 +56,9 @@ __all__ = ["MODEL", "THE_GUIDE", "Guide", "carry_over", "confirmed_by", "guide_f
 #: of places like it, and it is never taken for how the place is worked (its controls), only for what it is for.
 SCREEN, TOLD, PAGE, COUNSEL, MODEL, PROGRAM = ("the screen", "its instructions", "its page", "what I looked up",
                                                "what I know of it", "its program")
-_TRUST = {SCREEN: 5, TOLD: 4, PAGE: 3, COUNSEL: 2, MODEL: 1.5, PROGRAM: 1}
+#: What its code was read to say (core/cognition/what_its_code_says.py) is what the place does: above all of them.
+CODE = "its code"
+_TRUST = {CODE: 6, SCREEN: 5, TOLD: 4, PAGE: 3, COUNSEL: 2, MODEL: 1.5, PROGRAM: 1}
 
 #: Sentences that say how a round is won, how it is lost, and how to do well: a manual's other sections.
 _A_WIN = re.compile(r"\b(?:to win|you win|wins? (?:the|a|by|if|when)|beat (?:the|each|every|all)|complete (?:the|each|all)|"
@@ -419,7 +421,7 @@ class Guide:
             lines.append(f"• Its {_listed(names)} controls aren't part of play.")
         if len(lines) < 2:
             return ""
-        sources = [x for x in ("its code", SCREEN, TOLD, PAGE, COUNSEL, MODEL, PROGRAM) if x in self.sources]
+        sources = [x for x in (CODE, SCREEN, TOLD, PAGE, COUNSEL, MODEL, PROGRAM) if x in self.sources]
         place = f" to {self.place}" if self.place and len(self.place) <= 60 else ""
         return f"My guide{place}, from {_listed(sources)}:\n" + "\n".join(lines)
 
