@@ -1439,7 +1439,11 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
             logger.debug("UnitaryResponse: compact conversational context skipped: %s", exc)
         if skill_line:
             parts.append(skill_line)
-        return compress_system_prompt("\n".join(parts))
+        # A turn that measures what these lines do leaves some of them out.
+        # See core/brain/aura_persona.py.
+        from core.brain.aura_persona import compact_lines_kept
+
+        return compress_system_prompt("\n".join(compact_lines_kept(parts)))
 
     def _build_proof_evaluation_system_prompt(self, state: AuraState, contract: Any) -> str:
         """Build a compact prompt for governed proof/evaluation turns.

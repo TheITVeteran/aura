@@ -1,0 +1,973 @@
+{
+ "files": {
+  "core/actuators/actuator_synthesis.py": {
+   "characters": 1464,
+   "strings": 1
+  },
+  "core/adaptation/dialectics.py": {
+   "characters": 760,
+   "strings": 2
+  },
+  "core/adaptation/distillation_pipe.py": {
+   "characters": 331,
+   "strings": 1
+  },
+  "core/adaptation/dream_journal.py": {
+   "characters": 614,
+   "strings": 1
+  },
+  "core/adaptation/epistemic_humility.py": {
+   "characters": 601,
+   "strings": 1
+  },
+  "core/adaptation/heuristic_synthesizer.py": {
+   "characters": 354,
+   "strings": 1
+  },
+  "core/adaptation/star_reasoner.py": {
+   "characters": 194,
+   "strings": 1
+  },
+  "core/affect/damasio_appraisal.py": {
+   "characters": 188,
+   "strings": 1
+  },
+  "core/agency/agency_shard_work.py": {
+   "characters": 782,
+   "strings": 1
+  },
+  "core/agency/autonomous_task_engine.py": {
+   "characters": 1497,
+   "strings": 1
+  },
+  "core/agency/canvas_manager.py": {
+   "characters": 379,
+   "strings": 1
+  },
+  "core/agency/compute_orchestrator.py": {
+   "characters": 96,
+   "strings": 1
+  },
+  "core/agency/her_reasoning.py": {
+   "characters": 264,
+   "strings": 1
+  },
+  "core/agency/mechanics_she_knows.py": {
+   "characters": 82,
+   "strings": 1
+  },
+  "core/agency/playing_a_board.py": {
+   "characters": 112,
+   "strings": 1
+  },
+  "core/agency/private_phenomenology.py": {
+   "characters": 627,
+   "strings": 1
+  },
+  "core/agency/self_play.py": {
+   "characters": 559,
+   "strings": 2
+  },
+  "core/agency/self_repair_backlog.py": {
+   "characters": 676,
+   "strings": 2
+  },
+  "core/agency/task_commitment_verifier.py": {
+   "characters": 448,
+   "strings": 1
+  },
+  "core/agency/the_craft_of_play.py": {
+   "characters": 80,
+   "strings": 1
+  },
+  "core/agi/curiosity_explorer.py": {
+   "characters": 172,
+   "strings": 1
+  },
+  "core/audits/tool_auditor.py": {
+   "characters": 317,
+   "strings": 1
+  },
+  "core/autonomy/comprehension_loop.py": {
+   "characters": 668,
+   "strings": 1
+  },
+  "core/autonomy/genuine_refusal.py": {
+   "characters": 1053,
+   "strings": 3
+  },
+  "core/autonomy/reflection_loop.py": {
+   "characters": 784,
+   "strings": 2
+  },
+  "core/autonomy/research_cycle.py": {
+   "characters": 326,
+   "strings": 1
+  },
+  "core/being/causal_self_state.py": {
+   "characters": 481,
+   "strings": 2
+  },
+  "core/being/individual_preferences.py": {
+   "characters": 152,
+   "strings": 1
+  },
+  "core/being/runtime.py": {
+   "characters": 255,
+   "strings": 2
+  },
+  "core/being/semantic_stream.py": {
+   "characters": 158,
+   "strings": 1
+  },
+  "core/being/thought_interoception.py": {
+   "characters": 239,
+   "strings": 1
+  },
+  "core/being/unified_felt_state.py": {
+   "characters": 132,
+   "strings": 1
+  },
+  "core/brain/abstract_thought_layer.py": {
+   "characters": 1250,
+   "strings": 2
+  },
+  "core/brain/aura_persona.py": {
+   "characters": 13612,
+   "strings": 6
+  },
+  "core/brain/cognitive_context_manager.py": {
+   "characters": 269,
+   "strings": 1
+  },
+  "core/brain/cognitive_engine_quick_reply.py": {
+   "characters": 2970,
+   "strings": 8
+  },
+  "core/brain/cognitive_patch.py": {
+   "characters": 467,
+   "strings": 1
+  },
+  "core/brain/context_limit.py": {
+   "characters": 342,
+   "strings": 1
+  },
+  "core/brain/courtroom.py": {
+   "characters": 1240,
+   "strings": 6
+  },
+  "core/brain/cross_tier_verifier.py": {
+   "characters": 108,
+   "strings": 1
+  },
+  "core/brain/deliberation.py": {
+   "characters": 259,
+   "strings": 1
+  },
+  "core/brain/executable_reasoning.py": {
+   "characters": 1785,
+   "strings": 4
+  },
+  "core/brain/frontier_gap.py": {
+   "characters": 117,
+   "strings": 1
+  },
+  "core/brain/inference_gate.py": {
+   "characters": 420,
+   "strings": 2
+  },
+  "core/brain/inference_gate_prompt.py": {
+   "characters": 3773,
+   "strings": 8
+  },
+  "core/brain/initiative_engine.py": {
+   "characters": 159,
+   "strings": 1
+  },
+  "core/brain/llm/autonomous_brain_integration.py": {
+   "characters": 332,
+   "strings": 2
+  },
+  "core/brain/llm/chat_format.py": {
+   "characters": 376,
+   "strings": 1
+  },
+  "core/brain/llm/code_generator.py": {
+   "characters": 951,
+   "strings": 2
+  },
+  "core/brain/llm/compiler.py": {
+   "characters": 907,
+   "strings": 2
+  },
+  "core/brain/llm/context_assembler.py": {
+   "characters": 4312,
+   "strings": 7
+  },
+  "core/brain/llm/context_assembler_blocks.py": {
+   "characters": 1166,
+   "strings": 6
+  },
+  "core/brain/llm/latent_cortex/capability_canaries.py": {
+   "characters": 112,
+   "strings": 1
+  },
+  "core/brain/llm/latent_cortex/commitment_ratchet.py": {
+   "characters": 119,
+   "strings": 1
+  },
+  "core/brain/llm/latent_cortex/contract_repair.py": {
+   "characters": 483,
+   "strings": 1
+  },
+  "core/brain/llm/latent_cortex/counterfactual_verifier.py": {
+   "characters": 576,
+   "strings": 1
+  },
+  "core/brain/llm/latent_cortex/generative_verifier.py": {
+   "characters": 565,
+   "strings": 1
+  },
+  "core/brain/llm/latent_cortex/local_repair.py": {
+   "characters": 558,
+   "strings": 1
+  },
+  "core/brain/llm/latent_cortex/prefix_stability.py": {
+   "characters": 485,
+   "strings": 1
+  },
+  "core/brain/llm/latent_cortex/semantic_neural_decode_context.py": {
+   "characters": 428,
+   "strings": 1
+  },
+  "core/brain/llm/latent_cortex/terminal_disposition.py": {
+   "characters": 996,
+   "strings": 5
+  },
+  "core/brain/llm/llm_router.py": {
+   "characters": 2085,
+   "strings": 1
+  },
+  "core/brain/llm/local_agent_client.py": {
+   "characters": 1253,
+   "strings": 4
+  },
+  "core/brain/llm/mlx_client.py": {
+   "characters": 577,
+   "strings": 1
+  },
+  "core/brain/llm/mlx_worker.py": {
+   "characters": 2720,
+   "strings": 9
+  },
+  "core/brain/llm/mlx_worker_surface_repair.py": {
+   "characters": 671,
+   "strings": 4
+  },
+  "core/brain/llm/nucleus_manager.py": {
+   "characters": 231,
+   "strings": 1
+  },
+  "core/brain/llm/prompt_envelope.py": {
+   "characters": 354,
+   "strings": 2
+  },
+  "core/brain/llm_health_router.py": {
+   "characters": 524,
+   "strings": 1
+  },
+  "core/brain/llm_health_router_endpoint_call.py": {
+   "characters": 2152,
+   "strings": 3
+  },
+  "core/brain/metacognitive_monitor.py": {
+   "characters": 871,
+   "strings": 2
+  },
+  "core/brain/narrative_memory.py": {
+   "characters": 1269,
+   "strings": 2
+  },
+  "core/brain/narrator.py": {
+   "characters": 810,
+   "strings": 1
+  },
+  "core/brain/persona_adapter.py": {
+   "characters": 144,
+   "strings": 1
+  },
+  "core/brain/personality_engine.py": {
+   "characters": 84,
+   "strings": 1
+  },
+  "core/brain/personality_kernel.py": {
+   "characters": 280,
+   "strings": 3
+  },
+  "core/brain/preaction_cortex.py": {
+   "characters": 526,
+   "strings": 1
+  },
+  "core/brain/predictive_engine.py": {
+   "characters": 153,
+   "strings": 1
+  },
+  "core/brain/present_moment.py": {
+   "characters": 194,
+   "strings": 1
+  },
+  "core/brain/react_loop.py": {
+   "characters": 1745,
+   "strings": 1
+  },
+  "core/brain/reasoning_amplifier_v2.py": {
+   "characters": 169,
+   "strings": 1
+  },
+  "core/brain/reasoning_strategies.py": {
+   "characters": 1980,
+   "strings": 5
+  },
+  "core/brain/recent_actions.py": {
+   "characters": 206,
+   "strings": 1
+  },
+  "core/brain/unified_inference.py": {
+   "characters": 352,
+   "strings": 1
+  },
+  "core/capabilities/self_code_improver.py": {
+   "characters": 308,
+   "strings": 2
+  },
+  "core/capabilities/source_summarizer.py": {
+   "characters": 432,
+   "strings": 1
+  },
+  "core/capabilities/web_interlocutor.py": {
+   "characters": 2074,
+   "strings": 5
+  },
+  "core/capability_engine.py": {
+   "characters": 340,
+   "strings": 2
+  },
+  "core/cognition/cognitive_integration_layer.py": {
+   "characters": 126,
+   "strings": 1
+  },
+  "core/cognition/precognitive_model.py": {
+   "characters": 80,
+   "strings": 1
+  },
+  "core/cognition/taking_stock.py": {
+   "characters": 255,
+   "strings": 1
+  },
+  "core/cognition/what_i_know_of_a_place.py": {
+   "characters": 510,
+   "strings": 1
+  },
+  "core/cognitive/state_machine.py": {
+   "characters": 686,
+   "strings": 3
+  },
+  "core/cognitive/strange_loop.py": {
+   "characters": 96,
+   "strings": 1
+  },
+  "core/cognitive/tree_of_thoughts.py": {
+   "characters": 1236,
+   "strings": 3
+  },
+  "core/collective/delegator.py": {
+   "characters": 251,
+   "strings": 1
+  },
+  "core/collective/strategic_synthesis.py": {
+   "characters": 524,
+   "strings": 1
+  },
+  "core/communication/messages_transport.py": {
+   "characters": 225,
+   "strings": 1
+  },
+  "core/consciousness/attention_gate.py": {
+   "characters": 95,
+   "strings": 1
+  },
+  "core/consciousness/constitutive_expression.py": {
+   "characters": 1834,
+   "strings": 1
+  },
+  "core/consciousness/crsm.py": {
+   "characters": 172,
+   "strings": 1
+  },
+  "core/consciousness/crsm_lora_bridge.py": {
+   "characters": 85,
+   "strings": 1
+  },
+  "core/consciousness/existential_stakes.py": {
+   "characters": 85,
+   "strings": 1
+  },
+  "core/consciousness/experience_consolidator.py": {
+   "characters": 963,
+   "strings": 1
+  },
+  "core/consciousness/hedonic_gradient.py": {
+   "characters": 82,
+   "strings": 1
+  },
+  "core/consciousness/homeostatic_coupling.py": {
+   "characters": 327,
+   "strings": 3
+  },
+  "core/consciousness/hot_engine.py": {
+   "characters": 386,
+   "strings": 2
+  },
+  "core/consciousness/metacognition.py": {
+   "characters": 508,
+   "strings": 1
+  },
+  "core/consciousness/neologism_engine.py": {
+   "characters": 593,
+   "strings": 1
+  },
+  "core/consciousness/phenomenological_experiencer.py": {
+   "characters": 1134,
+   "strings": 2
+  },
+  "core/consciousness/resource_stakes.py": {
+   "characters": 116,
+   "strings": 1
+  },
+  "core/consciousness/somatic_qualia.py": {
+   "characters": 203,
+   "strings": 1
+  },
+  "core/consciousness/stream_of_being.py": {
+   "characters": 651,
+   "strings": 1
+  },
+  "core/consciousness/synaptic_plasticity.py": {
+   "characters": 104,
+   "strings": 1
+  },
+  "core/consciousness/theory_arbitration.py": {
+   "characters": 111,
+   "strings": 1
+  },
+  "core/consciousness/theory_of_mind.py": {
+   "characters": 466,
+   "strings": 2
+  },
+  "core/context/chat_compression.py": {
+   "characters": 1490,
+   "strings": 3
+  },
+  "core/context/context_compression.py": {
+   "characters": 625,
+   "strings": 1
+  },
+  "core/continuity.py": {
+   "characters": 412,
+   "strings": 1
+  },
+  "core/conversation/capability_condition.py": {
+   "characters": 591,
+   "strings": 2
+  },
+  "core/conversation/chat_preflight.py": {
+   "characters": 1788,
+   "strings": 6
+  },
+  "core/conversation/conversation_loop.py": {
+   "characters": 206,
+   "strings": 1
+  },
+  "core/conversation/failure_context.py": {
+   "characters": 482,
+   "strings": 1
+  },
+  "core/conversation/hierarchical_memory_orchestrator.py": {
+   "characters": 584,
+   "strings": 1
+  },
+  "core/conversation/reply_stream.py": {
+   "characters": 324,
+   "strings": 1
+  },
+  "core/conversation/response_reliability.py": {
+   "characters": 825,
+   "strings": 3
+  },
+  "core/conversation/unanswered_question.py": {
+   "characters": 141,
+   "strings": 1
+  },
+  "core/conversation_reflection.py": {
+   "characters": 273,
+   "strings": 1
+  },
+  "core/conversational/humor_engine.py": {
+   "characters": 117,
+   "strings": 1
+  },
+  "core/coordinators/cognitive_coordinator.py": {
+   "characters": 203,
+   "strings": 1
+  },
+  "core/council/debate.py": {
+   "characters": 1048,
+   "strings": 5
+  },
+  "core/council/roles.py": {
+   "characters": 1779,
+   "strings": 12
+  },
+  "core/environment/environment_awareness.py": {
+   "characters": 186,
+   "strings": 1
+  },
+  "core/epistemics/belief_challenger.py": {
+   "characters": 1198,
+   "strings": 3
+  },
+  "core/epistemics/epistemic_reach.py": {
+   "characters": 354,
+   "strings": 1
+  },
+  "core/epistemics/inquiry_engine.py": {
+   "characters": 771,
+   "strings": 1
+  },
+  "core/epistemics/opinion_engine.py": {
+   "characters": 1148,
+   "strings": 3
+  },
+  "core/ethics/adversarial_conscience.py": {
+   "characters": 152,
+   "strings": 1
+  },
+  "core/ethics/conscience.py": {
+   "characters": 409,
+   "strings": 4
+  },
+  "core/evaluation/steering_ab.py": {
+   "characters": 389,
+   "strings": 1
+  },
+  "core/evolution/persona_evolver.py": {
+   "characters": 517,
+   "strings": 1
+  },
+  "core/evolution/singularity_loops.py": {
+   "characters": 335,
+   "strings": 1
+  },
+  "core/factory/code_writer.py": {
+   "characters": 318,
+   "strings": 1
+  },
+  "core/goals/directive_conflict_sentinel.py": {
+   "characters": 80,
+   "strings": 1
+  },
+  "core/guardians/threat_watch.py": {
+   "characters": 88,
+   "strings": 1
+  },
+  "core/identity/__init__.py": {
+   "characters": 905,
+   "strings": 3
+  },
+  "core/identity/biography.py": {
+   "characters": 391,
+   "strings": 1
+  },
+  "core/introspection/inner_monologue.py": {
+   "characters": 1198,
+   "strings": 4
+  },
+  "core/introspection/self_forensics.py": {
+   "characters": 264,
+   "strings": 1
+  },
+  "core/knowledge/source_comprehension.py": {
+   "characters": 450,
+   "strings": 1
+  },
+  "core/learning/autonomous_rsi.py": {
+   "characters": 591,
+   "strings": 1
+  },
+  "core/learning/cortex_serving_qualification.py": {
+   "characters": 542,
+   "strings": 1
+  },
+  "core/learning/learning_selfreport.py": {
+   "characters": 264,
+   "strings": 1
+  },
+  "core/learning/recurrent_sft_behavior_canaries.py": {
+   "characters": 190,
+   "strings": 1
+  },
+  "core/learning/recurrent_sft_retention.py": {
+   "characters": 206,
+   "strings": 1
+  },
+  "core/learning/recurrent_training_prompt.py": {
+   "characters": 134,
+   "strings": 1
+  },
+  "core/learning/resident_recurrent_sft_bootstrap_execution.py": {
+   "characters": 147,
+   "strings": 1
+  },
+  "core/learning/structured_sft.py": {
+   "characters": 397,
+   "strings": 2
+  },
+  "core/memory/scar_formation.py": {
+   "characters": 187,
+   "strings": 1
+  },
+  "core/memory/user_profile.py": {
+   "characters": 250,
+   "strings": 1
+  },
+  "core/memory/vector_memory_engine.py": {
+   "characters": 359,
+   "strings": 1
+  },
+  "core/morality/reversible_alternative.py": {
+   "characters": 141,
+   "strings": 1
+  },
+  "core/motivation/aesthetic_critic.py": {
+   "characters": 912,
+   "strings": 2
+  },
+  "core/observability/incident_narrator.py": {
+   "characters": 254,
+   "strings": 2
+  },
+  "core/ontogeny/conclusion.py": {
+   "characters": 218,
+   "strings": 1
+  },
+  "core/orchestrator/coordinators/memory.py": {
+   "characters": 275,
+   "strings": 1
+  },
+  "core/orchestrator/mixins/autonomy.py": {
+   "characters": 202,
+   "strings": 1
+  },
+  "core/orchestrator/mixins/message_handling.py": {
+   "characters": 293,
+   "strings": 1
+  },
+  "core/orchestrator/mixins/response_processing.py": {
+   "characters": 140,
+   "strings": 1
+  },
+  "core/perception/ambient_utterance.py": {
+   "characters": 558,
+   "strings": 2
+  },
+  "core/perception/observation_evidence.py": {
+   "characters": 505,
+   "strings": 3
+  },
+  "core/phases/cognitive_routing.py": {
+   "characters": 173,
+   "strings": 1
+  },
+  "core/phases/dialogue_policy.py": {
+   "characters": 1002,
+   "strings": 7
+  },
+  "core/phases/inference_phase.py": {
+   "characters": 351,
+   "strings": 1
+  },
+  "core/phases/phi_consciousness.py": {
+   "characters": 356,
+   "strings": 1
+  },
+  "core/phases/response_contract.py": {
+   "characters": 1118,
+   "strings": 7
+  },
+  "core/phases/response_generation.py": {
+   "characters": 478,
+   "strings": 3
+  },
+  "core/phases/response_generation_steps.py": {
+   "characters": 1283,
+   "strings": 2
+  },
+  "core/phases/response_generation_unitary.py": {
+   "characters": 9875,
+   "strings": 40
+  },
+  "core/phases/response_generation_unitary_proof_turns.py": {
+   "characters": 147,
+   "strings": 1
+  },
+  "core/pipeline/prompt_scaffold.py": {
+   "characters": 661,
+   "strings": 1
+  },
+  "core/planning/mission_state.py": {
+   "characters": 300,
+   "strings": 1
+  },
+  "core/planning/planner.py": {
+   "characters": 1432,
+   "strings": 3
+  },
+  "core/planning/strategic_planner.py": {
+   "characters": 800,
+   "strings": 2
+  },
+  "core/planning/task_decomposer.py": {
+   "characters": 3038,
+   "strings": 1
+  },
+  "core/reasoning/critic_engine.py": {
+   "characters": 394,
+   "strings": 1
+  },
+  "core/rebuilding/programs_in_code.py": {
+   "characters": 211,
+   "strings": 1
+  },
+  "core/runtime/connectivity.py": {
+   "characters": 374,
+   "strings": 2
+  },
+  "core/runtime/expectation_feedback.py": {
+   "characters": 102,
+   "strings": 1
+  },
+  "core/runtime/timescale_bridge.py": {
+   "characters": 85,
+   "strings": 1
+  },
+  "core/science/scientist.py": {
+   "characters": 358,
+   "strings": 2
+  },
+  "core/search/research_pipeline.py": {
+   "characters": 97,
+   "strings": 1
+  },
+  "core/security/trust_engine.py": {
+   "characters": 819,
+   "strings": 5
+  },
+  "core/self/self_condition.py": {
+   "characters": 275,
+   "strings": 1
+  },
+  "core/self/source_excerpt.py": {
+   "characters": 947,
+   "strings": 4
+  },
+  "core/self/stated_preferences.py": {
+   "characters": 137,
+   "strings": 1
+  },
+  "core/self_improvement/program_dna.py": {
+   "characters": 2206,
+   "strings": 5
+  },
+  "core/self_improvement/program_materialization.py": {
+   "characters": 698,
+   "strings": 2
+  },
+  "core/self_modification/code_repair.py": {
+   "characters": 640,
+   "strings": 1
+  },
+  "core/self_modification/error_intelligence.py": {
+   "characters": 948,
+   "strings": 1
+  },
+  "core/self_modification/evaluation_harness.py": {
+   "characters": 639,
+   "strings": 1
+  },
+  "core/self_modification/growth_ladder.py": {
+   "characters": 358,
+   "strings": 1
+  },
+  "core/self_modification/kernel_refiner.py": {
+   "characters": 791,
+   "strings": 1
+  },
+  "core/senses/circadian.py": {
+   "characters": 92,
+   "strings": 1
+  },
+  "core/senses/interaction_signals.py": {
+   "characters": 128,
+   "strings": 1
+  },
+  "core/senses/turn_evidence.py": {
+   "characters": 125,
+   "strings": 1
+  },
+  "core/skills/coding_skill.py": {
+   "characters": 172,
+   "strings": 1
+  },
+  "core/skills/deep_research.py": {
+   "characters": 1491,
+   "strings": 3
+  },
+  "core/skills/design_engineering.py": {
+   "characters": 756,
+   "strings": 1
+  },
+  "core/skills/desktop_research.py": {
+   "characters": 1448,
+   "strings": 1
+  },
+  "core/skills/desktop_task.py": {
+   "characters": 755,
+   "strings": 2
+  },
+  "core/skills/email_adapter.py": {
+   "characters": 186,
+   "strings": 1
+  },
+  "core/skills/notify_user.py": {
+   "characters": 402,
+   "strings": 1
+  },
+  "core/skills/os_automation.py": {
+   "characters": 1224,
+   "strings": 3
+  },
+  "core/skills/reddit_adapter.py": {
+   "characters": 1061,
+   "strings": 1
+  },
+  "core/skills/sovereign_browser_understanding.py": {
+   "characters": 293,
+   "strings": 1
+  },
+  "core/skills/sovereign_browser_understanding_scale.py": {
+   "characters": 289,
+   "strings": 1
+  },
+  "core/skills/train_self.py": {
+   "characters": 269,
+   "strings": 1
+  },
+  "core/skills/vision_actor.py": {
+   "characters": 167,
+   "strings": 1
+  },
+  "core/social/conversational_profile.py": {
+   "characters": 603,
+   "strings": 1
+  },
+  "core/social/dialogue_cognition.py": {
+   "characters": 925,
+   "strings": 4
+  },
+  "core/social/other_agent_model.py": {
+   "characters": 203,
+   "strings": 1
+  },
+  "core/social/relational_intelligence.py": {
+   "characters": 440,
+   "strings": 2
+  },
+  "core/social/relationship_graph.py": {
+   "characters": 165,
+   "strings": 1
+  },
+  "core/social/social_imagination.py": {
+   "characters": 457,
+   "strings": 1
+  },
+  "core/somatic/sensory_motor_cortex.py": {
+   "characters": 105,
+   "strings": 1
+  },
+  "core/synthesis.py": {
+   "characters": 2200,
+   "strings": 4
+  },
+  "core/tools/tool_forge.py": {
+   "characters": 132,
+   "strings": 1
+  },
+  "core/utils/prompt_compression.py": {
+   "characters": 80,
+   "strings": 1
+  },
+  "core/values/core_values.py": {
+   "characters": 87,
+   "strings": 1
+  },
+  "core/values/prime_directives.py": {
+   "characters": 453,
+   "strings": 4
+  },
+  "core/voice/natural_followup.py": {
+   "characters": 486,
+   "strings": 2
+  },
+  "core/voice/speech_profile.py": {
+   "characters": 202,
+   "strings": 2
+  },
+  "core/volition.py": {
+   "characters": 227,
+   "strings": 1
+  },
+  "interface/routes/chat.py": {
+   "characters": 2197,
+   "strings": 7
+  },
+  "interface/routes/chat_capability_inventory.py": {
+   "characters": 660,
+   "strings": 2
+  },
+  "interface/routes/chat_desktop_mode.py": {
+   "characters": 755,
+   "strings": 2
+  },
+  "interface/routes/chat_own_source.py": {
+   "characters": 384,
+   "strings": 1
+  },
+  "interface/routes/chat_preflight.py": {
+   "characters": 378,
+   "strings": 2
+  },
+  "interface/routes/chat_protected_prompt.py": {
+   "characters": 371,
+   "strings": 1
+  },
+  "interface/routes/chat_reply_repair.py": {
+   "characters": 2819,
+   "strings": 6
+  },
+  "skills/social_media.py": {
+   "characters": 672,
+   "strings": 1
+  }
+ },
+ "total_characters": 170148
+}

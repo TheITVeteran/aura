@@ -13,6 +13,7 @@ import pytest
 from core.agency.subjective_choice import ChoiceOption, SubjectiveChoiceEngine
 from core.conation import what_she_wants
 from core.conation.engine import ConationEngine
+from core.conation.what_she_wants import _conation
 from core.initiative_synthesis import InitiativeSynthesizer
 from core.runtime.overt_action_loop import OvertActionResult, _note_want
 
@@ -28,7 +29,7 @@ def record(tmp_path):
         key, paid = (TIDE, 0.6) if turn % 2 == 0 else (LOGS, -0.5)
         held.went(key, "web_search", label=LABELS[key])
         held.met(["self", key], paid + rng.uniform(-0.2, 0.2), reachable=[key], labels=LABELS)
-    for satiation in held._conation().dynamics._satiation.values():
+    for satiation in _conation(held).dynamics._satiation.values():
         satiation.last_update -= 600.0
     yield held
     what_she_wants.reset_for_test(tmp_path / "after.json", engine=ConationEngine())

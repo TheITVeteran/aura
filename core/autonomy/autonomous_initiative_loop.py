@@ -91,13 +91,27 @@ def _self_development_allowed(orchestrator=None) -> bool:
 
 
 def _self_development_blocker(orchestrator=None) -> str:
-    return background_activity_reason(
+    reason = background_activity_reason(
         orchestrator,
         min_idle_seconds=45.0,
         max_memory_percent=82.0,
         max_failure_pressure=0.15,
         require_conversation_ready=False,
     )
+    if reason:
+        return reason
+    # She goes over herself when her turns have been running worse than she
+    # expected. The scan ran whenever she was idle, 533 times by one count,
+    # and her idle hours went to herself. With nothing off they are for the
+    # things she wants. See `something_is_off` in core/conation/what_she_wants.py.
+    try:
+        from core.conation.what_she_wants import get_what_she_wants
+
+        if not get_what_she_wants().something_is_off():
+            return "nothing_is_off"
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("her record could not say whether something is off: %s", exc)
+    return ""
 
 
 def _passive_social_allowed(orchestrator=None) -> bool:

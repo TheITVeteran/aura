@@ -663,6 +663,19 @@ class InitiativeArbiter:
         # If the initiative was triggered by a specific drive, check its budget
         budget = budgets.get(triggered_by)
         if budget is not None:
+            # A need that is met says nothing. The reading had been one minus
+            # the level, so a need at 95% still asked at 0.05 on every slate
+            # and the scan it asked for was her most frequent act. The
+            # valuation that prices needs holds a tolerance around each set
+            # point and reads nothing inside it (core/conation/homeostatic.py).
+            try:
+                from core.conation.engine import get_conation
+
+                reading = get_conation().homeostatic.value(target_budget=str(triggered_by))
+                if reading.available:
+                    return max(0.0, min(1.0, float(reading.magnitude)))
+            except (ImportError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("the need was read without its tolerance: %s", exc)
             # Lower budget level -> higher expected value of satisfying it
             return min(1.0, 1.0 - (budget.level / budget.capacity))
 

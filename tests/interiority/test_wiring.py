@@ -25,18 +25,18 @@ def _loaded() -> None:
 
 
 @pytest.fixture()
-def service() -> Iterator[InteriorityService]:
+def service(monkeypatch: pytest.MonkeyPatch) -> Iterator[InteriorityService]:
     """A fresh layer on a fixed stream.
 
-    Release through the synaptic cleft is probabilistic and the cleft draws
-    from the process generator, so whether a faculty transmits on any one tick
-    depends on where that stream happens to be — and a test that asserts
-    something fired is then a test of what ran before it. Seeding makes the
-    medium's own dynamics part of what is being tested rather than part of the
-    weather; the cleft had a generator of its own that nothing could seed, and
-    this is what that was costing.
+    Release is probabilistic. The cleft's explicit generator keeps its
+    stream independent of other work that draws from the process generator.
+    Its terminal and receptor histories also belong to this test. The
+    production medium still keeps its own history across actual turns.
     """
     import random
+
+    from core.interiority import cleft
+    from core.interiority.receptors import ReceptorBank
 
     # Put the stream back afterwards. Seeding the process generator inside a
     # fixture and leaving it seeded changes the stream every test after this
@@ -44,6 +44,10 @@ def service() -> Iterator[InteriorityService]:
     # controls randomness must control it for itself alone.
     saved = random.getstate()
     random.seed(20260911)
+    # Terminal concentrations and receptor adaptation also carry across
+    # ticks. A fresh service over somebody else's depleted medium is not
+    # a fresh layer. Restore the resident singleton when this test leaves.
+    monkeypatch.setattr(cleft, '_CLEFT', cleft.SynapticCleft(bank=ReceptorBank(), rng=random.Random(20260911)))
     try:
         yield InteriorityService()
     finally:
@@ -113,10 +117,9 @@ def test_a_record_a_commitment_rests_on_cannot_be_compacted(
 def test_a_constraint_removes_an_action_rather_than_penalising_it(
     service: InteriorityService,
 ) -> None:
-    from core.interiority.arbitration import permitted
+    from core.interiority.arbitration import arbitrate, permitted
     from core.interiority.effects import ActionConstraint, ConstraintForce, Effects
     from core.interiority.faculty import Activation
-    from core.interiority.arbitration import arbitrate
 
     state = arbitrate(
         [
@@ -397,7 +400,7 @@ def test_the_census_can_answer_what_the_constructed_proofs_cannot(
 
     # Both halves of the judgement are reported: a rate alone cannot tell a
     # mechanism firing hard every turn from one emitting almost nothing.
-    for faculty, rate, mean in service.census.always_fires():
+    for _faculty, rate, mean in service.census.always_fires():
         assert 0.0 <= rate <= 1.0
         assert 0.0 <= mean <= 1.0
 

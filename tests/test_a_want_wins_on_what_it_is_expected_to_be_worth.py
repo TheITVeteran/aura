@@ -15,7 +15,7 @@ import pytest
 from core.agency.initiative_arbiter import InitiativeArbiter
 from core.conation import what_she_wants
 from core.conation.engine import ConationEngine
-from core.conation.what_she_wants import FIND_OUT, read_turn
+from core.conation.what_she_wants import FIND_OUT, _conation, read_turn
 
 LIMPET, SCAN = "topic:limpet", "act:running"
 
@@ -92,7 +92,7 @@ def test_what_an_exchange_dwelt_on_pulls_harder_than_what_it_mentioned(record):
     )
     limpet, ledge = record.thing("topic:limpet"), record.thing("topic:ledge")
     assert limpet.stood_out > ledge.stood_out > 0.0
-    for held in record._conation().dynamics._satiation.values():
+    for held in _conation(record).dynamics._satiation.values():
         held.last_update -= 600.0
     pull = {want.thing: want.utility for want in record.wants()}
     assert pull["topic:limpet"] > pull["topic:ledge"]
@@ -100,12 +100,12 @@ def test_what_an_exchange_dwelt_on_pulls_harder_than_what_it_mentioned(record):
 
 def test_nobody_is_offered_as_something_to_look_up(record):
     rng = random.Random(5)
-    for turn in range(12):
+    for _turn in range(12):
         record.met(["person:ines"], 0.5 + rng.uniform(-0.2, 0.2), reachable=["person:ines"], labels={"person:ines": "ines"})
     assert all(want.thing != "person:ines" for want in record.wants())
     record.went("person:ines", "speak", label="ines")
     record.met(["person:ines"], 0.6, reachable=["person:ines"], labels={"person:ines": "ines"})
-    for held in record._conation().dynamics._satiation.values():
+    for held in _conation(record).dynamics._satiation.values():
         held.last_update -= 600.0
     ways = {want.thing: want.way for want in record.wants()}
     assert ways.get("person:ines") == "speak" and FIND_OUT not in ways.values()

@@ -176,13 +176,14 @@ class OvertActionLoop:
             if reason and not force:
                 # She cannot act now. What she most wants is settled for when
                 # she can, so it is still hers when the moment comes.
-                self._decide_for_later()
+                _decide_for_later()
                 return self._record_skip(f"background_policy:{reason}").to_dict()
 
+            _she_is_free_again()
             state = self._state()
             # What she already decided is done first and is not argued again
             # against whatever else has come up since.
-            initiative, held_receipt = self._what_she_decided()
+            initiative, held_receipt = _what_she_decided(self)
             synth_result = None if initiative else await self._synthesize(state)
             if not initiative:
                 initiative = dict(getattr(synth_result, "winner", None) or {})
@@ -207,12 +208,16 @@ class OvertActionLoop:
                     will_receipt_id=will_receipt_id,
                 ).to_dict()
 
-            action = await self._execute_initiative(
-                initiative,
-                goal=goal,
-                selection=selection,
-                will_receipt_id=will_receipt_id,
-            )
+            doing = _begin_doing(initiative)
+            try:
+                action = await self._execute_initiative(
+                    initiative,
+                    goal=goal,
+                    selection=selection,
+                    will_receipt_id=will_receipt_id,
+                )
+            finally:
+                _end_doing(doing)
             self._history.append(action)
             return action.to_dict()
 
@@ -510,51 +515,6 @@ class OvertActionLoop:
         _note_want(initiative, result)
         return await self._finish(result, raw_result=raw)
 
-    @staticmethod
-    def _decide_for_later() -> None:
-        try:
-            from core.conation.what_she_wants import get_what_she_wants
-
-            get_what_she_wants().decide()
-        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            record_degradation(
-                "overt_action_loop", exc, severity="warning",
-                action="could not act and settled nothing for when she can",
-            )
-
-    def _what_she_decided(self) -> tuple[dict[str, Any], str]:
-        """The initiative for what she is holding to do, and the Will's leave for it.
-
-        Empty when she holds nothing or the Will refuses it. The Will is asked
-        because it is the boundary every act of hers passes; nothing else is
-        asked, because she has already chosen.
-        """
-        try:
-            from core.conation.what_she_wants import FIND_OUT, get_what_she_wants
-
-            held = get_what_she_wants().decided()
-            if not held:
-                return {}, ""
-            metadata: dict[str, Any] = {"want": held, "decided": True}
-            if not held.get("unfinished"):
-                metadata["skill"] = "web_search" if held.get("way") == FIND_OUT else held.get("way")
-                metadata["params"] = {"query": held.get("label")}
-            initiative = {
-                "goal": str(held.get("unfinished") or held.get("label") or ""),
-                "source": "want",
-                "type": "decided",
-                "urgency": float(held.get("priority", 0.0) or 0.0),
-                "triggered_by": str(held.get("origin") or "interest"),
-                "metadata": metadata,
-            }
-            receipt = self._authorize_fallback(initiative)
-            return (initiative, receipt) if receipt else ({}, "")
-        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            record_degradation(
-                "overt_action_loop", exc, severity="warning",
-                action="did not act on what she had decided; chose afresh",
-            )
-            return {}, ""
 
     async def _execute_planned_goal(
         self,
@@ -1094,7 +1054,10 @@ class OvertActionLoop:
         await asyncio.to_thread(self._emit_receipts, result, raw_result)
         self._record_life_trace(result, raw_result)
         self._update_goal(result)
-        self._emit_visible_trace(result)
+        # What she does on a want of her own is not announced. It is on her
+        # receipts and her life trace like any act; it is not a status update.
+        if result.source != "want":
+            self._emit_visible_trace(result)
         return result
 
     @staticmethod
@@ -1382,6 +1345,104 @@ class OvertActionLoop:
                 classification="background_degraded",
                 context={"action_id": result.action_id},
             )
+
+
+def _she_is_free_again() -> None:
+    """Nobody is waiting on her now, so the conversation she was in is over."""
+    try:
+        from core.conation.what_she_wants import get_what_she_wants
+
+        get_what_she_wants().stopped("conversation")
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "overt_action_loop", exc, severity="debug",
+            action="left a conversation marked as still under way",
+        )
+
+
+def _begin_doing(initiative: dict[str, Any]) -> str:
+    """Her act on a want is under way from now until it returns."""
+    want = (initiative.get("metadata") or {}).get("want")
+    if not isinstance(want, dict) or not want.get("thing"):
+        return ""
+    try:
+        from core.conation.what_she_wants import get_what_she_wants
+
+        thing = str(want["thing"])
+        get_what_she_wants().started(thing, "act", label=str(want.get("label") or ""))
+        return thing
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "overt_action_loop", exc, severity="debug",
+            action="her act was not marked as under way",
+        )
+        return ""
+
+
+def _end_doing(thing: str) -> None:
+    if not thing:
+        return
+    try:
+        from core.conation.what_she_wants import get_what_she_wants
+
+        get_what_she_wants().stopped("act", thing)
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "overt_action_loop", exc, severity="debug",
+            action="left her act marked as still under way",
+        )
+
+
+def _decide_for_later() -> None:
+    try:
+        from core.conation.what_she_wants import get_what_she_wants
+
+        get_what_she_wants().decide()
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "overt_action_loop", exc, severity="warning",
+            action="could not act and settled nothing for when she can",
+        )
+
+
+def _what_she_decided(self) -> tuple[dict[str, Any], str]:
+    """The initiative for what she is holding to do, and the Will's leave for it.
+
+    Empty when she holds nothing or the Will refuses it. The Will is asked
+    because it is the boundary every act of hers passes; nothing else is
+    asked, because she has already chosen.
+    """
+    try:
+        from core.conation.what_she_wants import FIND_OUT, get_what_she_wants
+
+        held = get_what_she_wants().decided()
+        if not held:
+            return {}, ""
+        metadata: dict[str, Any] = {"want": held, "decided": True}
+        goal = str(held.get("unfinished") or held.get("label") or "")
+        if held.get("way") == "play" and held.get("where"):
+            # A place she has played is gone back to and played; her
+            # hands and eyes own how, as they do when somebody asks.
+            goal = f"Go to {held['where']} and play it"
+        elif not held.get("unfinished"):
+            metadata["skill"] = "web_search" if held.get("way") == FIND_OUT else held.get("way")
+            metadata["params"] = {"query": held.get("label")}
+        initiative = {
+            "goal": goal,
+            "source": "want",
+            "type": "decided",
+            "urgency": float(held.get("priority", 0.0) or 0.0),
+            "triggered_by": str(held.get("origin") or "interest"),
+            "metadata": metadata,
+        }
+        receipt = self._authorize_fallback(initiative)
+        return (initiative, receipt) if receipt else ({}, "")
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "overt_action_loop", exc, severity="warning",
+            action="did not act on what she had decided; chose afresh",
+        )
+        return {}, ""
 
 
 def _note_want(initiative: dict[str, Any], result: OvertActionResult) -> None:

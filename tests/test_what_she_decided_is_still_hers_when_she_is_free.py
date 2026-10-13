@@ -12,7 +12,7 @@ import pytest
 
 from core.conation import what_she_wants
 from core.conation.engine import ConationEngine
-from core.conation.what_she_wants import WhatSheWants
+from core.conation.what_she_wants import WhatSheWants, _conation
 from core.runtime import overt_action_loop
 from core.runtime.atomic_writer import flush_writes_behind
 from core.runtime.overt_action_loop import OvertActionLoop
@@ -27,7 +27,7 @@ def _a_life(record) -> None:
         key, paid = (TIDE, 0.6) if turn % 2 == 0 else (LOGS, -0.5)
         record.went(key, "web_search", label=LABELS[key])
         record.met(["self", key], paid + rng.uniform(-0.2, 0.2), reachable=[key], labels=LABELS)
-    for held in record._conation().dynamics._satiation.values():
+    for held in _conation(record).dynamics._satiation.values():
         held.last_update -= 600.0
 
 

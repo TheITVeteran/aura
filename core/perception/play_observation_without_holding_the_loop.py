@@ -22,7 +22,7 @@ from core.perception.seeing_play_elsewhere import (
     _state_of,
     eyes_for_play,
 )
-from core.perception.what_moves_in_the_picture import WhatMoves
+from core.perception.what_moves_in_the_picture import WhatMoves, prepare_play_vision
 from core.runtime.executors import submit_blocking_io
 from core.runtime.lockdep import checked_thread_semaphore
 from core.verify import invariant
@@ -66,7 +66,11 @@ def _detached_state(eyes: Any) -> dict[str, Any]:
 
 
 def _started(factory: Callable[..., Any], kinds: list[Any]) -> tuple[Any, dict[str, Any]]:
+    prepare_play_vision()
     eyes = factory(kinds=kinds)
+    prepare = getattr(eyes, 'prepare', None)
+    if callable(prepare):
+        prepare()
     return eyes, _detached_state(eyes)
 
 

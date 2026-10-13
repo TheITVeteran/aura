@@ -97,6 +97,157 @@ _ABLATED_SECTION: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 )
 
 
+#: The parts of a system prompt that tell her who to be and how to talk, by
+#: the heading each one stands under. `opening` is everything before the
+#: first heading. What each of them does to what she says is a measurement
+#: (tools/what_the_prompt_does.py), and a part that does nothing is left out
+#: for good by naming it in AURA_PROMPT_LEAVE_OUT.
+PROMPT_PARTS: dict[str, str] = {
+    "opening": "",
+    "anchor": "## INTRINSIC IDENTITY ANCHOR",
+    "examples": "## CONVERSATIONAL EXAMPLES",
+    "attractors": "## DIALOGUE SOURCE ATTRACTORS",
+    "honesty": "## SELF-HONESTY REQUIREMENTS",
+    # The lane that serves live chat writes lines, not headed sections
+    # (core/phases/response_generation_unitary.py). Its rules and the lines
+    # that put her state into words are named here and matched by how each
+    # line begins (`_COMPACT_LINES`).
+    "rules": "",
+    "state": "",
+    # Every system message of the turn, whichever of her prompt builders
+    # wrote it. Three of them say who she is (the long prompt, the response
+    # phase's compact one and the inference gate's compact one), and this is
+    # the one arm that is sure to remove them all: the model is given the
+    # message and nothing else. Asked for by name; `bare` does not include it.
+    "everything": "",
+}
+
+#: How the lines of the compact live-chat prompt begin, by the part each
+#: belongs to. A line that begins none of these ways is content: what she
+#: remembers, what was said, what a skill returned.
+_COMPACT_LINES: dict[str, tuple[str, ...]] = {
+    "opening": ("You are Aura Luna", "VOICE:", "Be yourself"),
+    "rules": (
+        "The final user chat message is authoritative",
+        "HARD RULES:",
+        "- ",
+        "Speak in short",
+        "This question deserves a fuller answer",
+        "Answer all ",
+        "When the user asks why or how I know",
+    ),
+    "state": ("MOOD:", "VOICE SHAPING", "NEUROCHEMICAL TONE", "PHI:", "STATE_GROUNDING:"),
+}
+
+_LEFT_OUT: "contextvars.ContextVar[frozenset[str]]" = contextvars.ContextVar(
+    "aura_prompt_parts_left_out", default=frozenset()
+)
+_MEASURED: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "aura_turn_is_a_measurement", default=False
+)
+
+
+def leave_out(parts: Any, *, measurement: bool = True) -> frozenset[str]:
+    """Leave these parts out of the system prompt for THIS turn only.
+
+    `bare` names all of them. A turn that asks for this is a measurement of
+    her and is marked as one, so it is not read into what she has met: being
+    asked is not living (core/agency/subjective_choice.py holds the same line
+    for a tournament).
+    """
+    asked = {str(part).strip().lower() for part in (parts or ()) if str(part).strip()}
+    if "bare" in asked:
+        asked = (asked | set(PROMPT_PARTS)) - ({"everything"} - asked)
+    kept = frozenset(asked & set(PROMPT_PARTS))
+    _LEFT_OUT.set(kept)
+    _MEASURED.set(bool(measurement))
+    return kept
+
+
+def left_out() -> frozenset[str]:
+    """The parts left out of this turn's prompt: the turn's own, then the standing ones."""
+    import os
+
+    standing = {
+        part.strip().lower()
+        for part in os.environ.get("AURA_PROMPT_LEAVE_OUT", "").split(",")
+        if part.strip()
+    }
+    if "bare" in standing:
+        standing = (standing | set(PROMPT_PARTS)) - ({"everything"} - standing)
+    return frozenset(_LEFT_OUT.get() | (standing & set(PROMPT_PARTS)))
+
+
+def this_turn_is_a_measurement() -> bool:
+    return bool(_MEASURED.get())
+
+
+def compact_lines_kept(lines: list[str], parts: frozenset[str] | set[str] | None = None) -> list[str]:
+    """The lines of the compact live-chat prompt, less those of the parts left out."""
+    out = left_out() if parts is None else parts
+    if not out:
+        return lines
+    begins = tuple(start for part in out for start in _COMPACT_LINES.get(part, ()))
+    return [line for line in lines if not (begins and str(line).startswith(begins))]
+
+
+def as_measured(messages: list[Any]) -> list[Any]:
+    """The messages of a measurement turn: what frames the turn, and the one message asked.
+
+    A measurement asks the same thing several ways, and the earlier answers
+    were riding along in the history of the later ones: live on 13 October the
+    fourth arm of a probe was sent 29 messages. Each arm has to meet the
+    question fresh. On any other turn the messages come back untouched.
+    """
+    if not this_turn_is_a_measurement():
+        return messages
+    framing = [m for m in messages if isinstance(m, dict) and str(m.get("role", "")).lower() == "system"]
+    if "everything" in left_out():
+        framing = []
+    asked = next(
+        (m for m in reversed(messages) if isinstance(m, dict) and str(m.get("role", "")).lower() == "user"),
+        None,
+    )
+    if asked is None:
+        return messages
+    # What the model was given, on the record: a measurement of a prompt has
+    # to be able to show the prompt it measured.
+    import logging
+
+    for message in framing:
+        logging.getLogger("Aura.Persona").info(
+            "🔬 measurement turn framing (%d chars): %s",
+            len(str(message.get("content") or "")),
+            " ⏎ ".join(str(message.get("content") or "").splitlines())[:2400],
+        )
+    return [*framing, asked]
+
+
+def without_parts(prompt: str, parts: frozenset[str] | set[str]) -> str:
+    """A system prompt with the named parts taken out, whole, by their headings.
+
+    A part runs from its heading to the next heading. The opening runs from
+    the first character to the first heading. Nothing else is touched, so
+    what is left is what the prompt would have been had the part never been
+    written.
+    """
+    if not parts or not prompt:
+        return prompt
+    import re as _re
+
+    pieces = _re.split(r"(?m)^(?=## )", prompt)
+    headings = tuple(PROMPT_PARTS[part] for part in parts if PROMPT_PARTS.get(part, "").startswith("## "))
+    kept: list[str] = []
+    for index, piece in enumerate(pieces):
+        if index == 0 and not piece.startswith("## "):
+            if "opening" in parts:
+                continue
+        elif headings and piece.startswith(headings):
+            continue
+        kept.append(piece)
+    return "".join(kept)
+
+
 def set_ablated_section(section: Any) -> None:
     """Suppress one anchor section for THIS turn only.
 

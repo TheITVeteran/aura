@@ -1091,7 +1091,9 @@ class _RunsTheThinkingLoop:
         # this loop and almost never by the kernel tick, and the reading lived
         # in a kernel phase, so the turns she spends with a person went unread
         # (live, 13 October). It never raises. See core/phases/learning_phase.py.
-        if last_msg and not is_background:
+        from core.brain.aura_persona import this_turn_is_a_measurement
+
+        if last_msg and not is_background and not this_turn_is_a_measurement():
             from core.phases.learning_phase import read_what_the_turn_was_worth
 
             await read_what_the_turn_was_worth(

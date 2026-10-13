@@ -210,10 +210,15 @@ async def read_what_the_turn_was_worth(state: AuraState, *, person: str = "", se
             if not get_what_she_wants().talked_before():
                 await asyncio.to_thread(_recall_her_talk)
             markers = getattr(getattr(state, "affect", None), "markers", None) or {}
-            about = list((markers.get("feelings_about") or {}).get("present") or [])
-            met_this_turn(
-                _with_the_person(about, person, sent_from), reading, said=_said_this_turn(state)
+            about = _with_the_person(
+                list((markers.get("feelings_about") or {}).get("present") or []), person, sent_from
             )
+            if sent_from and about:
+                # She is in a conversation with them from here until she is
+                # free again; the turns between their messages are part of it.
+                who = about[0]
+                get_what_she_wants().started(who, "conversation", label=who.split(":", 1)[1])
+            met_this_turn(about, reading, said=_said_this_turn(state))
     except _LEARNING_RECOVERABLE_ERRORS as e:
         _record_learning_degradation(
             e,

@@ -208,6 +208,10 @@ writing:
 	@echo "✍️  Checking docstrings and comments..."
 	@$(PYTHON) tools/lint_ai_writing.py --code --quiet
 
+prompting:
+	@echo "🧵 Checking that no file tells the model who to be in more words than it did..."
+	@$(PYTHON) tools/where_she_is_still_prompted.py --check
+
 seams:
 	@echo "🪚 Listing the safe extraction seams in every oversized function..."
 	@$(PYTHON) tools/find_extraction_seam.py --tracked

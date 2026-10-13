@@ -7,6 +7,10 @@ import re
 import time
 from typing import Any
 
+from core.perception.motion_kept_between_pictures import (
+    current_motion_estimate,
+    measured_motion_reference,
+)
 from core.perception.position_from_the_same_points import measured_position
 from core.perception.translation_from_visible_support import motion_was_measured
 from core.runtime.task_ownership import fire_and_forget
@@ -21,18 +25,26 @@ def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: fl
     if model is None:
         model = faces.steering_model = ProvisionalSteeringBank()
     owner = _owner(hers, mine)
+    if owner is None:
+        model.saw(None, '', at, at, 0., 0., 0., 0., measured=False)
+        return
     receipt = hers._held_at(at)
     measured = (owner is not None and receipt is not None and motion_was_measured(mine, at)
                 and at >= hers._beside_until)
     basis = bool(getattr(mine, 'motion_position', None) is not None)
-    if owner is not None and getattr(faces, 'steering_basis', basis) != basis:
+    reference = measured_motion_reference(mine, at)
+    if owner is not None and getattr(faces, 'steering_basis', reference) != reference:
         model = faces.steering_model = ProvisionalSteeringBank()
-    faces.steering_basis = basis
+    faces.steering_basis = reference
+    measured = measured and reference is not None
     if run is not None and owner is not None:
         model.arm(_turn_keys(run, faces), body_extent=max(mine.w, mine.h) if mine is not None else None)
     key, began = (receipt[1], receipt[0]) if receipt is not None else ('', at)
     x, y = measured_position(mine) if mine is not None else (0., 0.)
     vx, vy = (float(mine.vx), float(mine.vy)) if mine is not None else (0., 0.)
+    estimate = current_motion_estimate(mine, at)
+    if estimate is not None and estimate.velocity_error <= max(2., .5 * math.hypot(*estimate.velocity)):
+        vx, vy = estimate.velocity
     motion = getattr(moves, '_point_motion', {}).get(getattr(mine, 'number', None))
     fit = getattr(motion, 'rigid', None)
     error = max(1., float(fit.error)) if basis and fit is not None else 1. if basis else 2.
@@ -40,7 +52,7 @@ def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: fl
 
 
 def _owner(hers: Any, mine: Any) -> tuple | None:
-    if mine is None or hers.number is None or hers.kind is None or mine.number != hers.number:
+    if mine is None or hers.number is None or hers.kind is None or getattr(mine, 'number', None) != hers.number:
         return None
     born = getattr(mine, 'born', None)
     epoch = getattr(hers.identification, 'epoch', None)

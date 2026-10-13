@@ -408,7 +408,7 @@ def _serve() -> None:
     """The other process: eyes for each stretch of play it is asked to see for, until its input closes."""
     from multiprocessing import resource_tracker, shared_memory
 
-    from core.perception.what_moves_in_the_picture import WhatMoves
+    from core.perception.what_moves_in_the_picture import WhatMoves, prepare_play_vision
 
     wire_in, wire_out = sys.stdin.buffer, sys.stdout.buffer
     sys.stdout = sys.stderr                                   # nothing printed may go down the wire
@@ -422,6 +422,7 @@ def _serve() -> None:
         try:
             if kind == "begin":
                 eyes[name] = WhatMoves(kinds=message[2])
+                prepare_play_vision()
                 _send(wire_out, ("ready", _state_of(eyes[name])))
             elif kind == "see":
                 _, _, memory_name, shape, dtype, at, scene, answers_name, answers_size = message

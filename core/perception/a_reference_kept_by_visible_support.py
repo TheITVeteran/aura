@@ -25,6 +25,7 @@ class VisibleReference:
     at: float
     position: tuple[float, float]
     box: tuple[float, float]
+    reference_at: float | None = None
 
 
 def point_receipt_for_candidate(thing: Any, blob: dict, motion: Any, at: float) -> Any:
@@ -52,14 +53,17 @@ def position_from_visible_support(thing: Any, blob: dict, motion: Any, at: float
     path = position_from_points(thing, blob, motion, at)
     if path is not None:
         status = 'points'
+        reference_at = thing.point_pose.reference_at
     elif had_path and _current_reference(previous, thing, at) and status == 'measured' and matching_support(thing, blob):
         position = tuple(p + blob[k] - b for p, b, k in zip(previous.position, previous.box, ('x', 'y'), strict=True))
         path, status = (previous.position, position), 'support'
+        reference_at = previous.reference_at
         seed = getattr(thing, 'point_pose', None)
         if seed is not None and seed.born == thing.born and seed.at == at:
             # Current owned marks start in the independently continued origin.
             seed.origin = seed.position = position
-    thing.visible_reference = (VisibleReference(thing.born, at, path[1], (blob['x'], blob['y']))
+            seed.reference_at = reference_at
+    thing.visible_reference = (VisibleReference(thing.born, at, path[1], (blob['x'], blob['y']), reference_at)
                                if path is not None else None)
     return path, status
 
