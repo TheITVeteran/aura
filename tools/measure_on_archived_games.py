@@ -13,6 +13,7 @@ pursuit would think in words are decided without them.
     python tools/measure_on_archived_games.py --all --minutes 4 --out report.json
     python tools/measure_on_archived_games.py --games 6 --minutes 5 --trace /tmp/traces
     python tools/measure_on_archived_games.py --bundle ~/.aura/flash-campaign/offline-bundle --all --trace /tmp/traces
+    python tools/measure_on_archived_games.py --bundle ~/.aura/flash-campaign/offline-bundle --random 3 --minutes 6
 
 With ``--bundle`` the games are the offline bundle's (tools/prepare_offline_flash_bundle.py): each original program,
 kept with its hash, played by the pinned emulator from a server on this machine, so no game's copy can change or go
@@ -248,6 +249,8 @@ async def main(argv: list[str]) -> list[dict]:
     parser.add_argument("--trace", default="", help="a folder for each game's log of decisions and its last screen")
     parser.add_argument("--bundle", default="", help="the offline bundle to play the games from, instead of their archived copies")
     parser.add_argument("--her-model", default="", help="where her model answers (tools/her_model_server.py), as live")
+    parser.add_argument("--random", type=int, default=0, help="this many games drawn at random, as the demo draws them")
+    parser.add_argument("--seed", type=int, default=None, help="what draws them, to draw the same ones again")
     args = parser.parse_args(argv)
     if args.her_model:
         _her_model_from(args.her_model)
@@ -261,6 +264,12 @@ async def main(argv: list[str]) -> list[dict]:
     if args.bundle:
         places = _served(Path(args.bundle))
     numbers = sorted(places) if args.all else args.games
+    if args.random:
+        import random
+
+        seed = args.seed if args.seed is not None else int(time.time())
+        numbers = sorted(random.Random(seed).sample(sorted(places), min(args.random, len(places))))
+        print(json.dumps({"drawn": numbers, "seed": seed}), flush=True)
     results = []
     for number in numbers:
         if number not in places:

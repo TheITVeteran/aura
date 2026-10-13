@@ -126,3 +126,50 @@ to 52% painted. Her own cells scored as ground: none won, 5% to 45%. The
 code's ground not scored: seeds 2 and 4 won, at 132 and 133 s, the rest 34%
 to 62%. Both together: all six won, in 44, 49, 40, 44, 44 and 51 s, no
 life lost.
+
+## The whole of her play, later on 13 October
+
+The paint world was handed to the entry a live game is handed to
+(`tools/measure_whole_play_on_worlds.py`), from its title screen, in this
+container with no models. She played at 3.1 to 5.1 pictures a second over the
+stretches measured. Her eyes took 190 ms of a picture on average, 336 ms at
+the 90th percentile, and the canvas read 31 ms.
+
+What the code says reached her play: she said "Its code says the bugs cost
+me." and "Its code says which one is me" within half a second of play
+starting, and her eyes matched her body, the bugs and the painted floor to
+the code's colours on every picture checked.
+
+Faults found there, each now fixed with a test:
+
+- Rows of painted floor were read as bars. One was named for the
+  "PAINTED 2%" written above it; each shortening counted as a loss.
+- A stretch she was winning ended as "nothing here answers to me, and it is
+  going against me": her going is measured only between pictures at most
+  0.35 s apart, and it went unmeasured for 8 s.
+- In the world's own code at three decisions a second, her plans changed keys
+  a sixth of a second ahead, and she went left and right on the spot. At four
+  a second she crossed a row between two pictures each time, never saw
+  herself in it, and went up and down across it for six seconds.
+
+Measured afterwards in the world's own code, seeds 1 to 6, keys a decision
+late, waits uneven by up to 30%, marks seen: at three decisions a second six
+won, the slowest in 68.6 s, 6 lives lost; at two, two won, 15 lives lost.
+Plans changing before her next decision: five won and 8 lives lost at three,
+none won and every life lost at two.
+
+The ground ablation at 15 decisions a second, with the cells she passes
+between choices counted: both halves won all six, the slowest in 49.5 s, no
+life lost. The code's ground not scored won five, in 73.0, 92.4, 108.1, 116.2
+and 127.5 s, and seed 3 ran out of time at 81%. Her own cells: none won. No
+reading of the code: none won.
+
+The whole of her play after the fixes, nothing remembered: the first game
+lost at 67% in 59 s, the second won in 77 s with no life lost. Lives were
+lost where she decided on a picture 0.25 to 0.59 s old and her keys took
+about as long again to land; one bug she ran into had bounced off a wall in
+that time.
+
+Nineteen tests fail in this container on the code before these changes and
+the same nineteen after them, among them the brawl punch, the beam charge,
+the needle press, the paddle's returns, and the eyes in a process of their own.
