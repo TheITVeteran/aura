@@ -214,20 +214,23 @@ def _let_the_answers_go() -> None:
 
 
 def stop_them() -> None:
-    """Let the other process go; the next eyes for play are opened in this process until it is asked for again."""
+    """Let the other process go, and then the memory it was handed pictures in; the next eyes for play are opened in
+    this process until it is asked for again."""
     global _CHILD
     child, _CHILD = _CHILD, None
-    if child is None:
-        return
     try:
-        if child.stdin is not None:
-            child.stdin.close()
-        child.wait(timeout=2.0)
+        if child is not None:
+            if child.stdin is not None:
+                child.stdin.close()
+            child.wait(timeout=2.0)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         try:
             child.kill()
         except OSError:
             pass
+    finally:
+        _let_the_memory_go()
+        _let_the_answers_go()
 
 
 def _brought_up_to_date(likeness: Any, state: dict[str, Any]) -> None:

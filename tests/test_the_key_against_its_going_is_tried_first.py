@@ -41,10 +41,10 @@ def test_it_is_held_twice_running_before_the_others_have_their_turns(monkeypatch
 
     async def hold(_hands, run, _hers, key, at, *, trying=False):
         held.append(key)
-        run.held, run.held_since = key, at
+        run.held, run.held_since, run.held_trying = key, at, trying
 
     monkeypatch.setattr(play, "_hold", hold)
-    run = SimpleNamespace(keys=list(ARROWS), trying=0, tried_at=-10.0, held="", held_since=-1.0)
+    run = SimpleNamespace(keys=list(ARROWS), trying=0, tried_at=-10.0, held="", held_since=-1.0, held_trying=False)
 
     async def tried(times: int) -> None:
         for step in range(times):
@@ -62,10 +62,10 @@ def test_with_nothing_going_her_keys_are_tried_in_their_order(monkeypatch: pytes
 
     async def hold(_hands, run, _hers, key, at, *, trying=False):
         held.append(key)
-        run.held, run.held_since = key, at
+        run.held, run.held_since, run.held_trying = key, at, trying
 
     monkeypatch.setattr(play, "_hold", hold)
-    run = SimpleNamespace(keys=list(ARROWS), trying=0, tried_at=-10.0, held="", held_since=0.0)
+    run = SimpleNamespace(keys=list(ARROWS), trying=0, tried_at=-10.0, held="", held_since=0.0, held_trying=False)
     still = SimpleNamespace(things={})
 
     async def tried() -> None:
@@ -81,10 +81,10 @@ def test_a_blank_first_picture_leaves_a_later_measured_motion_trial_available(mo
 
     async def hold(_hands, run, _hers, key, at, *, trying=False):
         held.append(key)
-        run.held, run.held_since = key, at
+        run.held, run.held_since, run.held_trying = key, at, trying
 
     monkeypatch.setattr(play, "_hold", hold)
-    run = SimpleNamespace(keys=["left", "up", "right"], trying=0, tried_at=-10.0, held="", held_since=None)
+    run = SimpleNamespace(keys=["left", "up", "right"], trying=0, tried_at=-10.0, held="", held_since=None, held_trying=False)
 
     async def tried() -> None:
         for step in range(8):
