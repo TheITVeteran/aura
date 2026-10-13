@@ -115,6 +115,7 @@ from core.agency.which_one_answers_to_her import ways_carried as ways_carried
 from core.agency.who_is_who import FRIENDLY, IN_HER_WAY
 from core.agency.who_is_who import NEVER_SHOT as NEVER_SHOT
 from core.perception.how_things_move_here import HowThingsMoveHere
+from core.perception.seeing_play_elsewhere import eyes_for_play
 from core.perception.what_changed_and_stayed import WhatChangedAndStayed
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX, WhatMoves
 from core.perception.where_in_a_world import WhereInTheWorld
@@ -1091,7 +1092,7 @@ async def _play_as_it_happens(
     from core.agency.when_motion_breaks_a_rule import MotionChecks
 
     motion_checks = MotionChecks(frozenset(keep.get("required_edges") or []), str(keep.get("edge_provenance") or ""))
-    moves = WhatMoves(kinds=keep.get("kinds"))
+    moves = eyes_for_play(kinds=keep.get("kinds"))  # in a process of their own (core/perception/seeing_play_elsewhere.py)
     physics: HowThingsMoveHere = keep.get("physics") or HowThingsMoveHere()
     rules = WhatTheRulesSaid.read(told) if told else None
     from core.agency.situations_she_knows import caution_of, situations_in
