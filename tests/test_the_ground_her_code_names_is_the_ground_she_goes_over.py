@@ -123,35 +123,40 @@ def test_she_goes_over_new_ground_from_the_first_moment(seed):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5, 6])
 def test_she_wins_the_painted_floor_by_its_code_s_ground(seed):
     with HerChoicesOnAWorld("paint", seed=seed, decide_every=1 / 15) as play:
         came_to = play.run(150.0)
     assert came_to["ended"] and came_to["ended"][-1]["why"] == "won", came_to
-    assert came_to["seconds"] < 90 and came_to["lives"] == 3, came_to
+    assert came_to["seconds"] < 60 and came_to["lives"] == 3, came_to
 
 
 @pytest.mark.slow
-def test_neither_the_code_s_ground_alone_nor_the_worth_of_ground_alone_wins_it(monkeypatch):
-    """Both halves are needed: cells of her own size scored as ground in her plans paint 62% at most, and the code's
-    ground with plans that do not count it paints about a third; neither reaches the 85% that wins."""
+def test_the_code_s_ground_alone_scrapes_in_late_where_it_wins_at_all_and_her_own_cells_never_win(monkeypatch):
+    """Measured on seeds 1 to 6 at 15 choices a second: both halves won all six in 40 to 51 s; the code's ground with
+    plans that do not count it won two, at 132 s, and painted 34% to 62% of the rest; her own cells scored as ground
+    won none. Held here on the seeds each half lost."""
     import core.agency.ground_her_code_names as laid
     import core.agency.imagining_ahead as imagining
-    import tools.oracles.her_choices_on_a_world as harness
 
-    def her_own_cells(reading, shape):
+    def her_own_cells(reading, shape, lies=None):
         size = reading.hers.size[0] * shape[1] / reading.stage[0]
         return laid.GroundInHerPicture(origin=(0.0, 0.0), cell=(size, size),
                                        cells=(int(shape[1] // size), int(shape[0] // size)))
 
     with monkeypatch.context() as patched:
         patched.setattr(laid, "ground_in_her_picture", her_own_cells)
-        with HerChoicesOnAWorld("paint", seed=2, decide_every=1 / 15) as play:
-            assert play.run(150.0)["painted"] < 0.85
+        for seed in (1, 3):
+            with HerChoicesOnAWorld("paint", seed=seed, decide_every=1 / 15) as play:
+                assert play.run(150.0)["painted"] < 0.85
     with monkeypatch.context() as patched:
         patched.setattr(imagining, "A_CELL_GONE_OVER", 0.0)
+        for seed in (1, 3):
+            with HerChoicesOnAWorld("paint", seed=seed, decide_every=1 / 15) as play:
+                assert play.run(150.0)["painted"] < 0.85
         with HerChoicesOnAWorld("paint", seed=2, decide_every=1 / 15) as play:
+            came_to = play.run(150.0)
+        assert came_to["ended"][-1]["why"] == "won" and came_to["seconds"] > 120, came_to
+    for seed in (1, 3):
+        with HerChoicesOnAWorld("paint", seed=seed, decide_every=1 / 15, ground_from_code=False) as play:
             assert play.run(150.0)["painted"] < 0.85
-    with HerChoicesOnAWorld("paint", seed=2, decide_every=1 / 15, ground_from_code=False) as play:
-        assert play.run(150.0)["painted"] < 0.85
-    assert harness is not None

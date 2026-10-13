@@ -131,6 +131,10 @@ class _Scene:
     delay: float = 0.
     #: The ground its code names, laid on her picture, with what she has gone over of it.
     ground: Any = None
+    #: How far each thing could swerve off its going in a second, and how long she takes to answer
+    #: (core/agency/how_far_a_thing_could_swerve.py).
+    swerves: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    answer_s: float = 0.0
 
 
 def plans_to_imagine(choices: Sequence[str], presses: Sequence[str], held: str) -> list[Plan]:
@@ -256,6 +260,9 @@ def _the_world_run_forward(choosing: Any, scene: _Scene) -> None:
     scene.where, scene.there = where, there
     scene.sizes = np.array([[float(t.w), float(t.h)] for t, _w in things]).reshape(count, 2)
     scene.worth = np.array([w for _t, w in things])
+    swerve = getattr(choosing, "swerve", None)
+    scene.swerves = np.array([float(swerve(t)) if callable(swerve) else 0.0 for t, _w in things])
+    scene.answer_s = float(choosing.answer_s()) if hasattr(choosing, "answer_s") else 0.0
     if scene.pushes is not None:
         # What she comes onto, she comes onto gently: under the speed meeting it has been found to cost above, or a
         # gentle share of her going where that is not known yet.
@@ -393,8 +400,12 @@ def _what_it_meets(scene: _Scene, layer: int, xs: np.ndarray, ys: np.ndarray, ca
     reach_x = (scene.sizes[:, 0][None, :] + scene.size[0]) / 2
     reach_y = (scene.sizes[:, 1][None, :] + scene.size[1]) / 2
     costly = scene.worth < 0
-    # What costs her is given a berth, the wider the lower she is.
+    # What costs her is given a berth, the wider the lower she is; and as wide again as it could swerve off its going in
+    # the time before she can answer it, which no plan made now can see coming.
     berth = np.where(costly, 2.0 * caution, 0.0)[None, :]
+    if scene.swerves.size == costly.size and scene.swerves.any():
+        unsure = np.minimum(scene.times, scene.answer_s)[:, None] * scene.swerves[None, :]
+        berth = berth + np.where(costly[None, :], unsure, 0.0)
     meets = (apart_x <= reach_x + berth) & (apart_y <= reach_y + berth) & there
     worth, gets, costs, lost_at = 0.0, 0, 0, len(xs)
     firsts = [int(hits[0]) if hits.size else -1 for hits in (np.flatnonzero(meets[:, c]) for c in range(scene.worth.size))]

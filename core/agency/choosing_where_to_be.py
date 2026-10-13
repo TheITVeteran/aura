@@ -177,6 +177,8 @@ class _Choosing:
     #: The ground its code says is to be gone over, laid on her picture, with what she has marked of it
     #: (core/agency/ground_her_code_names.py): where it is known, the ground is the code's, not cells of her own size.
     ground: Any = None
+    #: What the place's code says of how fast a kind of thing wanders, by kind, in working pixels a second.
+    swerves_told: Any = None
 
     def __init__(self, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes, keys: list[str],
                  physics: HowThingsMoveHere | None = None, *, next_picture_s: float = 1 / 30,
@@ -270,6 +272,19 @@ class _Choosing:
         # What only moves in place (a flag waving, stars twinkling, a figure idling) is judged as what stands still is:
         # touched and found to count for nothing, it is decoration, left alone.
         return self.meeting.stance(thing.kind, fixture=not thing.moved or not goes_somewhere(thing))
+
+    def swerve(self, thing: Any) -> float:
+        """How much a thing's going could change before she can answer it, in working pixels a second
+        (core/agency/how_far_a_thing_could_swerve.py): the most its kind has been seen to, or the place's code says."""
+        if not hasattr(self, "_swerves"):
+            from core.agency.how_far_a_thing_could_swerve import swerves_of
+
+            self._swerves = swerves_of(getattr(self.moves, "things", {}), self.swerves_told)
+        return float(self._swerves.get(int(getattr(thing, "kind", -1)), 0.0))
+
+    def answer_s(self) -> float:
+        """How long before what she does about something reaches it: a picture and the delay of her hands."""
+        return float(self.next_picture_s or 0.0) + float(self.response_s or 0.0)
 
     def speed(self, axis: int) -> float:
         if self.pointing:

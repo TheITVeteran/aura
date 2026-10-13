@@ -95,3 +95,34 @@ made it worse, 1 win in 3. The traces show two causes: a wandering bug that
 turned toward her 64 px away when she had one decision left, and her plan
 flipping between up and down each picture while a bug came from 75 px to
 29 px. That is the next piece to isolate. It is not fixed here.
+
+## Corrections, later on 13 October
+
+Two findings above were wrong.
+
+The planner was not flipping between up and down because of how it uses
+the delay. The test harness handed her choosing the key the world was
+applying, which with one picture of delay was the key she chose two
+pictures before. Live play hands her the key she last sent. With the
+harness corrected, at 15 decisions a second she won seeds 1 to 5 with 67 ms
+of delay and seeds 1 to 5 with 133 ms. At 8 a second with 125 ms she won
+seeds 2 to 6 and lost seed 1, losing 7 lives in all.
+
+The loss was a bug her straight-line reckoning had passing 1.5 px clear,
+which then turned into her: its code turns a bug by up to 1.2 radians at a
+time. She now keeps clear of what costs her by as far as it could swerve
+before she can answer it: the most its kind's going has been seen to change
+at once, times a picture and her delay
+(`core/agency/how_far_a_thing_could_swerve.py`). At 8 a second with 125 ms
+she won seeds 1 to 6, losing 1 life in all with the swerve measured in
+play, and 3 with it taken from the code. On the dodge world nothing
+changed. On the collect world no life was lost either way, and she took
+265 coins for 280 and 280 for 310 on two seeds of three: foes that rebound
+off walls count as swerving.
+
+The finding that neither half of the ground wins alone does not hold with
+the swerve berth in. On seeds 1 to 6 at 15 a second: before, none won, 6%
+to 52% painted. Her own cells scored as ground: none won, 5% to 45%. The
+code's ground not scored: seeds 2 and 4 won, at 132 and 133 s, the rest 34%
+to 62%. Both together: all six won, in 44, 49, 40, 44, 44 and 51 s, no
+life lost.

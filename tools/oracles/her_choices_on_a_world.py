@@ -72,13 +72,16 @@ class HerChoicesOnAWorld:
     """One world, run from its code, played by her choosing (see the module's words)."""
 
     def __init__(self, world: str, *, seed: int = 1, ground_from_code: bool = True, decide_every: float = 1 / 30,
-                 reading: Any = None, late_by: int = 0) -> None:
+                 reading: Any = None, late_by: int = 0, swerves_from_code: bool = False) -> None:
         self.world, self.seed = world, seed
         self.reading = reading if reading is not None else reading_of(world)
         self.ground_from_code = ground_from_code
         self.decide_every = decide_every
         #: How many decisions late what she chooses reaches the world: the trip a key takes through her hands.
         self.late_by = late_by
+        #: Whether how fast each kind wanders is taken from the code's reading rather than seen in play.
+        self.swerves_from_code = swerves_from_code
+        self._numbered = 10
         self.scale = SHAPE[1] / self.reading.stage[0]
         self._oracle = WorldRunFromItsCode(world, seed=seed)
         self.trace: list[dict[str, Any]] = []
@@ -94,26 +97,33 @@ class HerChoicesOnAWorld:
     def oracle(self) -> WorldRunFromItsCode:
         return self._oracle
 
-    def _things(self, state: dict[str, Any], before: dict[int, tuple[float, float]]) -> dict[int, Any]:
-        """Each thing where the world's code has it, numbered for the run, going at what its last two places say."""
+    def _things(self, state: dict[str, Any], kept: dict[int, Any], at: float) -> dict[int, Any]:
+        """Each thing where the world's code has it, followed from picture to picture as her eyes follow it (the same
+        number, its path kept), going at what its last two places say."""
         hers = self.reading.hers
         game = state["game"]
         body = game[hers.name]
         w, h = body.get("w", hers.size[0]), body.get("h", hers.size[1])
         things = {1: _a_thing(1, 0, (body["x"], body["y"], w, h), self.scale)}
-        number = 10
+        free = dict(kept)
         for kind, of in enumerate(self.reading.things, start=1):
             for item in game.get(of.name) or []:
                 if not isinstance(item, dict) or "x" not in item or "y" not in item:
                     continue
                 size = (item.get("w") or (of.size or (12, 12))[0], item.get("h") or (of.size or (12, 12))[1])
-                thing = _a_thing(number, kind, (item["x"], item["y"], *size), self.scale)
-                near = min(before.items(), key=lambda kv: math.dist(kv[1], (thing.x, thing.y)), default=None)
-                if near is not None and math.dist(near[1], (thing.x, thing.y)) < 12:
-                    thing.vx = (thing.x - near[1][0]) / self.decide_every
-                    thing.vy = (thing.y - near[1][1]) / self.decide_every
-                things[number] = thing
-                number += 1
+                thing = _a_thing(0, kind, (item["x"], item["y"], *size), self.scale)
+                near = min((t for t in free.values() if t.kind == kind),
+                           key=lambda t: math.dist((t.x, t.y), (thing.x, thing.y)), default=None)
+                if near is not None and math.dist((near.x, near.y), (thing.x, thing.y)) < 12:
+                    del free[near.number]
+                    thing.number, thing.path = near.number, near.path
+                    thing.vx = (thing.x - near.x) / self.decide_every
+                    thing.vy = (thing.y - near.y) / self.decide_every
+                else:
+                    self._numbered += 1
+                    thing.number = self._numbered
+                thing.path.append((at, thing.x, thing.y))
+                things[thing.number] = thing
         return things
 
     def run(self, seconds: float, *, each: Any = None) -> dict[str, Any]:
@@ -134,14 +144,18 @@ class HerChoicesOnAWorld:
         ground = ground_in_her_picture(self.reading, SHAPE) if self.ground_from_code else None
         covered: set[tuple[int, int]] = set()
         cell = None
-        held = ""
+        # What she last sent, as her hands hold it and live play hands it to her choosing; and what the world is doing,
+        # which is what she sent ``late_by`` choices ago.
+        held = applied = ""
         on_the_way: list[str] = []
         state = self._oracle.state()
-        before: dict[int, tuple[float, float]] = {}
+        kept: dict[int, Any] = {}
+        told = {kind: of.speed * self.scale for kind, of in enumerate(self.reading.things, start=1)
+                if of.moves == "wanders" and of.speed} if self.swerves_from_code else None
         at = 0.0
         while at < seconds and state["world"]["state"] == "play":
-            things = self._things(state, before)
-            before = {n: (t.x, t.y) for n, t in things.items() if n != 1}
+            things = self._things(state, kept, at)
+            kept = {n: t for n, t in things.items() if n != 1}
             moves = SimpleNamespace(shape=SHAPE, things=things, kinds=[], out_of_sight={})
             mine = things[1]
             if ground is not None:
@@ -155,14 +169,15 @@ class HerChoicesOnAWorld:
             choosing = _Choosing(moves, hers, meeting, keys, None, next_picture_s=self.decide_every,
                                  response_s=self.late_by * self.decide_every,
                                  covered=(covered, cell) if ground is None else None)
-            choosing.ground = ground
+            choosing.ground, choosing.swerves_told = ground, told
             key, why, _aim = choosing.key(held)
+            held = key
             on_the_way.append(key)
-            arriving = on_the_way.pop(0) if len(on_the_way) > self.late_by else held
-            if arriving != held:
+            arriving = on_the_way.pop(0) if len(on_the_way) > self.late_by else applied
+            if arriving != applied:
                 self._oracle.hold(*([KEYS.get(arriving, arriving)] if arriving else []))
-                held = arriving
-            hers.last_velocity = hers.paces.get(held, (0.0, 0.0)) if held else (0.0, 0.0)
+                applied = arriving
+            hers.last_velocity = hers.paces.get(applied, (0.0, 0.0)) if applied else (0.0, 0.0)
             if len(self.trace) < 100000:
                 self.trace.append({"at": round(at, 3), "key": key, "why": why, "x": mine.x, "y": mine.y})
             state = self._oracle.step(self.decide_every, frame=FRAME_S)
