@@ -453,6 +453,13 @@ class InitiativeSynthesizer:
             record_degradation('initiative_synthesis', e)
             logger.debug("Synth: tension gather failed: %s", e)
 
+        # What she wants, from her own record of what things have been worth.
+        try:
+            self._gather_want_impulses()
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as e:
+            record_degradation('initiative_synthesis', e)
+            logger.debug("Synth: want gather failed: %s", e)
+
         # 9. Hierarchical Planner - active subgoals
         try:
             planner = ServiceContainer.get("hierarchical_planner", default=None)
@@ -515,6 +522,36 @@ class InitiativeSynthesizer:
     # ------------------------------------------------------------------
     # Boredom-driven exploration
     # ------------------------------------------------------------------
+
+    #: How many of her wants go on a slate; the number of active goals the
+    #: goal engine is asked for above.
+    _WANTS_ON_A_SLATE = 5
+
+    def _gather_want_impulses(self) -> None:
+        """Her own wants, as options beside everything else that asks for her.
+
+        Each is a thing her turns have shown is worth going to, or one she
+        does not yet know enough about to say, priced from that record
+        (core/conation/what_she_wants.py). The option names the thing, the
+        way she would go and the measurements behind it, so whatever chooses
+        can weigh it on what she has found and not on the words in its label.
+        """
+        from core.conation.what_she_wants import FIND_OUT, get_what_she_wants
+
+        for want in get_what_she_wants().wants(limit=self._WANTS_ON_A_SLATE):
+            metadata: dict[str, Any] = {"want": want.as_dict()}
+            if not want.unfinished:
+                # Finding out about a named thing is a search for it. Any other
+                # way is a skill she has taken to a thing before.
+                metadata["skill"] = "web_search" if want.way == FIND_OUT else want.way
+                metadata["params"] = {"query": want.label}
+            self.submit(
+                content=want.unfinished or want.label,
+                source="want",
+                urgency=want.priority,
+                drive=want.origin or "interest",
+                metadata=metadata,
+            )
 
     def _gather_boredom_impulses(self) -> None:
         """When DriveEngine.seek_novelty is raised, inject exploration impulses."""

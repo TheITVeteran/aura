@@ -130,8 +130,22 @@ def snapshot() -> dict[str, Any]:
         epistemic = status.get("epistemic", {})
         overvalued = salience.get("overvalued") or []
         noisy = epistemic.get("noisy_sources") or []
+        from core.conation.what_she_wants import get_what_she_wants
+
+        record = get_what_she_wants()
         return {
             "present": True,
+            # What she wants now, and what she can say she likes and dislikes,
+            # each from her own turns with the thing.
+            "wants": [want.as_dict() for want in record.standing()[:3]],
+            "likes": [
+                {"thing": thing.label or thing.key, "contacts": thing.contacts, "liking": round(thing.liking, 4)}
+                for thing in record.likes()[:5]
+            ],
+            "dislikes": [
+                {"thing": thing.label or thing.key, "contacts": thing.contacts, "liking": round(thing.liking, 4)}
+                for thing in record.dislikes()[:5]
+            ],
             "wanting": last.get("wanting"),
             "dominant_origin": last.get("dominant_origin"),
             "topology": last.get("topology"),

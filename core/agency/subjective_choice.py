@@ -206,6 +206,23 @@ class ChoiceOption:
     risk: float = 0.0
     features: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: How much she likes the thing this option goes to, in [0, 1], where her
+    #: own record can say (core/conation/what_she_wants.py). Read in place of
+    #: the features, which come from the words in the label.
+    measured_preference: float | None = None
+
+
+def _measured_preference(metadata: dict[str, Any]) -> float | None:
+    """Her liking of the thing an option goes to, once she can say she likes it."""
+    want = metadata.get("want")
+    if not isinstance(want, dict) or want.get("known") is not True:
+        return None
+    try:
+        return _clamp(float(want.get("liking", 0.0)))
+    # not a failure: a liking that is not a number is one she cannot be shown
+    # to hold, and the option is weighed as any other.
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -445,7 +462,15 @@ class SubjectiveChoiceEngine:
             risk_penalty = 0.35 * _clamp(option.risk) * self._impulse_cost(features, impulse) * intactness
             drive = _clamp(option.drive_score)
             item_bonus = self._item_preference_bonus(option, context=context)
-            pref = _clamp(self.score_features(features) + item_bonus)
+            if option.measured_preference is not None:
+                # What she has found the thing to be worth, in place of what
+                # the label's words suggest. Nothing is taught from it either:
+                # the features stay empty, so an outcome moves no value.
+                features = _norm_features({})
+                option_features[option.id] = features
+                pref = _clamp(option.measured_preference + item_bonus)
+            else:
+                pref = _clamp(self.score_features(features) + item_bonus)
             # And what she keeps coming back to after better things won it.
             # The receipt below marks every loser as passed over, and this is
             # the half that reads it: an option she returns to more often than
@@ -499,7 +524,15 @@ class SubjectiveChoiceEngine:
         _inferred_nothing = not any(
             value > 0.0 for value in option_features[chosen_id].values()
         )
-        if _inferred_nothing:
+        if chosen.measured_preference is not None:
+            rationale = (
+                f"Chose '{chosen.label}' because she has found it worth "
+                f"{chosen.measured_preference:.2f} to her and drive alignment "
+                f"{drive_scores[chosen_id]:.2f} produced final score "
+                f"{final_scores[chosen_id]:.2f}. The liking is measured from her "
+                "own turns with it."
+            )
+        elif _inferred_nothing:
             rationale = (
                 f"Chose '{chosen.label}' on drive alignment "
                 f"{drive_scores[chosen_id]:.2f} alone (final score "
@@ -585,7 +618,11 @@ class SubjectiveChoiceEngine:
             ))
             drive = _clamp(option.drive_score)
             item_bonus = self._item_preference_bonus(option, context=context)
-            pref = _clamp(self.score_features(features) + item_bonus)
+            if option.measured_preference is not None:
+                features = _norm_features({})
+                pref = _clamp(option.measured_preference + item_bonus)
+            else:
+                pref = _clamp(self.score_features(features) + item_bonus)
             final = _clamp(
                 ((1.0 - self.preference_latitude) * drive)
                 + (self.preference_latitude * pref)
@@ -633,6 +670,7 @@ class SubjectiveChoiceEngine:
                     risk=_clamp(float(metadata.get("risk", initiative.get("risk", 0.0)) or 0.0)),
                     features=infer_preference_features(goal, metadata),
                     metadata=metadata,
+                    measured_preference=_measured_preference(metadata),
                 )
             )
         receipt = self.choose(options, context=context, record=True)

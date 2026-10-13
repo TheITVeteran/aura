@@ -498,7 +498,46 @@ class OvertActionLoop:
                 action="preserved action result after closed-loop feedback failed",
                 extra={"action_id": action_id, "skill": skill},
             )
+        self._note_want(initiative, result)
         return await self._finish(result, raw_result=raw)
+
+    @staticmethod
+    def _note_want(initiative: dict[str, Any], result: OvertActionResult) -> None:
+        """Where she went on a want of her own, and whether she got there.
+
+        The going is credited with what the turn it belongs to turns out to be
+        worth, read at that turn's end. An act she did not finish stays open
+        with the thing, in the words she started it in, and one she had left
+        open and has now finished is closed. See core/conation/what_she_wants.py.
+        """
+        want = (initiative.get("metadata") or {}).get("want")
+        if not isinstance(want, dict) or not want.get("thing"):
+            return
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            record = get_what_she_wants()
+            thing = str(want["thing"])
+            record.went(thing, result.skill or str(want.get("way") or ""), label=str(want.get("label") or ""))
+            if result.status == "deferred":
+                return
+            held = record.thing(thing)
+            unfinished = str(want.get("unfinished") or "")
+            if result.verified:
+                for item, words in list((held.open if held is not None else {}).items()):
+                    if words == unfinished:
+                        record.ended(thing, item, finished=True)
+            elif result.execution_mode == "planned_goal" and result.objective:
+                record.began(thing, result.action_id, result.objective, label=str(want.get("label") or ""))
+            else:
+                record.failed(thing)
+        except (ImportError, AttributeError, KeyError, TypeError, ValueError) as exc:
+            record_degradation(
+                "overt_action_loop",
+                exc,
+                severity="warning",
+                action="acted on a want and left no record of having gone to it",
+            )
 
     async def _execute_planned_goal(
         self,

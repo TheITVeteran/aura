@@ -146,6 +146,14 @@ class LearningPhase(Phase):
                     "sent": direction,
                     "taught": sorted(lessons),
                 }
+                # And what it was worth is what the things in it were worth:
+                # her likes, dislikes and wants are read off this record.
+                # See core/conation/what_she_wants.py.
+                from core.conation.what_she_wants import read_turn as met_this_turn
+
+                markers = getattr(getattr(state, "affect", None), "markers", None) or {}
+                about = (markers.get("feelings_about") or {}).get("present") or []
+                met_this_turn(about, reading)
         except _LEARNING_RECOVERABLE_ERRORS as e:
             _record_learning_degradation(
                 e,
