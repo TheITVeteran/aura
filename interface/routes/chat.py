@@ -7815,6 +7815,20 @@ def _api_chat_turn__turn_sensory_evidence(_preflight, request):
     # actually change behaviour. It runs over HTTP against the live instance,
     # so it asks per request rather than by restarting anything; the holder is
     # turn-scoped, so a measurement cannot alter anyone else's conversation.
+    # Parts of the system prompt left out, scoped to this turn the same way.
+    # tools/what_the_prompt_does.py measures what her replies lose without
+    # each part. A turn carrying either header is a measurement and is not
+    # read into what she has met.
+    try:
+        _leave_out = str(request.headers.get("X-Aura-Leave-Out") or "").strip()
+        _measured = str(request.headers.get("X-Aura-Measurement") or "").strip()
+        if _leave_out or _measured:
+            from core.brain.aura_persona import leave_out
+
+            _kept_out = leave_out(_leave_out.split(","), measurement=True)
+            logger.info("🔬 A measurement turn; prompt parts left out: %s", sorted(_kept_out) or "none")
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _leave_out_exc:
+        logger.debug("the prompt-part switch could not be set for this turn: %s", _leave_out_exc)
     try:
         _ablate_section = str(request.headers.get("X-Aura-Ablate-Identity-Section") or "").strip()
         if _ablate_section:

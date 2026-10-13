@@ -1077,6 +1077,26 @@ class ContextAssembler(_BuildsThePromptBlocks):
             return True
 
     @staticmethod
+    def _less_what_is_left_out(whole: str) -> str:
+        """A finished system prompt, less whatever parts are left out of this turn.
+
+        See `left_out` in core/brain/aura_persona.py.
+        """
+        from core.brain.aura_persona import left_out, without_parts
+
+        parts = left_out()
+        if not parts:
+            return whole
+        less = without_parts(whole, parts)
+        ContextAssembler.LAST_COMPOSITION = {
+            **ContextAssembler.LAST_COMPOSITION,
+            "left_out": sorted(parts),
+            "prompt": len(less),
+            "whole_prompt": len(whole),
+        }
+        return less
+
+    @staticmethod
     def build_system_prompt(
         state: AuraState,
         *,
@@ -1654,7 +1674,7 @@ class ContextAssembler(_BuildsThePromptBlocks):
             )
 
         logger.debug("🧠 [BRAIN-PROMPT] Assembled System Prompt (len=%d)", len(base))
-        return base
+        return ContextAssembler._less_what_is_left_out(base)
 
     @staticmethod
     def _latest_user_message(state: AuraState) -> str:

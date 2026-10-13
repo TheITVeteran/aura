@@ -97,6 +97,87 @@ _ABLATED_SECTION: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 )
 
 
+#: The parts of a system prompt that tell her who to be and how to talk, by
+#: the heading each one stands under. `opening` is everything before the
+#: first heading. What each of them does to what she says is a measurement
+#: (tools/what_the_prompt_does.py), and a part that does nothing is left out
+#: for good by naming it in AURA_PROMPT_LEAVE_OUT.
+PROMPT_PARTS: dict[str, str] = {
+    "opening": "",
+    "anchor": "## INTRINSIC IDENTITY ANCHOR",
+    "examples": "## CONVERSATIONAL EXAMPLES",
+    "attractors": "## DIALOGUE SOURCE ATTRACTORS",
+    "honesty": "## SELF-HONESTY REQUIREMENTS",
+}
+
+_LEFT_OUT: "contextvars.ContextVar[frozenset[str]]" = contextvars.ContextVar(
+    "aura_prompt_parts_left_out", default=frozenset()
+)
+_MEASURED: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "aura_turn_is_a_measurement", default=False
+)
+
+
+def leave_out(parts: Any, *, measurement: bool = True) -> frozenset[str]:
+    """Leave these parts out of the system prompt for THIS turn only.
+
+    `bare` names all of them. A turn that asks for this is a measurement of
+    her and is marked as one, so it is not read into what she has met: being
+    asked is not living (core/agency/subjective_choice.py holds the same line
+    for a tournament).
+    """
+    asked = {str(part).strip().lower() for part in (parts or ()) if str(part).strip()}
+    if "bare" in asked:
+        asked = set(PROMPT_PARTS)
+    kept = frozenset(asked & set(PROMPT_PARTS))
+    _LEFT_OUT.set(kept)
+    _MEASURED.set(bool(measurement))
+    return kept
+
+
+def left_out() -> frozenset[str]:
+    """The parts left out of this turn's prompt: the turn's own, then the standing ones."""
+    import os
+
+    standing = {
+        part.strip().lower()
+        for part in os.environ.get("AURA_PROMPT_LEAVE_OUT", "").split(",")
+        if part.strip()
+    }
+    if "bare" in standing:
+        standing = set(PROMPT_PARTS)
+    return frozenset(_LEFT_OUT.get() | (standing & set(PROMPT_PARTS)))
+
+
+def this_turn_is_a_measurement() -> bool:
+    return bool(_MEASURED.get())
+
+
+def without_parts(prompt: str, parts: frozenset[str] | set[str]) -> str:
+    """A system prompt with the named parts taken out, whole, by their headings.
+
+    A part runs from its heading to the next heading. The opening runs from
+    the first character to the first heading. Nothing else is touched, so
+    what is left is what the prompt would have been had the part never been
+    written.
+    """
+    if not parts or not prompt:
+        return prompt
+    import re as _re
+
+    pieces = _re.split(r"(?m)^(?=## )", prompt)
+    headings = tuple(PROMPT_PARTS[part] for part in parts if PROMPT_PARTS.get(part))
+    kept: list[str] = []
+    for index, piece in enumerate(pieces):
+        if index == 0 and not piece.startswith("## "):
+            if "opening" in parts:
+                continue
+        elif headings and piece.startswith(headings):
+            continue
+        kept.append(piece)
+    return "".join(kept)
+
+
 def set_ablated_section(section: Any) -> None:
     """Suppress one anchor section for THIS turn only.
 
