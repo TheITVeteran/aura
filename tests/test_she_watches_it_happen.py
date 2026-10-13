@@ -136,6 +136,19 @@ def test_a_world_in_motion_is_played_not_waited_for():
     assert watching.in_motion(now) and not watching.playing_on_its_own(now)
 
 
+def test_a_world_her_own_press_set_going_is_played_and_not_waited_for():
+    """Offline 2026-10-13 a ball set going by her click on PLAY was watched falling for 3.3 s, game after game."""
+    now = time.monotonic()
+    pressed = now - 2.5
+    frames = [(pressed + n / 8, _picture(_BUTTON, (0.05 * (n % 18), 0.5, 0.05 * (n % 18) + 0.04, 0.55))) for n in range(21)]
+    watching = _stream(frames, [(pressed - 0.01, 'click "PLAY"')])
+    assert watching.in_motion(now) and not watching.playing_on_its_own(now)
+    # A scene stepping after a press, a line and a pause, is still waited for.
+    lines = [(0.1, 0.1, 0.4, 0.2), (0.5, 0.1, 0.9, 0.2), (0.1, 0.3, 0.4, 0.4)]
+    stepping = [(pressed + n / 8, _picture(_BUTTON, *lines[: 1 + n // 8])) for n in range(21)]
+    assert not _stream(stepping, [(pressed - 0.01, 'click "PLAY"')]).in_motion(now)
+
+
 def test_a_file_changed_is_another_game_to_her_memory(tmp_path):
     """LIVE 2026-10-06 a mended game was played from what she had kept of it broken."""
     from types import SimpleNamespace

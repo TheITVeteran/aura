@@ -290,12 +290,16 @@ class Watching:
         return bool(self._of_its_own(now - SCENE_ENDS_AFTER_S)) and not self.in_motion(now)
 
     def in_motion(self, now: float | None = None) -> bool:
-        """Whether the picture is changing by itself in most of its frames of late: a world moving, not a scene stepping."""
+        """Whether the picture is changing in most of its frames of late: a world moving, not a scene stepping. A world
+        set going by her own press moves as much as one that was going already: offline 2026-10-13, a ball set going
+        by her click on PLAY moved in every frame, each counted as the click's answer and not as the world moving, and
+        she watched it fall three times before doing anything, game after game."""
         now = time.monotonic() if now is None else now
         recent = [m for m in self.moments if m.at >= now - IN_MOTION_OVER_S]
         if len(recent) < 4:
             return False
-        moving = len(self._of_its_own(now - IN_MOTION_OVER_S))
+        always = self._always()
+        moving = sum(1 for m in recent if m.share < NEW_SCREEN_SHARE and (m.cells & ~always).any())
         return moving >= IN_MOTION * len(recent)
 
     def keeps_changing_on_its_own(self, box: tuple[float, float, float, float], since_s: float = 20.0) -> bool:
