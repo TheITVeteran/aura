@@ -31,8 +31,9 @@ from typing import Any
 
 import numpy as np
 
+from core.perception.a_reference_kept_by_visible_support import point_receipt_for_candidate
 from core.perception.boundary_support_for_translation import boundaries_agree, visible_boundary
-from core.perception.translation_from_visible_support import seen_going, translation_status
+from core.perception.translation_from_visible_support import seen_going
 from core.verify import invariant
 
 __all__ = ["Kind", "Thing", "WhatMoves", "what_happened"]
@@ -187,6 +188,7 @@ class Thing:
     motion_path: deque = field(default_factory=lambda: deque(maxlen=40), repr=False)
     #: The path of continuing visible marks has its own origin; the detection box keeps its own middle.
     motion_position: tuple[float, float] | None = None
+    visible_reference: Any = field(default=None, repr=False, compare=False)
     point_pose: Any = field(default=None, repr=False, compare=False)
 
     @property
@@ -689,7 +691,7 @@ class WhatMoves:
     def _cost(self, thing: Thing, blob: dict[str, Any], at: float) -> float:
         dt = max(1e-3, at - thing.seen)
         px, py = _measured(thing)
-        motion = self._point_motion.get(thing.number)
+        motion = point_receipt_for_candidate(thing, blob, self._point_motion.get(thing.number), at)
         if motion is not None and motion.before == thing.seen and motion.at == at:
             if not motion.inside(blob):
                 return math.inf
@@ -786,19 +788,20 @@ class WhatMoves:
         return distance + looks
 
     def _moved(self, thing: Thing, blob: dict[str, Any], at: float) -> None:
-        from core.perception.position_from_the_same_points import position_from_points
+        from core.perception.a_reference_kept_by_visible_support import (
+            position_from_visible_support,
+        )
 
         dt = max(1e-3, at - thing.seen)
         x0, y0 = _measured(thing)
-        points = self._point_motion.get(thing.number)
+        points = point_receipt_for_candidate(thing, blob, self._point_motion.get(thing.number), at)
         followed = points is not None and points.before == thing.seen and points.at == at
         had_point_path = thing.motion_position is not None
-        point_path = position_from_points(thing, blob, points, at)
-        thing.motion_evidence = translation_status(thing, blob, at, points)
+        point_path, thing.motion_evidence = position_from_visible_support(thing, blob, points, at)
         observed = seen_going(thing.motion_evidence) and not had_point_path
         if point_path is not None:
             x0, y0 = point_path[0]
-            observed, thing.motion_evidence = True, "points"
+            observed = True
         elif had_point_path:
             # Ending a point path cannot jump straight into the box's different coordinate origin.
             thing.motion_evidence = "unavailable"

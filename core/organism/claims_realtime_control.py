@@ -459,6 +459,7 @@ def _visual_motion_claims() -> tuple:
         _motion_segments_invariant,
     )
     from core.perception.a_reading_before_more_detail import _finished_reading_invariant
+    from core.perception.a_reference_kept_by_visible_support import _reference_bridge_invariant
     from core.perception.activity_in_the_picture import _picture_activity_invariant
     from core.perception.background_visible_beside_a_patch import _exposed_background_invariant
     from core.perception.boundary_support_for_translation import _visible_boundary_invariant
@@ -479,6 +480,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("a_reference_bridge_needs_independent_visible_support", "core/perception/a_reference_kept_by_visible_support.py",
+         "tests/test_a_measured_patch_can_keep_a_point_reference.py", lambda: _reference_bridge_invariant() == (),
+         "A measured origin crosses missing marks only through current matching pixels and exterior edges, with the same birth and observation time; current owned marks join in that calibrated origin."),
         ("rigid_point_motion_requires_spread_consensus", "core/perception/rigid_motion_from_named_points.py",
          "tests/test_rotating_points_keep_their_reference.py", lambda: _rigid_motion_invariant() == (),
          "A rigid point transform needs a bounded consensus of continuing noncollinear correspondences; a rotating path retains its measured reference rather than a changing box centre."),

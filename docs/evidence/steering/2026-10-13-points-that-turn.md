@@ -70,3 +70,7 @@ The change was rebased onto 802d2606d. All 164 related tests passed again in
 skip in 45.05 seconds. Integrated logs:
 /private/tmp/codex-steer/rigid-integrated-tests.log and
 /private/tmp/codex-steer/rigid-integrated-gates.log.
+
+Correction: the second pre-integration smoke run took 47.00 seconds, as
+recorded in rigid-gates-v2.log. The 44.59-second figure above was a transcription
+error. Counts and the integrated result are unchanged.
