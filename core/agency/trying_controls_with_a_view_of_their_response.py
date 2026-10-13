@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from core.agency.a_response_worth_measuring_again import response_worth_repeating
+from core.agency.a_trial_has_a_physical_end import lease_control_trial
 from core.agency.controls_ready_for_the_motion_model import has_a_measured_response
 from core.agency.countering_motion_as_it_appears import CounteringMotion
 from core.agency.giving_a_trial_time import ControlTrial
@@ -82,4 +83,5 @@ async def try_controls(hands: Any, run: Any, hers: Any, at: float, moves: Any, *
     run.tried_at = run.held_since
     duration = run.counter_trial.phase_seconds if run.counter_trial.key and not run.counter_trial.done else seconds
     run.body_trial = ControlTrial(key, run.held_since, run.held_since + duration, epoch)
+    lease_control_trial(hands, run, hers, run.body_trial, field='body_trial')
     run.longest_control_trial_s = max(getattr(run, "longest_control_trial_s", 0.), duration)

@@ -22,6 +22,7 @@ import logging
 import time
 from typing import Any
 
+from core.perception.a_clock_for_drawn_frames import DrawingClock
 from core.runtime.executors import run_interactive_cpu
 from core.verify import invariant
 
@@ -43,6 +44,7 @@ class PageFrames:
         self._taken_at = -1.0
         self._arrived = asyncio.Event()
         self._acks: set[asyncio.Task] = set()
+        self._clock = DrawingClock()
         self.every_nth_frame = max(1, every_nth_frame)
         self.unavailable = False
 
@@ -58,6 +60,7 @@ class PageFrames:
             session = await self.page.context.new_cdp_session(self.page)
             self._session = session
             session.on("Page.screencastFrame", self._frame)
+            await self._clock.calibrate(session, time.monotonic)
             # At the page's own size: a window on a high-density screen
             # otherwise sends each frame at twice that in each direction, and
             # encoding it is most of what a frame costs.
@@ -74,8 +77,11 @@ class PageFrames:
         return True
 
     def _frame(self, params: dict[str, Any]) -> None:
-        self._latest = (str(params.get("data") or ""), dict(params.get("metadata") or {}), time.monotonic())
-        self._arrived.set()
+        metadata = dict(params.get("metadata") or {})
+        captured = self._clock.frame(metadata, time.monotonic())
+        if captured is not None:
+            self._latest = (str(params.get("data") or ""), metadata, captured)
+            self._arrived.set()
         session = self._session
         if session is not None:
             task = asyncio.create_task(self._ack(session, params.get("sessionId")))
@@ -89,7 +95,7 @@ class PageFrames:
             logger.debug("acknowledging a frame: %s", why)
 
     async def look(self, clip: dict[str, float]) -> tuple[Any, float] | None:
-        """The newest frame, cropped to ``clip`` (page pixels), and when it arrived; None if streaming is not possible."""
+        """The newest frame and its source capture bounds; receipt time where no source clock was given."""
         if not await self._start():
             return None
         if self._latest is None or self._latest[2] <= self._taken_at:
@@ -100,10 +106,10 @@ class PageFrames:
                 pass
         if self._latest is None:
             return None
-        data, metadata, arrived = self._latest
-        if not _new_frame(arrived, self._taken_at):
+        data, metadata, captured = self._latest
+        if not _new_frame(captured, self._taken_at):
             return None
-        self._taken_at = arrived
+        self._taken_at = captured
         try:
             picture = await run_interactive_cpu(_cropped, data, metadata, clip)
         except TimeoutError:
@@ -111,10 +117,12 @@ class PageFrames:
             return None
         if picture is None:
             return None
-        return picture, arrived
+        return picture, captured
 
     async def close(self) -> None:
         session, self._session = self._session, None
+        self._clock.reset()
+        self._latest, self._taken_at = None, -1.0
         acks = list(self._acks)
         for task in acks:
             task.cancel()

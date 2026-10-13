@@ -641,6 +641,15 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         self._beside_until = max(self._beside_until, until)
 
     def _held_at(self, at: float) -> tuple[float, str, bool] | None:
+        if hasattr(at, 'lower') and hasattr(at, 'upper'):
+            lower, upper = at.lower, at.upper
+            if lower is None:
+                return None
+            if (not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (lower, upper))
+                    or not lower <= at <= upper):
+                return None
+            before, after = self._held_at(float(lower)), self._held_at(float(upper))
+            return before if before == after else None
         for began, key, trying in reversed(self._held):
             if began <= at:
                 return began, key, trying

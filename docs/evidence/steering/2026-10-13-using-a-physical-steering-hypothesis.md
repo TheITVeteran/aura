@@ -129,3 +129,25 @@ warnings. All nine source gates passed again. Smoke returned 165 passed and
 1 skipped in 79.61 seconds. Final logs are
 `/private/tmp/codex-steer/invented-model-task-cleanup-tests.log` and
 `/private/tmp/codex-steer/invented-model-cleanup-gates.log`.
+
+## Integrated revision and original programme follow-up
+
+The model checkpoint was rebased over concurrent work and pushed as
+`7c093bbdb560b5230a153c657455f18c68df9d35`. Its related suite returned
+245 passed in 49.52 seconds without warnings. All nine gates passed;
+smoke returned 165 passed and 1 skipped in 84.17 seconds. Logs are
+`/private/tmp/codex-steer/model-integrated-tests.log` and
+`/private/tmp/codex-steer/model-integrated-gates.log`.
+
+The original programme experiment used the earlier frozen revision
+`a0af6cf6d948beab1a6e3a9ab1368506bed3d004`. It completed in
+194.7090266669984 seconds, with return code zero and no timeout.
+It did not win. Four loss entries include repeated terminal observations;
+they do not establish four independently started rounds. All 268 recorded
+heading snapshots lacked a controlled body and a steering model.
+The provisional steering path therefore had no owned body on which to act.
+
+The run is `/private/tmp/codex-steer/run-9-physical-model-1013/`.
+Its `owner.json` and `completion.json` preserve the exact source revision.
+This original-programme result is separate from the later integrated
+source checks. Neither qualifies a normal desktop presentation.

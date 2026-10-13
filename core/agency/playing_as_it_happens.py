@@ -64,6 +64,7 @@ from core.agency.inputs_while_measuring_control import (
     HandsWithControlReceipts,
     body_probe_is_active,
     hold_control,
+    release_after_play,
 )
 from core.agency.keeping_a_watcher_company import keeping_company
 from core.agency.naming_what_she_sees import (
@@ -1305,14 +1306,7 @@ async def _play_as_it_happens(
             _report(run, getting_somewhere, at)
             ended = _over(run, moves, happened, at) or _nothing_answers(run, hers, meeting, at) or _said_it_is_over(run)
     finally:
-        held = [run.held] if run.held else []
-        for key in [*held, *run.letting_go, *([run.charging.key] if run.charging.key else [])]:
-            try:
-                await hands.up(key)
-            except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as why:
-                logger.debug("letting go of %s failed: %s", key, why)
-        if run.reading is not None:
-            run.reading.cancel()
+        await release_after_play(hands, run, hers)
         await run.coming.let_go(hands)
         keep["signs_going"] = run.coming.known() or keep.get("signs_going")
         keep["keys_never_absent"] = run.shown.done()

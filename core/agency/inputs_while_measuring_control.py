@@ -140,31 +140,41 @@ def _control_delivery_lock(run: Any) -> Any:
     return lock
 
 
-async def release_control_if_owned(hands: Any, run: Any, hers: Any, key: str, since: float) -> bool:
+async def release_control_if_owned(hands: Any, run: Any, hers: Any, key: str, since: float, *,
+                                   trying: bool = False, trial_epoch: int | None = None) -> bool:
     """A physical input deadline can release only its own delivered receipt."""
     async with _control_delivery_lock(run):
         if run.held != key or run.held_since != since:
             return False
-        await _hold_control(hands, run, hers, '', time.monotonic(), trying=False)
+        await _hold_control(hands, run, hers, '', time.monotonic(), trying=trying, trial_epoch=trial_epoch)
         return True
 
 
 async def _hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *, trying: bool = False,
-                        now: Any = None) -> None:
+                        now: Any = None, trial_epoch: int | None = None) -> None:
     """A changed physical input starts one trial; a changed policy cannot."""
     if key == run.held:
         return
+    from core.agency.a_trial_has_a_physical_end import cancel_trial_deadline
+
+    cancel_trial_deadline(run)
     now = now or time.monotonic
     began = now()
     with primary_delivery(hands):
         if run.held:
             await hands.up(run.held)
+            released_at = now()
+            _end_modelled_observation(run, released_at)
             if run.presses is not None:
-                run.presses.released(run.held, now())
+                run.presses.released(run.held, released_at)
         dispatched = now()
+        if not run.held:
+            _end_modelled_observation(run, dispatched)
         if key:
             await hands.down(key)
             run.input_key_downs[key] += 1
+        if trial_epoch is not None and hers.identification.epoch != trial_epoch:
+            trying = False
         if run.presses is not None:
             run.presses.pressed(key, now(), run.things.values(), hers.number,
                                 epoch=hers.identification.epoch, independent=trying)
@@ -177,6 +187,36 @@ async def _hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *,
         hers.tapped(key, delivered, began=dispatched)
     run.held, run.held_since, run.held_trying = key, delivered, trying
     hers.holding(key, delivered, trying=trying)
+
+
+def _end_modelled_observation(run: Any, at: float) -> None:
+    """Close a forecast at release acknowledgement or the end of its neutral interval."""
+    active = getattr(run, '_modelled_steering', None)
+    if active is None:
+        return
+    action, _until, since, model = active
+    if run.held == action.key and run.held_since == since:
+        model.ended(action, since, at)
+
+
+async def release_after_play(hands: Any, run: Any, hers: Any) -> None:
+    """Stop observation tasks and close every input when its play owner leaves."""
+    from core.agency.a_trial_has_a_physical_end import cancel_trial_deadline
+
+    cancel_trial_deadline(run)
+    for field in ('_steering_input_deadline', 'reading'):
+        task = getattr(run, field, None)
+        if task is not None:
+            task.cancel()
+    held = [run.held] if run.held else []
+    for key in [*held, *run.letting_go, *([run.charging.key] if run.charging.key else [])]:
+        try:
+            if key == run.held:
+                await hold_control(hands, run, hers, '', time.monotonic())
+            else:
+                await hands.up(key)
+        except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as why:
+            logger.debug("letting go of %s failed: %s", key, why)
 
 
 @invariant("agency.a_second_input_ends_an_isolated_body_trial", scope="agency",

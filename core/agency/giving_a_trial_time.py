@@ -81,6 +81,9 @@ async def try_a_facing_control(hands: Any, run: Any, hers: Any, choosing: Any, a
     await hold(hands, run, hers, key, at, trying=True)
     run.tried_at = run.held_since
     run.facing_trial = ControlTrial(key, run.held_since, run.held_since + seconds, epoch, owner)
+    from core.agency.a_trial_has_a_physical_end import lease_control_trial
+
+    lease_control_trial(hands, run, hers, run.facing_trial, field='facing_trial')
     run.longest_control_trial_s = max(getattr(run, "longest_control_trial_s", 0.), seconds)
     return True
 

@@ -89,6 +89,7 @@ class ProvisionalSteeringBank:
         self.retired_keys: set[str] = set()
         self.pending: SteeringAction | None = None
         self.last_result = 'unobserved'
+        self.covered_span: tuple[float, float] | None = None
         self._pose: _Pose | None = None
         self._origin: _Pose | None = None
         self._receipt: tuple[str, float] | None = None
@@ -98,6 +99,9 @@ class ProvisionalSteeringBank:
         self._delivered_at: float | None = None
         self._delay = 0.
         self._stationary_probe = False
+        self._feedback: tuple[float, str] | None = None
+        self._closed_receipt: tuple[str, float, float] | None = None
+        self._completed: SteeringAction | None = None
 
     def arm(self, turn_keys: Iterable[str], *, body_extent: float | None = None) -> None:
         """Only caller-qualified control roles may receive a turning hypothesis."""
@@ -118,6 +122,9 @@ class ProvisionalSteeringBank:
         self._drivers.clear()
         self._delivered_at = None
         self._stationary_probe = False
+        self._feedback = self.covered_span = None
+        self._closed_receipt = None
+        self._completed = None
         self.last_result = 'unobserved'
 
     def saw(self, owner: Owner | None, key: str, began: float, at: float, x: float, y: float,
@@ -136,6 +143,8 @@ class ProvisionalSteeringBank:
             self._pose = None
             self._samples.clear()
             self._receipt = None
+            self._feedback = self.covered_span = None
+            self._completed = None
             self.last_result = 'unobserved'
             return
         previous = self._pose
@@ -146,14 +155,20 @@ class ProvisionalSteeringBank:
             self.pending = None
             self._samples.clear()
             self._receipt = None
+            self._feedback = self.covered_span = None
+            self._completed = None
             self.last_result = 'observation gap'
+        previous_receipt = self._receipt
+        receipt = key, began
+        closed = (self._closed_receipt is not None and receipt == self._closed_receipt[:2]
+                  and at > self._closed_receipt[2])
         speed = math.hypot(vx, vy)
         interval = at - previous.at if previous is not None and not gap else None
         velocity_error = ((position_error + previous.error) / interval
                           if interval is not None and interval > 0 else math.inf)
         moving = speed > velocity_error if interval is not None else speed > 0
         heading = math.atan2(vy, vx) if moving else (previous.heading if previous and not gap else None)
-        if heading is not None and moving and key not in self.turn_keys and key:
+        if heading is not None and moving and key not in self.turn_keys and key and not closed:
             sign = 1.
             if previous is not None and previous.heading is not None:
                 sign = 1. if math.cos(heading - previous.heading) >= 0 else -1.
@@ -164,15 +179,15 @@ class ProvisionalSteeringBank:
             if math.cos(heading - previous.heading) < 0:
                 heading = _wrap(heading + math.pi)
         pose = _Pose(at, x, y, heading, vx, vy, position_error)
-        receipt = key, began
         if receipt != self._receipt:
             self._receipt = receipt
             self._samples.clear()
-        if not moving:
+        if not moving or closed:
             self._samples.clear()
         # A velocity interval crossing input delivery does not belong to this input.
         if (moving and heading is not None and interval is not None and previous is not None
-                and previous.at >= began and not gap):
+                and previous.at >= began and not gap and not closed
+                and (previous_receipt == receipt or previous.at == began)):
             angle_error = math.asin(min(1., velocity_error / speed))
             if self._samples:
                 heading = self._samples[-1][1] + _wrap(heading - self._samples[-1][1])
@@ -186,7 +201,7 @@ class ProvisionalSteeringBank:
                 self.retired_keys.discard(key)
                 self.last_result = 'rate contradicted'
         self._pose = pose
-        self._verify(key, began, pose, previous, gap)
+        self._verify(key, began, pose, gap)
 
     def _fit(self, began: float) -> RateEstimate | None:
         """Intersect error-bounded angular slopes; shared position errors are not independent samples."""
@@ -309,6 +324,9 @@ class ProvisionalSteeringBank:
         self._prediction_id += 1
         action = SteeringAction(key, duration, self.owner, self._prediction_id, tuple(alternatives))
         self.pending, self._origin, self._delivered_at, self._delay = action, pose, None, delay_s
+        self._feedback = self.covered_span = None
+        self._completed = None
+        self.last_result = 'unobserved'
         self._stationary_probe = key in eligible and abs(signed_speed) < 1e-9
         if key == driver:
             self._stationary_probe = False
@@ -317,41 +335,86 @@ class ProvisionalSteeringBank:
     def delivered(self, action: SteeringAction, began: float) -> bool:
         """Bind the forecast to actual input delivery without reading its response."""
         if (self.pending != action or action.owner != self.owner or self._origin is None
-                or not _finite(began) or began > self._origin.at + self.longest_gap):
+                or not _finite(began) or began > self._origin.at + self.longest_gap
+                or (self._delivered_at is not None and began != self._delivered_at)
+                or (self._closed_receipt is not None and (action.key, began) == self._closed_receipt[:2])):
             return False
         self._delivered_at = began
         self._delay = max(0., began - self._origin.at)
         return True
 
-    def _verify(self, key: str, began: float, pose: _Pose, previous: _Pose | None, gap: bool) -> None:
-        action, origin = self.pending, self._origin
-        if action is None or origin is None:
-            return
-        if gap or action.owner != self.owner:
-            self.pending = None
-            self.last_result = 'observation gap'
-            return
-        delivered = began if self._delivered_at is None else self._delivered_at
-        if key != action.key or began != delivered:
-            if pose.at >= delivered:
-                self.pending = None
-                self.last_result = 'input changed'
-            return
-        if previous is None or previous.at < delivered or pose.at <= delivered:
-            return
-        if pose.at + 1e-9 < origin.at + self._delay + action.duration:
-            return
+    def ended(self, action: SteeringAction, began: float, ended_at: float) -> bool:
+        """Close exactly the delivered pulse, retaining only pictures taken before its release."""
+        if ((self.pending != action and self._completed != action)
+                or action.owner != self.owner or self._origin is None
+                or self._delivered_at is None or began != self._delivered_at
+                or not _finite(began, ended_at) or ended_at < max(began, self._origin.at)):
+            return False
+        if self._completed != action or self._feedback is None or self._feedback[0] > ended_at:
+            self._finish_window(ended_at)
+        self._closed_receipt = action.key, began, ended_at
+        self._completed = None
+        self._samples.clear()
+        return True
+
+    def _finish_window(self, ended_at: float) -> None:
+        """A partial observation is evidence about its own elapsed span, never a completed forecast."""
+        feedback = self._feedback
+        if feedback is None or feedback[0] > ended_at:
+            self.last_result = 'unobserved'
+            self.covered_span = None
+        else:
+            result = feedback[1]
+            self.last_result = f'partial {result}' if result in ('consistent', 'contradicted') else 'unobserved'
+        self.pending = None
+        self._completed = None
+
+    def _forecast_result(self, action: SteeringAction, origin: _Pose, pose: _Pose) -> str:
         seconds = pose.at - origin.at - self._delay
         errors = []
         for prediction in action.predictions:
             initial_heading = _wrap(prediction.heading - prediction.rate * action.duration)
             x, y = _arc(origin.x + origin.vx * self._delay, origin.y + origin.vy * self._delay,
                         initial_heading, prediction.speed, prediction.rate, seconds)
-            bound = prediction.path[-1][3] + pose.error
+            # Frozen angular uncertainty grows with elapsed time, rather than granting
+            # a short observation the larger allowance of the intended full pulse.
+            uncertainty = max(0., prediction.path[-1][3] - origin.error)
+            bound = origin.error + uncertainty * (seconds / action.duration) ** 2 + pose.error
             errors.append(math.dist((x, y), (pose.x, pose.y)) <= bound)
-        self.last_result = 'consistent' if any(errors) else 'contradicted'
         if math.hypot(pose.vx, pose.vy) == 0 and action.key in self.turn_keys:
-            self.last_result = 'heading unobserved'
+            return 'heading unobserved'
+        return 'consistent' if any(errors) else 'contradicted'
+
+    def _verify(self, key: str, began: float, pose: _Pose, gap: bool) -> None:
+        action, origin = self.pending, self._origin
+        if action is None or origin is None:
+            return
+        if gap or action.owner != self.owner:
+            self.pending = None
+            self._feedback = self.covered_span = None
+            self._completed = None
+            self.last_result = 'observation gap'
+            return
+        delivered = self._delivered_at
+        if delivered is None:
+            return
+        if key != action.key or began != delivered:
+            if pose.at >= delivered:
+                self._finish_window(began)
+            return
+        # A current measured position can test a frozen position forecast even
+        # when its displacement interval crosses delivery. Angular fitting above
+        # still requires the entire measured interval to belong to one receipt.
+        if pose.at <= max(delivered, origin.at):
+            return
+        result = self._forecast_result(action, origin, pose)
+        self._feedback = pose.at, result
+        self.covered_span = origin.at + self._delay, pose.at
+        if pose.at + 1e-9 < self.covered_span[0] + action.duration:
+            self.last_result = f'partial {result}' if result in ('consistent', 'contradicted') else 'unobserved'
+            return
+        self.last_result = result
+        self._completed = action
         self.pending = None
 
 
@@ -366,4 +429,20 @@ def _provisional_steering_invariant() -> tuple:
     model.saw((1, 1., 1), 'a', .3, .4, 3., 0., 30., 0., position_error=.01)
     assert model.pending is None and not model.estimates
     assert not model.delivered(action, .3)
+    return ()
+
+
+@invariant('agency.a_forecast_ends_at_its_actual_input_window', scope='agency',
+           owner='core/agency/a_model_for_steering.py', observational=False)
+def _forecast_window_invariant() -> tuple:
+    model = ProvisionalSteeringBank()
+    model.arm([], body_extent=24.)
+    model.saw((1, 0., 1), 'a', 0., .3, 0., 0., 30., 0., position_error=.01)
+    action = model.action(['a'], 'a', (100., 0.), horizon=.2)
+    assert action is not None and model.delivered(action, .3)
+    model.saw((1, 0., 1), 'a', .3, .4, 3., 0., 30., 0., position_error=.01)
+    assert model.ended(action, .3, .45)
+    assert model.last_result == 'partial consistent' and model.covered_span == (.3, .4)
+    model.saw((1, 0., 1), '', .45, .5, 20., 20., 30., 0., position_error=.01)
+    assert model.last_result == 'partial consistent' and model.covered_span == (.3, .4)
     return ()

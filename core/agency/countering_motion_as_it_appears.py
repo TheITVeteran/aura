@@ -43,6 +43,7 @@ class CounteringMotion:
     done: bool = False
     response: Any = None
     phase_seconds: float = 0.0
+    last_deadline_began: float | None = None
 
     def choose(self, keys: Sequence[str], things: Iterable[Any], at: float, *, held: str,
                held_since: float | None, epoch: int, settle_s: float, step_s: float,
@@ -103,6 +104,19 @@ class CounteringMotion:
             self.done = True
             return None
         return self.key if self.phase % 2 == 0 else ""
+
+    def released_at_deadline(self, key: str, began: float, ended: float, epoch: int, *, steps: int) -> bool:
+        """A leased pulse can finish into its preplanned rest without another picture."""
+        if (self.done or not self.key or key != self.key or epoch != self.epoch or self.phase % 2
+                or not all(math.isfinite(value) for value in (began, ended, self.phase_seconds))
+                or self.phase_seconds <= 0 or ended - began + 1e-9 < self.phase_seconds or steps < 2
+                or self.last_deadline_began is not None and began <= self.last_deadline_began):
+            return False
+        self.last_deadline_began = began
+        self.phase += 1
+        if self.phase >= steps:
+            self.done = True
+        return True
 
 
 @invariant("agency.counter_trials_wait_for_measured_neutral_motion", scope="agency",

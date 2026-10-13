@@ -402,7 +402,11 @@ def install_realtime_control_claims(suite: Any) -> None:
 
 
 def _travel_turn_claims() -> tuple:
-    from core.agency.a_model_for_steering import _provisional_steering_invariant
+    from core.agency.a_model_for_steering import (
+        _forecast_window_invariant,
+        _provisional_steering_invariant,
+    )
+    from core.agency.a_trial_has_a_physical_end import _physical_trial_deadline_invariant
     from core.agency.calibration_for_a_current_body import _current_body_calibration_invariant
     from core.agency.facing_seen_under_its_input import _fresh_heading_invariant
     from core.agency.response_in_the_body_frame import _body_heading_invariant
@@ -414,6 +418,12 @@ def _travel_turn_claims() -> tuple:
     from core.runtime.task_ownership import _unstarted_task_cleanup_invariant
 
     return (
+        ("a_forecast_ends_at_its_actual_input_window", "core/agency/a_model_for_steering.py",
+         "tests/test_a_forecast_keeps_its_actual_observation_window.py", lambda: _forecast_window_invariant() == (),
+         "A provisional forecast retains only measured pictures inside its actual delivered input interval; a physical release preserves partial coverage without treating a later picture as evidence of the old press."),
+        ("a_control_trial_has_a_physical_deadline", "core/agency/a_trial_has_a_physical_end.py",
+         "tests/test_a_control_trial_ends_without_another_picture.py", lambda: _physical_trial_deadline_invariant() == (),
+         "A discovery or facing press has a receipt-owned physical deadline; its release does not wait for another picture, cannot release a different press, and preserves a current discovery trial's planned neutral observation phase."),
         ("completed_task_closes_its_unstarted_coroutine", "core/runtime/task_ownership.py",
          "tests/test_a_cancelled_wrapper_closes_unstarted_work.py", lambda: _unstarted_task_cleanup_invariant() == (),
          "A completed tracked task closes its still-unstarted native coroutine, including cancellation before its wrapper starts; running work keeps its cancellation and completion semantics."),
@@ -484,6 +494,7 @@ def _visual_motion_claims() -> tuple:
         _measured_prefix_invariant,
         _motion_segments_invariant,
     )
+    from core.perception.a_clock_for_drawn_frames import _drawing_clock_invariant
     from core.perception.a_reading_before_more_detail import _finished_reading_invariant
     from core.perception.a_reference_kept_by_visible_support import _reference_bridge_invariant
     from core.perception.activity_in_the_picture import _picture_activity_invariant
@@ -506,6 +517,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("queued_frames_keep_the_drawing_clock", "core/perception/a_clock_for_drawn_frames.py",
+         "tests/test_streamed_frames_use_their_drawing_clock.py", lambda: _drawing_clock_invariant() == (),
+         "A bracketed browser clock maps drawing times into a fixed stream epoch; queued delivery preserves source cadence, repeated or invalid source timestamps cannot renew a frame, and capture bounds retain their provenance."),
         ("a_reference_bridge_needs_independent_visible_support", "core/perception/a_reference_kept_by_visible_support.py",
          "tests/test_a_measured_patch_can_keep_a_point_reference.py", lambda: _reference_bridge_invariant() == (),
          "A measured origin crosses missing marks only through current matching pixels and exterior edges, with the same birth and observation time; current owned marks join in that calibrated origin."),

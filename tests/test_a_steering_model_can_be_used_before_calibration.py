@@ -145,7 +145,7 @@ def test_dispatch_delay_and_changed_input_cannot_verify_an_old_forecast():
     model.saw(OWNER, 'opaque-drive', 0., .34, 2.4, 0., 60., 0., position_error=.01)
     assert model.pending is action
     model.saw(OWNER, 'another-input', .36, .5, 12., 0., 60., 0., position_error=.01)
-    assert model.pending is None and model.last_result == 'input changed'
+    assert model.pending is None and model.last_result == 'unobserved'
 
 
 @pytest.mark.parametrize('horizon', [0., -1., math.inf, math.nan])

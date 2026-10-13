@@ -202,3 +202,28 @@ async def test_a_model_can_request_and_deliver_its_neutral_comparison(monkeypatc
     assert actions == [('up', 'opaque-drive')]
     assert not run.held and not run.held_trying
     assert run._modelled_steering[0].key == ''
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('neutral', [False, True])
+async def test_actor_expiry_keeps_the_forecasts_pre_release_feedback(monkeypatch, neutral):
+    from core.agency.a_model_for_steering import RateEstimate
+
+    now, run, hers, _mine, _moves, choosing, actions, hands, guide = _setup(monkeypatch)
+    model = run.faces.steering_model
+    if neutral:
+        model.estimates['opaque-a'] = RateEstimate(1., .1, 3, 0.)
+    token = THE_GUIDE.set(guide)
+    try:
+        assert await steer_with_a_model(hands, run, hers, choosing, now[0], hold=play._hold)
+        action, _until, since, _model = run._modelled_steering
+        now[0] = .4
+        model.saw(action.owner, action.key, since, .4, 156., 150., 60., 0., position_error=.01)
+        assert model.pending is action and model.last_result == 'partial consistent'
+        now[0] = .55
+        assert await steer_with_a_model(hands, run, hers, choosing, now[0], hold=play._hold)
+    finally:
+        THE_GUIDE.reset(token)
+    assert run._modelled_steering is None and not run.held and model.pending is None
+    assert model.last_result == 'partial consistent' and model.covered_span == pytest.approx((.3, .4))
+    assert sum(kind == 'up' for kind, _key in actions) == (1 if neutral else 2)

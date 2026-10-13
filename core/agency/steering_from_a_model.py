@@ -104,14 +104,17 @@ async def steer_with_a_model(hands: Any, run: Any, hers: Any, choosing: Any, at:
         ended = math.isfinite(at) and max(at, time.monotonic()) >= until
         if same and not contradicted and math.isfinite(at) and not ended:
             return True
-        run._modelled_steering = None
         deadline = getattr(run, '_steering_input_deadline', None)
         if deadline is not None and not deadline.done():
             deadline.cancel()
         run._model_offers_calibration = True
         if (not same or contradicted or ended) and run.held == action.key:
             await hold(hands, run, hers, '', at, trying=False)
+            if not action.key:
+                source_model.ended(action, since, max(at, time.monotonic()))
+            run._modelled_steering = None
             return True
+        run._modelled_steering = None
     if model is None or owner is None or hers.follows_pointer or not motion_was_measured(mine, at):
         return False
     trial = getattr(run, 'facing_trial', None)
