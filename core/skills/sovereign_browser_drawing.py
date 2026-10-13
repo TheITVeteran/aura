@@ -484,7 +484,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         # The screen's own words the first time; after that, the round counted: six of the same line read as one.
         await _between_runs(goal, reflexes, run, runs, keep, deadline)
     if time.monotonic() >= deadline - RAN_OUT_WITHIN_S and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
-        if runs and moves and (terms.made_once or terms.tell_what_was_made) and _a_place_for_making():
+        if runs and moves and (terms.made_once or terms.tell_what_was_made) and _a_place_for_making(keep):
             # A person whose time is up in a thing for making shows what they made in it: offline 2026-10-12 a
             # scrapbook of photographs was worked for five minutes and left with nothing said of what was in it.
             _tell("My time with this one is up. " + await _what_was_made_as_seen(
@@ -580,10 +580,9 @@ async def _between_runs(goal: str, reflexes: Any, run: dict[str, Any], runs: lis
     _tell((f"That one ended {run['words'][:80]!r}: {run['ended'] or 'unread'}. Again, with what I learned." if len(runs) == 1
            else f"Round {len(runs)}: {run['ended'] or 'over'}. Again.") + _what_i_do_differently(reflexes))
     # A try that ended without the end reached says the plan was wrong somewhere: it is made again with what happened.
-    from core.cognition.a_guide_to_a_place import THE_GUIDE
     from core.cognition.a_plan_to_an_end import plan_again
 
-    plan_again(THE_GUIDE.get(), f"it ended on “{run['words'][:120]}” ({run['ended'] or 'unread'})")
+    plan_again(_the_guide_in_hand(keep), f"it ended on “{run['words'][:120]}” ({run['ended'] or 'unread'})")
     _back_to_what_went_best(runs, keep)
     stock = keep.get("stock")
     if stock is not None:
@@ -974,6 +973,10 @@ async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, flo
     from core.perception.where_i_am_on_screen import _as_jpeg
 
     shows = ""
+    typed = str((keep or {}).get("typed") or "")
+    # A name typed into a thing for making is part of what was made, not a question put to it: offline 2026-10-13 an
+    # alien made, named and saved was said to have been given her name and to have answered "ERROR Could not connect".
+    named = typed if (keep or {}).get("typed_kind") == "a name" and _a_place_for_making(keep) else ""
     try:
         import numpy as np
         from PIL import Image
@@ -985,7 +988,7 @@ async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, flo
         frame = np.array(Image.open(io.BytesIO(png)).convert("RGB"))
         # A thing that answered what she asked is asked for its answer, in its own words where it writes them; a thing
         # made, for what it shows.
-        asked_it = bool((keep or {}).get("typed"))
+        asked_it = bool(typed) and not named
         answer = await look_with_her_eyes(_WHAT_IT_ANSWERED if asked_it else _WHAT_IT_SHOWS, _as_jpeg(frame),
                                           max_tokens=80, timeout_s=40.0)
         found = re.search(r"\{.*\}", answer or "", re.S)
@@ -995,8 +998,7 @@ async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, flo
         import logging
 
         logging.getLogger(__name__).info("her eyes could not say what she made: %s", str(why)[:160])
-    typed = str((keep or {}).get("typed") or "")
-    if typed:
+    if typed and not named:
         # A thing that answers what is put to it: what she asked, and what it answered, as it shows it. Its answer is
         # what is new on it since she put the question, read first from its words, then from her eyes where what they
         # quote was not there before; the label over the answer is not the answer: offline 2026-10-12 a machine that
@@ -1011,12 +1013,13 @@ async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, flo
         # A word in capitals stays in capitals: lowered by its first letter ("lYOUR") it reads as a program's name.
         opening = answered if answered[:2].isupper() else f"{answered[:1].lower()}{answered[1:]}"
         return f"There's nothing to win or score in this one; it answers what you give it. {gave}, and it answered: {opening}."
+    gave = f" It asked for a name, and I gave it {named!r}." if named else ""
     if not shows:
-        return _what_was_made(run, moves)
+        return _what_was_made(run, moves) + gave
     asked = _what_it_is_for(words)
     because = f" I made it that way because it asks to: {asked!r}." if asked else ""
     return (f"There's nothing to win or score in this one; it's for making things. What I made shows "
-            f"{shows[:1].lower()}{shows[1:]}.{because}")
+            f"{shows[:1].lower()}{shows[1:]}.{gave}{because}")
 
 
 def _what_was_made(run: Mapping[str, Any], moves: list[Any]) -> str:
@@ -1145,11 +1148,20 @@ def _the_best_of(runs: list[dict[str, Any]]) -> str:
     return f"That's {len(runs)} run{'s' if len(runs) != 1 else ''}. No score was shown; my longest was run {longest + 1}, at {float(runs[longest].get('took_s') or 0.0):.0f} seconds."
 
 
-def _a_place_for_making() -> bool:
-    """Whether she understands the place before her is for making something (core/agency/how_a_game_works.py)."""
+def _the_guide_in_hand(keep: Mapping[str, Any] | None) -> Any:
+    """The guide to the place being played: the one a run has in hand, else the one kept for the place between its
+    runs. Between runs and once they are over no run has one in hand: offline 2026-10-13 a thing for making whose time
+    ran out was left with "I've given this one its share of the time" and nothing of what was made, the place being
+    taken for one with no guide, and a lost run's plan was never made again."""
     from core.cognition.a_guide_to_a_place import THE_GUIDE
 
     guide = THE_GUIDE.get()
+    return guide if guide is not None else (keep or {}).get("guide")
+
+
+def _a_place_for_making(keep: Mapping[str, Any] | None = None) -> bool:
+    """Whether she understands the place before her is for making something (core/agency/how_a_game_works.py)."""
+    guide = _the_guide_in_hand(keep)
     if guide is None or not hasattr(guide, "controls"):
         return False
     from core.agency.how_a_game_works import MAKES, understood

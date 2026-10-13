@@ -178,6 +178,29 @@ def test_a_place_understood_as_for_making_is_known_when_her_time_runs_out():
     assert _a_place_for_making() is False
 
 
+def test_a_place_for_making_is_known_after_its_runs_from_the_guide_kept_for_it():
+    """Offline 2026-10-13 an alien-maker was worked for five minutes and, its time up, left with "I've given this one
+    its share of the time": no run had the guide in hand any more, and the place was taken for one with no guide.
+    Invented places: a robot shop and a rock run, each known only by the guide kept for it between its runs."""
+    from core.cognition.a_guide_to_a_place import SCREEN, THE_GUIDE, Guide
+    from core.skills.sovereign_browser_drawing import _a_place_for_making, _the_guide_in_hand
+
+    shop, run = Guide(place="The Robot Shop"), Guide(place="Rock Run")
+    shop.take_in(SCREEN, "ROBOT SHOP. Create and customize your own robot, then give it a name!")
+    run.take_in(SCREEN, "Jump over the rocks with the up arrow. Reach the flag to win!")
+    assert THE_GUIDE.get() is None
+    assert _a_place_for_making({"guide": shop}) is True
+    assert _a_place_for_making({"guide": run}) is False
+    assert _a_place_for_making({}) is False
+    # The guide a run has in hand comes first, and the kept one is what is left when none has.
+    assert _the_guide_in_hand({"guide": shop}) is shop
+    token = THE_GUIDE.set(run)
+    try:
+        assert _the_guide_in_hand({"guide": shop}) is run
+    finally:
+        THE_GUIDE.reset(token)
+
+
 def test_what_a_machine_answered_is_what_is_new_on_it_not_the_label_over_it(monkeypatch):
     """Offline 2026-10-12 a machine that answered a name with a made-up one, under a lit label saying what it was, was
     said to have answered the label, twice. Nothing here is that machine: a box that answers a word with another."""
@@ -206,3 +229,46 @@ def test_what_a_machine_answered_is_what_is_new_on_it_not_the_label_over_it(monk
             "answered": "TYPE A WORD HERE TRY AGAIN DEEP ORANGE YOUR LUCKY COLOUR"}
     said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": ""}, [], [], keep))
     assert said.endswith("it answered: DEEP ORANGE.")
+
+
+def test_a_name_given_to_a_thing_made_is_said_as_part_of_what_was_made(monkeypatch):
+    """Offline 2026-10-13 an alien made, named and saved was said to have been given her name and to have answered
+    "ERROR Could not connect". Invented: a robot shop that asks for a name; and a box that answers a name, which is
+    not for making, still said to answer."""
+    import asyncio
+
+    import core.perception.her_eyes as eyes
+    import core.skills.sovereign_browser_drawing as drawing
+    from core.cognition.a_guide_to_a_place import SCREEN, Guide
+
+    class _Page:
+        viewport_size = {"width": 100, "height": 100}
+
+        async def screenshot(self, clip):
+            import io
+
+            from PIL import Image
+
+            out = io.BytesIO()
+            Image.new("RGB", (100, 100), (20, 20, 20)).save(out, format="PNG")
+            return out.getvalue()
+
+    asked: list[str] = []
+
+    async def seen(prompt, image, **_kw):
+        asked.append(prompt)
+        return '{"shows": "A blue robot with claw hands and a red antenna"}' if "made" in prompt else '{"answered": "ZAP"}'
+
+    monkeypatch.setattr(eyes, "look_with_her_eyes", seen)
+    shop = Guide(place="The Robot Shop")
+    shop.take_in(SCREEN, "ROBOT SHOP. Create and customize your own robot, then give it a name!")
+    keep = {"guide": shop, "typed": "Aura", "typed_kind": "a name", "typed_on": "NAME YOUR ROBOT"}
+    said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": ""}, [], [], keep))
+    assert "answer" not in asked[-1]
+    assert "What I made shows a blue robot with claw hands and a red antenna." in said
+    assert "It asked for a name, and I gave it 'Aura'." in said and "answered" not in said
+    box = Guide(place="The Name Box")
+    box.take_in(SCREEN, "Type your name and the box will tell you your secret word.")
+    keep = {"guide": box, "typed": "Aura", "typed_kind": "a name", "typed_on": "TYPE YOUR NAME", "answered": "TYPE YOUR NAME ZAP"}
+    said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": ""}, [], [], keep))
+    assert "I gave it my name, 'Aura', and it answered: ZAP." in said
