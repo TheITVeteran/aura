@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-__all__ = ["places_the_pointer_turns", "shown_as_a_hand", "where_the_hand_is_now", "where_the_pointer_turns"]
+__all__ = ["places_the_pointer_turns", "shown_as_a_hand", "the_thing_there", "where_the_hand_is_now", "where_the_pointer_turns"]
 
 logger = logging.getLogger("Aura.WhereThePointerTurns")
 
@@ -41,6 +41,31 @@ _SHOWN_AS = """(([x, y]) => {
   }
   return shown;
 })"""
+
+
+def the_thing_there(place: tuple[float, float], regions: list[dict[str, Any]], across: int = ACROSS,
+                    down: int = DOWN) -> dict[str, Any] | None:
+    """The thing already read that a place where the pointer turned stands on, if any: the nearest whose outline, or
+    middle where it has no outline, lies within one cell of the swept grid. A place found on a grid is known no more
+    closely than a cell of it: offline 2026-10-12 a carved "back" was found half a cell beside its word, taken for an
+    unnamed thing that stands out, and clicked as a way on."""
+    x, y = place
+    best, nearest = None, None
+    for region in regions:
+        try:
+            if region.get("width") is not None and region.get("x") is not None:
+                left, top = float(region["x"]), float(region["y"])
+                right, bottom = left + float(region["width"]), top + float(region["height"])
+            else:
+                left = right = float(region["center_x"])
+                top = bottom = float(region["center_y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        off_x = max(left - x, 0.0, x - right) * across
+        off_y = max(top - y, 0.0, y - bottom) * down
+        if off_x <= 1.0 and off_y <= 1.0 and (nearest is None or off_x + off_y < nearest):
+            best, nearest = region, off_x + off_y
+    return best
 
 
 def _groups(hands: set[tuple[int, int]]) -> list[list[tuple[int, int]]]:

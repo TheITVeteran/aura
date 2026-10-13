@@ -192,3 +192,17 @@ def test_a_screen_taken_for_play_that_stands_the_same_a_while_is_looked_over_wit
     assert stuck_on_one_screen_of_play(reflexes, words)
     assert not stuck_on_one_screen_of_play(reflexes, "LEVEL 2 Score 40 Lives 3 Time 59")   # another screen begins again
     assert not stuck_on_one_screen_of_play(None, words)
+
+
+def test_a_place_found_half_a_cell_beside_a_word_is_that_word():
+    """A place found on a grid is known no more closely than a cell of it. Offline 2026-10-12 a carved "back" was found
+    beside its word, taken for an unnamed thing that stands out, and clicked as a way on; of two words within a cell,
+    the nearer is the one."""
+    from core.perception.where_the_pointer_turns import ACROSS, the_thing_there
+
+    back = {"text": "back", "x": 0.66, "y": 0.70, "width": 0.07, "height": 0.05}
+    on = {"text": "on", "x": 0.78, "y": 0.70, "width": 0.07, "height": 0.05}
+    assert the_thing_there((0.745, 0.72), [back, on]) is back            # 0.015 beyond "back", 0.035 short of "on"
+    assert the_thing_there((0.77, 0.72), [back, on]) is on
+    assert the_thing_there((0.73 + 1.5 / ACROSS, 0.72), [back]) is None  # a cell and a half off: something else
+    assert the_thing_there((0.5, 0.5), [{"text": "middle", "center_x": 0.52, "center_y": 0.5}])["text"] == "middle"

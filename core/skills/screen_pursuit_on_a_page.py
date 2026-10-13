@@ -158,7 +158,7 @@ class OnAPage:
     async def _where_the_pointer_turns(self, seen: dict[str, Any], over: tuple[float, float, float, float] | None) -> None:
         """Once a screen, the places on it where the pointer turns into a hand (core/perception/where_the_pointer_turns.py),
         among the shapes she may click: a doorway or a hidden thing looks like nothing in particular."""
-        from core.perception.where_the_pointer_turns import where_the_pointer_turns
+        from core.perception.where_the_pointer_turns import the_thing_there, where_the_pointer_turns
 
         words = frozenset(w for w in str(seen.get("text") or "").lower().split() if len(w) >= 3)
         known = self._swept
@@ -170,11 +170,9 @@ class OnAPage:
         regions = [r for r in [*(seen.get("shapes") or []), *(seen.get("layout") or [])] if isinstance(r, dict)]
         for x, y in places:
             # Where a thing already read stands there, it is that thing which answers the pointer.
-            standing = [r for r in regions if abs(x - float(r.get("center_x", -1))) < 0.05
-                        and abs(y - float(r.get("center_y", -1))) < 0.05]
-            for region in standing:
-                region["answers_the_pointer"] = True
-            if standing:
+            standing = the_thing_there((x, y), regions)
+            if standing is not None:
+                standing["answers_the_pointer"] = True
                 continue
             seen.setdefault("shapes", []).append({"text": f"the one that stands out at {round(x * 100)}% across, "
                                                           f"{round(y * 100)}% down", "center_x": x, "center_y": y,
