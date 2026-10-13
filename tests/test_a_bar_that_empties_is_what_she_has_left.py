@@ -62,7 +62,7 @@ def test_a_fall_in_a_bar_named_health_is_a_loss_and_low_she_is_careful():
             _read_the_bars(run, meeting, hers, moves, _picture(level, 10), at, said.append)
     assert run.losses >= 2 and [v["what"] for v in meeting.verdicts] == ["loss"] * len(meeting.verdicts)
     assert run.vitals < 0.25 and meeting.vitals == run.vitals
-    assert said and "HEALTH bar" in said[0]
+    assert said and "health bar" in said[0]                 # said as a word, not as it is lettered
     choosing = _Choosing(SimpleNamespace(things={}), SimpleNamespace(thing=lambda _m: None, keys_that_move_her=lambda _k: {},
                                                                      follows_pointer=False, axes=lambda _k: (False, False),
                                                                      makes={}), meeting, [])
@@ -412,3 +412,13 @@ def test_of_the_bars_with_no_words_one_is_said_to_be_what_she_has_left(monkeypat
     said: list[str] = []
     _read_the_bars(run, meeting, hers, moves, None, 5.0, said.append)
     assert len(said) == 1 and said[0].startswith("The bar at the top goes down") and run.losses == 3
+
+
+def test_a_bar_is_named_aloud_in_plain_words_or_not_by_its_label():
+    """LIVE 2026-10-13 "The no InVentoRY bar goes down" was said twice to an audience: the label's lettering, read as it
+    was drawn. A label of words is said as words; one that is not words is not read out."""
+    from core.agency.reading_while_playing import _a_bar_in_words
+
+    assert _a_bar_in_words("the ENERGY bar") == "the energy bar"
+    assert _a_bar_in_words("the Fright Factor bar") == "the fright factor bar"
+    assert _a_bar_in_words("the xq7 Zrr bar") == ""

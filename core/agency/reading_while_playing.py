@@ -178,11 +178,23 @@ def _read_the_bars(run: _Run, meeting: WhatMeetingDoes, hers: WhichIsHers, moves
         # Of the bars with no words, one is said to be what she has left: offline 2026-10-12 five were, in one game.
         if unnamed and run.bars.said_unnamed and run.bars.said_unnamed != named:
             continue
-        if answering or not unnamed:
+        spoken = named if unnamed else _a_bar_in_words(named)
+        if spoken and (answering or not unnamed):
             run.bars.said_unnamed = run.bars.said_unnamed or (named if unnamed else "")
-            _say(run, say, f"{named[0].upper()}{named[1:]} goes down{' as I am hit' if hit else ''}: it's what I have left.",
+            _say(run, say, f"{spoken[0].upper()}{spoken[1:]} goes down{' as I am hit' if hit else ''}: it's what I have left.",
                  at, once=f"bar {named}")
     run.vitals = meeting.vitals = what_is_left(run.bars)
+
+
+def _a_bar_in_words(named: str) -> str:
+    """A bar named for the words beside it, as those words would be said ("the energy bar"), or '' where they are not
+    words of the language: a misread or lettered label is not read out (LIVE 2026-10-13 "The no InVentoRY bar goes
+    down" was said twice to an audience). The bar is still counted; only its name is not said."""
+    from core.language.words_of_the_language import words_of
+
+    label = named.removeprefix("the ").removesuffix(" bar")
+    words = words_of(label, most=3)
+    return f"the {words} bar" if words else ""
 
 
 def _lost_from_a_distance(run: _Run, meeting: WhatMeetingDoes, mine: Any, moves: WhatMoves, verdict: dict[str, Any]) -> None:

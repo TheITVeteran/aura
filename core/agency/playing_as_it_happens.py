@@ -65,6 +65,7 @@ from core.agency.inputs_while_measuring_control import (
     body_probe_is_active,
     hold_control,
 )
+from core.agency.keeping_a_watcher_company import keeping_company
 from core.agency.naming_what_she_sees import (
     SeeingInPlay,
     a_stance_said,
@@ -343,6 +344,7 @@ class _Run:
     previous_control: tuple[Any, ...] | None = None
     gains: int = 0
     losses: int = 0
+    company: dict = field(default_factory=dict)
     #: How the contest stands (core/agency/how_the_contest_stands.py), and the last of it she said.
     contest: ContestStands = field(default_factory=ContestStands)
     #: Where the view going by has taken her, in a world bigger than it.
@@ -1029,6 +1031,7 @@ def _what_she_says(run: _Run, say: Any, moves: WhatMoves, hers: WhichIsHers, mee
     if counters and moved and not run.contest_said and counters != run.counted and at - run.said_at > 25.0:
         run.counted = dict(counters)
         _say(run, say, ", ".join(f"{name} {value}" for name, value in list(counters.items())[:3]).capitalize() + ".", at)
+    _say(run, say, keeping_company(run, at), at)  # a watcher is kept company (core/agency/keeping_a_watcher_company.py)
 
 
 async def play_as_it_happens(
