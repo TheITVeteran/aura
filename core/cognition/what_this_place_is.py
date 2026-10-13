@@ -159,6 +159,8 @@ class WhatThisPlaceIs:
     stood_out: list[str] = field(default_factory=list)
     glanced: list[str] = field(default_factory=list)
     glancing: Any = None
+    #: The last glance, with when: what stood out on the screen in front of her lately.
+    last_glimpsed: tuple[float, tuple[str, ...]] | None = None
     #: Readings asked for and not answered.
     unanswered: int = 0
     #: What each part of the reading rests on now, by part ("about", "hers", "role <name>").
@@ -230,6 +232,7 @@ class WhatThisPlaceIs:
         """A screen taken in at a glance: its setting, and what stood out in it."""
         if scene and scene not in self.scenes:
             self.scenes.append(scene)
+        self.last_glimpsed = (time.monotonic(), tuple(t for t in things if t))
         self.stood_out += [t for t in things if t and t not in self.stood_out]
         del self.stood_out[:-12]
 
@@ -636,3 +639,24 @@ def played_shows_hers(guide: Any, kind: Any) -> str:
         return ""
     name = seen.as_seen(kind)
     return reading.show("hers", name) if name else ""
+
+
+#: How long what her eyes saw on a screen at a glance holds for the screen in front of her, in seconds.
+GLIMPSE_HOLDS_S = 20.0
+
+
+def a_way_on_glimpsed(guide: Any = None, at: float | None = None) -> bool:
+    """Whether her eyes, glancing at the screen lately, saw a way on in it ("skip intro", "start"), though nothing read
+    in its words: small or drawn lettering over a moving scene. A person who sees SKIP INTRO under an animation does not
+    take the animation for the game: offline 2026-10-13 a game's intro was played as it happened for five minutes,
+    its skip button found by the pointer and named by her eyes, and the game behind it was never begun."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+    from core.language.a_way_on import how_much_it_leads_on
+
+    guide = guide if guide is not None else THE_GUIDE.get()
+    last = getattr(getattr(guide, "reading", None), "last_glimpsed", None)
+    if not last:
+        return False
+    when, things = last
+    now = time.monotonic() if at is None else at
+    return now - when <= GLIMPSE_HOLDS_S and any(how_much_it_leads_on(thing) > 1.0 for thing in things)
