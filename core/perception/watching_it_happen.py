@@ -146,8 +146,12 @@ class Watching:
             picture = taken[0] if isinstance(taken, tuple) else taken
             if picture is not None:
                 captured = taken[1] if isinstance(taken, tuple) and len(taken) > 1 else time.monotonic()
-                if type(captured) in (int, float) and math.isfinite(captured):
-                    self.saw(picture, captured)
+                # A time a picture was taken may come with how surely it is known (a frame's capture receipt,
+                # core/perception/a_clock_for_drawn_frames.py): it is still a time. Taken only as a plain float, every
+                # streamed frame was dropped, nothing her acts did could be told, and every one was left unjudged
+                # (offline 2026-10-13: 1,276 of 1,280 acts in a pass).
+                if isinstance(captured, (int, float)) and not isinstance(captured, bool) and math.isfinite(captured):
+                    self.saw(picture, float(captured))
             await asyncio.sleep(max(0.0, period - (time.monotonic() - began)))
 
     def saw(self, picture: Any, at: float) -> None:
