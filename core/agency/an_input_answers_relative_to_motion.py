@@ -74,6 +74,29 @@ def response_in_motion_coordinates(evidence: Any) -> tuple[float, float]:
     return statistic, gap * PUSHED_FOR_S
 
 
+def moving_inputs_in_trials(evidence: Any, *, least_speed: float) -> set[str]:
+    """Repeated movement can request a direction trial without lending a direction.
+
+    Opposed headings cancel as screen vectors, but do not make those presses
+    stationary. These requests grant neither control identity nor a driver.
+    """
+    repeated: dict[str, int] = defaultdict(int)
+    for press, samples in getattr(evidence, 'timed', {}).items():
+        key, began = press
+        if (not key or not isinstance(key, str) or len(samples) < 2
+                or not isinstance(began, (int, float)) or isinstance(began, bool) or not math.isfinite(began)
+                or press in getattr(evidence, 'interrupted', ())
+                or any(len(sample) != 3 for sample in samples)
+                or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+                           for sample in samples for v in sample)
+                or samples[0][0] <= began
+                or any(b[0] <= a[0] for a, b in zip(samples, samples[1:], strict=False))):
+            continue
+        if statistics.median(math.hypot(vx, vy) for _at, vx, vy in samples) >= least_speed:
+            repeated[key] += 1
+    return {key for key, count in repeated.items() if count >= 2}
+
+
 @invariant('agency.rotated_control_trials_keep_their_own_motion', scope='agency',
            owner='core/agency/an_input_answers_relative_to_motion.py', observational=False)
 def _motion_coordinates_invariant() -> tuple:

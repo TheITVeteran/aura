@@ -85,3 +85,20 @@ async def test_the_actor_does_not_plan_over_an_active_trial(monkeypatch):
     now[0] += .05
     await play._act(hands, run, moves, hers, None, choosing, now[0])
     assert actions == [("down", "drive")]
+
+
+@pytest.mark.asyncio
+async def test_a_new_direction_trial_physically_represses_the_requested_held_input(monkeypatch):
+    now, run, hers, choosing, actions, hands = setup(monkeypatch)
+    now[0] = 8.
+    await play._hold(hands, run, hers, 'drive', now[0], trying=False)
+    old_began = run.held_since
+    now[0] = 10.
+    assert await play._a_facing_trial(hands, run, hers, choosing, now[0])
+    assert actions == [('down', 'drive'), ('up', 'drive'), ('down', 'drive')]
+    assert run.facing_trial.began == run.held_since > old_began
+    assert run.facing_trial.until == pytest.approx(now[0] + play.TRY_A_KEY_S)
+    assert hers._held[-1] == (run.held_since, 'drive', True)
+    now[0] += .3
+    assert await play._a_facing_trial(hands, run, hers, choosing, now[0])
+    assert len(actions) == 3
