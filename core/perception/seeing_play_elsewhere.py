@@ -40,7 +40,7 @@ from core.runtime.flags import FlagKind, declare
 
 logger = logging.getLogger("Aura.SeeingPlayElsewhere")
 
-__all__ = ["SeenElsewhere", "eyes_for_play", "stop_them"]
+__all__ = ["SeenElsewhere", "eyes_for_play", "short_turns_while_playing", "stop_them"]
 
 _IN_THIS_PROCESS = declare(
     "AURA_PLAY_EYES_IN_THIS_PROCESS",
@@ -63,6 +63,9 @@ _KEPT_THERE = frozenset({"points", "activity", "out_of_sight", "_drawn", "_still
 #: What stands for a backdrop here: that there is one is all anyone here asks of it.
 _A_BACKDROP = np.zeros((1, 1, 3), np.uint8)
 
+#: How large the memory the other process writes its answers into is, in bytes; an answer larger comes down the pipe.
+ANSWERS_AT_MOST = 16 * 1024 * 1024
+_ANSWERS: Any = None
 _LOCK = threading.RLock()
 _CHILD: Any = None
 #: Eyes no longer wanted here, told to the other process with the next thing asked of it: a likeness can be let go
@@ -186,6 +189,30 @@ def _let_the_memory_go() -> None:
         pass
 
 
+def _answers_memory() -> Any:
+    """The memory the other process writes what it saw into: read here in one go, where an answer down a pipe comes in
+    pieces, and each piece waits its turn for the interpreter among whatever else is running here."""
+    global _ANSWERS
+    import atexit
+    from multiprocessing import shared_memory
+
+    if _ANSWERS is None:
+        _ANSWERS = shared_memory.SharedMemory(create=True, size=ANSWERS_AT_MOST)
+        atexit.register(_let_the_answers_go)
+    return _ANSWERS
+
+
+def _let_the_answers_go() -> None:
+    global _ANSWERS
+    memory, _ANSWERS = _ANSWERS, None
+    if memory is not None:
+        try:
+            memory.close()
+            memory.unlink()
+        except (OSError, FileNotFoundError):
+            pass
+
+
 def stop_them() -> None:
     """Let the other process go; the next eyes for play are opened in this process until it is asked for again."""
     global _CHILD
@@ -265,10 +292,12 @@ class SeenElsewhere:
             return self._here.see(picture, at)
         pixels = np.asarray(picture)
         with _LOCK:
-            memory = _memory_for(pixels.nbytes)
+            memory, answers = _memory_for(pixels.nbytes), _answers_memory()
             np.ndarray(pixels.shape, pixels.dtype, buffer=memory.buf)[...] = pixels
             answer = _ask(("see", self._name, memory.name, pixels.shape, pixels.dtype.str, at,
-                           getattr(picture, "drawing_scene", None)))
+                           getattr(picture, "drawing_scene", None), answers.name, answers.size))
+            if isinstance(answer, tuple) and answer[0] == "written":
+                answer = pickle.loads(answers.buf[:answer[1]])  # noqa: S301 - her own child's answer
         if isinstance(answer, tuple) and answer[0] == "seen":
             _brought_up_to_date(self._likeness, answer[2])
             return answer[1]
@@ -301,13 +330,69 @@ def _done_with(name: str) -> None:
     _ENDED.append(name)
 
 
+#: The share of a moment's work in this process spent waiting for the interpreter, from which the eyes for play are
+#: better in a process of their own; and how long a moment of work it is measured over, in seconds of her own work.
+CONTENDED = 0.15
+MEASURED_OVER_S = 0.02
+
+
+def kept_waiting() -> float:
+    """The share of a moment of work in this process spent waiting for the interpreter: a little pure work done, and
+    the time it took against the time it was being done. Nothing else running, nought; others holding it, more."""
+    import time
+
+    began, worked = time.perf_counter(), time.thread_time()
+    count = 0
+    while time.thread_time() - worked < MEASURED_OVER_S:
+        count += 1
+    took = time.perf_counter() - began
+    return max(0.0, 1.0 - (time.thread_time() - worked) / took) if took > 0 else 0.0
+
+
 def eyes_for_play(kinds: list[Any] | None = None) -> Any:
-    """Her eyes for a stretch of play: in a process of their own where they can be, else here."""
+    """Her eyes for a stretch of play: in a process of their own where this one keeps her waiting for the interpreter,
+    else here. Seen elsewhere, a picture costs a few milliseconds more in passing to and fro, and that is all it costs
+    where nothing else wants the interpreter; where other work does, seeing here costs many times over."""
     from core.perception.what_moves_in_the_picture import WhatMoves
 
     if bool(_IN_THIS_PROCESS.value()):
         return WhatMoves(kinds=kinds)
+    waiting = kept_waiting()
+    if waiting < CONTENDED:
+        logger.info("the eyes for play are opened here: this process kept her waiting %.0f%% of a moment", 100 * waiting)
+        return WhatMoves(kinds=kinds)
+    logger.info("the eyes for play are opened elsewhere: this process kept her waiting %.0f%% of a moment", 100 * waiting)
     return SeenElsewhere(kinds=kinds)
+
+
+# -- the interpreter's turns ---------------------------------------------------------------------------------------
+
+#: How long one thread may hold the interpreter while another waits, in seconds, while she plays as it happens.
+TURN_WHILE_PLAYING_S = 0.001
+_TURNS: dict[str, Any] = {"playing": 0, "before": None}
+_TURNS_LOCK = threading.Lock()
+
+
+class short_turns_while_playing:  # noqa: N801 - read as what it does, in a with
+    """While she plays as it happens, the interpreter changes hands every millisecond instead of every five, and as it
+    was after. Whatever else she is doing goes on, in shorter turns; her play, which hands the interpreter back between
+    every picture and every press, gets it back sooner each time. Measured offline 2026-10-13 with three other threads
+    busy beside play: 99 ms a picture with turns of five milliseconds, 46 with turns of one, 41 alone at most."""
+
+    def __enter__(self) -> short_turns_while_playing:
+        with _TURNS_LOCK:
+            if _TURNS["playing"] == 0:
+                _TURNS["before"] = sys.getswitchinterval()
+                sys.setswitchinterval(min(TURN_WHILE_PLAYING_S, _TURNS["before"]))
+            _TURNS["playing"] += 1
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        with _TURNS_LOCK:
+            _TURNS["playing"] = max(0, _TURNS["playing"] - 1)
+            if _TURNS["playing"] == 0 and _TURNS["before"] is not None:
+                sys.setswitchinterval(_TURNS["before"])
+                _TURNS["before"] = None
 
 
 # -- that side -----------------------------------------------------------------------------------------------------
@@ -339,7 +424,7 @@ def _serve() -> None:
                 eyes[name] = WhatMoves(kinds=message[2])
                 _send(wire_out, ("ready", _state_of(eyes[name])))
             elif kind == "see":
-                _, _, memory_name, shape, dtype, at, scene = message
+                _, _, memory_name, shape, dtype, at, scene, answers_name, answers_size = message
                 memory = memories.get(memory_name)
                 if memory is None:
                     memory = memories[memory_name] = shared_memory.SharedMemory(name=memory_name)
@@ -351,7 +436,18 @@ def _serve() -> None:
 
                     picture = described(picture, scene)
                 happened = eyes[name].see(picture, at)
-                _send(wire_out, ("seen", happened, _state_of(eyes[name])))
+                data = pickle.dumps(("seen", happened, _state_of(eyes[name])), protocol=pickle.HIGHEST_PROTOCOL)
+                answers = memories.get(answers_name)
+                if answers is None:
+                    answers = memories[answers_name] = shared_memory.SharedMemory(name=answers_name)
+                    resource_tracker.unregister(answers._name, "shared_memory")  # noqa: SLF001
+                if len(data) <= answers_size:
+                    answers.buf[:len(data)] = data
+                    _send(wire_out, ("written", len(data)))
+                else:
+                    wire_out.write(struct.pack("!I", len(data)))
+                    wire_out.write(data)
+                    wire_out.flush()
             elif kind == "end":
                 eyes.pop(name, None)
         except Exception as why:  # noqa: BLE001 - any failure is told, and the eyes are opened on the other side

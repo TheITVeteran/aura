@@ -116,7 +116,7 @@ from core.agency.which_one_answers_to_her import ways_carried as ways_carried
 from core.agency.who_is_who import FRIENDLY, IN_HER_WAY
 from core.agency.who_is_who import NEVER_SHOT as NEVER_SHOT
 from core.perception.how_things_move_here import HowThingsMoveHere
-from core.perception.seeing_play_elsewhere import eyes_for_play
+from core.perception.seeing_play_elsewhere import eyes_for_play, short_turns_while_playing
 from core.perception.what_changed_and_stayed import WhatChangedAndStayed
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX, WhatMoves
 from core.perception.where_in_a_world import WhereInTheWorld
@@ -1054,7 +1054,7 @@ async def play_as_it_happens(
 ) -> dict[str, Any]:
     from core.runtime.what_stops_it import current, interruptible
 
-    with interruptible(current(whose="play_as_it_happens")):
+    with interruptible(current(whose="play_as_it_happens")), short_turns_while_playing():
         return await _play_as_it_happens(
             look, hands, keys=keys, seconds=seconds, say=say, read_words=read_words,
             keep=keep, pointer_first=pointer_first, getting_somewhere=getting_somewhere,

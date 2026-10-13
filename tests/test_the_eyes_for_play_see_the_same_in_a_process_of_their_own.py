@@ -77,3 +77,47 @@ def test_the_play_loop_opens_its_eyes_this_way():
     from core.agency import playing_as_it_happens
 
     assert "eyes_for_play(kinds=keep.get(\"kinds\"))" in inspect.getsource(playing_as_it_happens._play_as_it_happens)
+
+
+def test_while_she_plays_the_interpreter_changes_hands_often_and_as_before_after():
+    import sys
+
+    before = sys.getswitchinterval()
+    with elsewhere.short_turns_while_playing():
+        assert sys.getswitchinterval() <= elsewhere.TURN_WHILE_PLAYING_S
+        with elsewhere.short_turns_while_playing():              # a stretch inside another
+            assert sys.getswitchinterval() <= elsewhere.TURN_WHILE_PLAYING_S
+        assert sys.getswitchinterval() <= elsewhere.TURN_WHILE_PLAYING_S
+    assert sys.getswitchinterval() == before
+
+
+def test_the_eyes_go_elsewhere_where_this_process_keeps_her_waiting(monkeypatch):
+    """Seen elsewhere a picture costs a few milliseconds in passing; seen here among busy threads, many times that."""
+    monkeypatch.setattr(elsewhere, "kept_waiting", lambda: 0.02)
+    assert type(elsewhere.eyes_for_play()) is WhatMoves
+    monkeypatch.setattr(elsewhere, "kept_waiting", lambda: 0.6)
+    eyes = elsewhere.eyes_for_play()
+    try:
+        assert isinstance(eyes, elsewhere.SeenElsewhere)
+    finally:
+        elsewhere.stop_them()
+
+
+def test_being_kept_waiting_is_measured_by_the_work_done_against_the_time_it_took():
+    import threading
+
+    assert elsewhere.kept_waiting() < 0.5
+    stop = threading.Event()
+
+    def busy() -> None:
+        count = 0
+        while not stop.is_set():
+            count += 1
+
+    workers = [threading.Thread(target=busy, daemon=True) for _ in range(3)]
+    for worker in workers:
+        worker.start()
+    try:
+        assert elsewhere.kept_waiting() > elsewhere.CONTENDED
+    finally:
+        stop.set()
