@@ -11,6 +11,12 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from core.agency.calibration_for_a_current_body import (
+    BodyOwner,
+    calibration_for_current_body,
+    calibration_owner,
+    uses_total_calibration_cap,
+)
 from core.agency.time_to_observe_a_control import observed_response_seconds
 from core.agency.which_way_she_faces import LONGEST_TURN_S, SETTLE_S
 from core.verify import invariant
@@ -24,6 +30,7 @@ class ControlTrial:
     began: float
     until: float
     epoch: int
+    owner: BodyOwner | None = None
 
     def holds(self, held: str, epoch: int, at: float) -> bool:
         """Whether this input still owns the current observation, within its finite time."""
@@ -48,21 +55,32 @@ async def try_a_facing_control(hands: Any, run: Any, hers: Any, choosing: Any, a
     if run.faces is None or choosing.mine is None or hers.follows_pointer:
         run.facing_trial = None
         return False
+    owner = calibration_owner(hers, choosing.mine)
+    if owner is None and not uses_total_calibration_cap(hers, choosing.mine):
+        run.facing_trial = None
+        return False
     epoch = hers.identification.epoch
-    if trial is not None and run.held_trying and trial.waits_for_picture(run.held, run.held_since, epoch, at):
+    programme = calibration_for_current_body(run, hers, choosing.mine, minimum=limit)
+    if (trial is not None and trial.owner == owner and run.held_trying
+            and trial.waits_for_picture(run.held, run.held_since, epoch, at)):
         return True
     run.facing_trial = None
+    if owner is not None and programme is None:
+        return False
     seconds = observed_response_seconds(getattr(run, "intervals", ()), least_s=seconds, settle_s=SETTLE_S,
                                         samples=4, span_s=.15, longest_s=max(seconds, LONGEST_TURN_S)) or seconds
-    if run.facing_trials >= limit or at - run.tried_at < seconds:
+    if ((programme.issued >= programme.limit if programme is not None else run.facing_trials >= limit)
+            or at - run.tried_at < seconds):
         return False
     key = run.faces.trial(run.keys)
     if key is None:
         return False
+    if programme is not None and not programme.take_trial():
+        return False
     run.facing_trials += 1
     await hold(hands, run, hers, key, at, trying=True)
     run.tried_at = run.held_since
-    run.facing_trial = ControlTrial(key, run.held_since, run.held_since + seconds, epoch)
+    run.facing_trial = ControlTrial(key, run.held_since, run.held_since + seconds, epoch, owner)
     run.longest_control_trial_s = max(getattr(run, "longest_control_trial_s", 0.), seconds)
     return True
 

@@ -402,6 +402,7 @@ def install_realtime_control_claims(suite: Any) -> None:
 
 
 def _travel_turn_claims() -> tuple:
+    from core.agency.calibration_for_a_current_body import _current_body_calibration_invariant
     from core.agency.facing_seen_under_its_input import _fresh_heading_invariant
     from core.agency.response_in_the_body_frame import _body_heading_invariant
     from core.agency.turning_while_travelling import (
@@ -410,6 +411,9 @@ def _travel_turn_claims() -> tuple:
     )
 
     return (
+        ("calibration_belongs_to_the_current_owned_body", "core/agency/calibration_for_a_current_body.py",
+         "tests/test_a_current_body_has_its_own_calibration_budget.py", lambda: _current_body_calibration_invariant() == (),
+         "A current matched body receives its own finite calibration programme; missing ownership cannot renew a budget, and issued requests do not establish measured control."),
         ("travel_segments_keep_one_input_trial", "core/agency/turning_while_travelling.py",
          "tests/test_a_travel_press_can_be_observed_again.py", lambda: _travel_segments_invariant() == (),
          "Missing motion readings split observed arcs without merging samples or multiplying input trials; contradictory qualified arcs retire their press and require new independent repeats."),
