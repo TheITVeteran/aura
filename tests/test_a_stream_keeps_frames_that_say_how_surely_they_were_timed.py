@@ -39,3 +39,17 @@ def test_frames_with_measured_times_are_watched_and_acts_on_them_judged():
     assert len(watching.moments) >= 5
     window = watching.answer_window()
     assert type(window["captured_through"]) is float and window["captured_through"] >= window["finished"]
+
+
+def test_what_the_eyes_keep_of_when_things_were_seen_is_a_plain_time():
+    """A thing born in a picture stamped with a capture receipt is born at a time every check takes for a number."""
+    from core.perception.what_moves_in_the_picture import WhatMoves
+
+    eyes = WhatMoves()
+    for i in range(40):
+        picture = np.full((120, 160, 3), 30, np.uint8)
+        picture[50:66, 10 + 3 * i:26 + 3 * i] = (230, 60, 60)
+        at = 10.0 + i / 20
+        eyes.see(picture, MeasuredFrameTime(at, lower=at, upper=at + 0.01, arrived=at + 0.01, source="browser-wall",
+                                            source_at=at, epoch=0))
+    assert eyes.things and all(type(thing.born) is float for thing in eyes.things.values())

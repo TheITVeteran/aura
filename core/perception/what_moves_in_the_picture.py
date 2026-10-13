@@ -929,6 +929,10 @@ class WhatMoves:
 
     def see(self, picture: np.ndarray, at: float) -> list[dict[str, Any]]:
         """Take one picture in. Returns what happened in it."""
+        # What the eyes keep of when things were seen is a time, as a plain number: the picture's capture receipt
+        # (core/perception/a_clock_for_drawn_frames.py) stays with the picture for whoever weighs its bounds, and a
+        # thing born on a receipt was refused by every check that a time is a number (offline 2026-10-13).
+        at = float(at)
         small = self._smaller(np.asarray(picture))
         self.shape = small.shape[:2]
         happened: list[dict[str, Any]] = []
