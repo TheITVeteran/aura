@@ -34,11 +34,28 @@ def _first_what_goes_on(can_do: Any, telling: dict[str, float]) -> dict[str, flo
 
 
 def _never_tried_here(available: Any, responds: Any, can_do: Any) -> list[str]:
-    """The acts on offer she has not taken here: not among those she was seen to take, nor taken on this screen by her
-    map of it, whether or not what they did could be made out (core/agency/where_things_lead.py)."""
-    taken_here = getattr(getattr(can_do, "leads", None), "taken_here", lambda _act: False)
+    """The acts on offer she has not taken here: not taken on this screen by her map of it, whether or not what they
+    did could be made out (core/agency/where_things_lead.py), nor, for a key, anywhere (a key does what it does on
+    every screen). A click is a click on this screen's thing: where her map knows the screen, a "next" clicked on the
+    page before is not tried on this one. Offline 2026-10-13 the next page's own "next" was taken for tried, now and
+    then, and she clicked the page's back button instead."""
+    leads = getattr(can_do, "leads", None)
+    taken_here = getattr(leads, "taken_here", lambda _act: False)
+    knows_the_screen = bool(getattr(leads, "knows_this_screen", lambda: False)())
     tried = getattr(responds, "tried", set())
-    return [option.name for option in available if option.name not in tried and not taken_here(option.name)]
+
+    def anywhere(name: str) -> bool:
+        return name in tried and not (knows_the_screen and _done_to_a_thing(name))
+
+    return [option.name for option in available if not anywhere(option.name) and not taken_here(option.name)]
+
+
+def _done_to_a_thing(name: str) -> bool:
+    """Whether an act is done to a thing on the screen (a click, a carry), not a key pressed at the whole of it."""
+    from core.agency.acts_on_two_places import two_places_of
+    from core.agency.what_i_can_do_here import what_is_clicked
+
+    return what_is_clicked(name) is not None or two_places_of(name) is not None
 
 
 #: How much more a move that does the lesson's next step is worth than the best of the rest, and how much less a move

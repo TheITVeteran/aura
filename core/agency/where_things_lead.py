@@ -189,6 +189,10 @@ class WhereThingsLead:
                 best, share = number, shared
         return best if share >= SAME_SCREEN else None
 
+    def knows_this_screen(self) -> bool:
+        """Whether the screen she is on is one told apart by its words."""
+        return self._here is not None and self._here != WORDLESS
+
     def taken_here(self, act: str) -> bool:
         """Whether ``act`` has been taken on this screen: this sitting, whatever came of it, or before, by what it did.
         What came of an act can be past making out (a picture that changed only a little, a look that came too soon);
