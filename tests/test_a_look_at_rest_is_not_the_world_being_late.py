@@ -119,3 +119,18 @@ def test_the_last_few_answers_are_read_by_something():
     looking._answering_took(0.9)
     looking._answering_took(0.4)
     assert looking._how_long_to_wait() == pytest.approx(1.8)
+
+
+@pytest.mark.asyncio
+async def test_a_world_still_changing_look_after_look_is_going_on_and_is_not_waited_on(monkeypatch):
+    """Offline 2026-10-12 each act on a timed game's court was waited on for four and a half seconds, the court never
+    coming to rest, and its clock ran out on the seventh act."""
+    looks: list[int] = []
+
+    async def read(app, over=None):
+        looks.append(1)
+        return _board(f"court {len(looks)}", settled=False)
+
+    patch_pursuit(monkeypatch, "read_screen", read)
+    seen, moved = await looking._settled_after(_board("before", settled=True), "a game", patience=30.0)
+    assert moved and len(looks) == looking.GOING_ON_AFTER_LOOKS

@@ -1315,6 +1315,8 @@ def _how_long_to_wait() -> float:
 
 #: How long a world that goes on under her hand is given to answer a move.
 GOING_ON_ANSWERS_S = 0.6
+#: How many looks in a row must find the picture still changing for the world to be taken as going on by itself.
+GOING_ON_AFTER_LOOKS = 3
 
 
 def _answering_took(seconds: float) -> None:
@@ -1394,6 +1396,7 @@ async def _settled_after(
     # next pause (live, 2026-09-24: 51 seconds before the first look).
     early = False
     first_pause: float | None = None
+    still_going = 0
     while time.monotonic() - started < (patience or _how_long_to_wait()):
         pause = 0.3 if before.get("settled") is None else _before_looking_again()
         await asyncio.sleep(pause)
@@ -1407,6 +1410,14 @@ async def _settled_after(
             continue
         said = _reading(now)
         at_rest = now.get("settled") is True or bool(now.get("still_but_unread"))
+        # A world still changing look after look is going on by itself and will not come to rest: offline 2026-10-12
+        # each act on a timed game's court was waited on for four and a half seconds, and its clock ran out on the
+        # seventh. A slide or a page turning has finished by the third look.
+        still_going = still_going + 1 if now.get("settled") is False and not now.get("still_but_unread") else 0
+        if still_going >= GOING_ON_AFTER_LOOKS and response_state is None:
+            if said != was and not moved:
+                _answering_took(time.monotonic() - started)
+            return now, said != was or moved
         measured = response_state(now) if response_state is not None else None
         if measured is PredicateState.UNKNOWN:
             early, seen = True, now
