@@ -529,6 +529,7 @@ def _visual_motion_claims() -> tuple:
         _frame_session_invariant,
         _frame_time_invariant,
     )
+    from core.perception.motion_kept_between_pictures import _motion_belief_invariant
     from core.perception.play_observation_without_holding_the_loop import (
         _owned_play_observation_invariant,
     )
@@ -573,6 +574,9 @@ def _visual_motion_claims() -> tuple:
         ("a_stream_frame_keeps_its_session_owner", "core/perception/frames_as_they_are_drawn.py",
          "tests/test_a_stream_callback_keeps_its_producing_session.py", lambda: _frame_session_invariant() == (),
          "A browser callback, calibration and decoded frame belong to their producing stream generation; an old session cannot publish or acknowledge through its replacement."),
+        ("motion_forecasts_do_not_renew_observations", "core/perception/motion_kept_between_pictures.py",
+         "tests/test_motion_is_kept_between_measured_pictures.py", lambda: _motion_belief_invariant() == (),
+         "Motion beliefs retain their measured identity and reference; forecasts grow uncertainty without renewing observations."),
         ("drawing_sampling_uses_capture_cadence", "core/perception/sampling_the_drawings_pace.py",
          "tests/test_drawing_sampling_follows_its_capture_pace.py", lambda: _drawing_cadence_invariant() == (),
          "Drawing streams reduce thinning only from consecutive measured capture intervals on the same source clock."),

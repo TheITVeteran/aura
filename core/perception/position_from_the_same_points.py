@@ -24,6 +24,7 @@ class PointPose:
     origin: tuple[float, float]
     anchors: dict[int, tuple[float, float]]
     position: tuple[float, float]
+    reference_at: float | None = None
 
 
 def measured_position(thing: Any) -> tuple[float, float]:
@@ -49,7 +50,7 @@ def position_from_points(thing: Any, blob: dict, motion: Any, at: float) -> tupl
     if current is None:
         return None
     origin = float(blob["x"]), float(blob["y"])
-    seed = PointPose(thing.born, at, origin, current, origin)
+    seed = PointPose(thing.born, at, origin, current, origin, reference_at=at)
     if previous is None or previous.born != thing.born or previous.at != thing.seen:
         thing.point_pose = seed
         return None

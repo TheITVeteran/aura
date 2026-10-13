@@ -35,6 +35,7 @@ include_rules = [
     "+core.perception.frames_as_they_are_drawn", # Pure check of original frame receipt times.
     "+core.perception.a_clock_for_drawn_frames", # Pure check of bracketed source clocks and immutable capture bounds.
     "+core.perception.sampling_the_drawings_pace", # Pure check of source cadence before reducing frame thinning.
+    "+core.perception.motion_kept_between_pictures", # Pure check of prediction uncertainty and observation custody.
     "+core.perception.play_observation_without_holding_the_loop", # Pure check of detached worker-owned observation state.
     "+core.perception.a_reading_before_more_detail", # Pure check of retained scoped capture evidence.
     "+core.perception.a_reference_kept_by_visible_support", # Pure check of a calibrated origin crossing an observed patch interval.

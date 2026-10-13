@@ -190,6 +190,8 @@ class Thing:
     motion_position: tuple[float, float] | None = None
     visible_reference: Any = field(default=None, repr=False, compare=False)
     point_pose: Any = field(default=None, repr=False, compare=False)
+    motion_belief: Any = field(default=None, repr=False, compare=False)
+    motion_estimate: Any = field(default=None, repr=False, compare=False)
 
     @property
     def size(self) -> float:
@@ -199,6 +201,17 @@ class Thing:
         return (self.x - self.w / 2, self.y - self.h / 2, self.x + self.w / 2, self.y + self.h / 2)
 
     def where_at(self, after_s: float) -> tuple[float, float]:
+        from core.perception.motion_kept_between_pictures import current_motion_estimate
+
+        estimate, belief = current_motion_estimate(self, self.seen), self.motion_belief
+        if (estimate is not None and belief is not None and estimate.current
+                and estimate.observed_at == self.seen == self.motion_measured_at
+                and self.path and (self.x, self.y) == tuple(self.path[-1][1:])
+                and estimate.velocity_error <= max(2., .5 * math.hypot(*estimate.velocity))):
+            future = belief.forecast(self.seen + after_s)
+            if future is not None:
+                dx, dy = np.subtract(future.position, estimate.position)
+                return self.x + float(dx), self.y + float(dy)
         return self.x + self.vx * after_s, self.y + self.vy * after_s
 
 
@@ -365,6 +378,23 @@ def _boxes_overlap(a: tuple, b: tuple) -> bool:
 
 #: How far a box may go between two pictures for the points followed on it to say better than the box how it went.
 POINTS_KEEP_UP_PX = 6.0
+
+
+def prepare_play_vision() -> None:
+    """Load and compile numerical dependencies before the first timed observation.
+
+    No picture enters this observer. Offline 2026-10-13 first-use
+    imports and compilation took half a second on a blank frame.
+    """
+    from scipy.spatial import cKDTree
+
+    from core.perception.motion_kept_between_pictures import MotionBetweenPictures
+    from core.perception.picture_arithmetic import middle_values
+
+    middle_values(np.zeros((3, 3), dtype=np.uint8), (3, 3))
+    cKDTree(np.zeros((1, 2)))
+    MotionBetweenPictures(scale=1.)
+
 
 
 class WhatMoves:
@@ -991,6 +1021,11 @@ class WhatMoves:
         happened.extend(self._shown_not_scenery(dt))
         self._drift(small, dt)
         self._what_the_points_say(at)
+        from core.perception.motion_kept_between_pictures import observe_thing_motion
+
+        for thing in self.things.values():
+            if thing.seen == at:
+                observe_thing_motion(thing, at, self.shape)
         return happened
 
     def _what_the_points_say(self, at: float) -> None:

@@ -325,7 +325,34 @@ class Want:
         }
 
 
-class WhatSheWants:
+class _WantReadouts:
+    """Read the retained wants and their public summary under the record lock."""
+
+    def standing(self) -> list[Want]:
+        """What she wanted the last time it was asked, without asking again.
+
+        Asking appraises every thing, and an appraisal is itself a look at
+        it. A readout takes the last answer.
+        """
+        with self._lock:
+            return list(self._standing)
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            reachable = sum(1 for thing in self._things.values() if thing.reachable)
+            return {
+                "things": len(self._things),
+                "reachable": reachable,
+                "turns": self._turns,
+                "noise": round(self._noise, 6),
+                "likes": [thing.key for thing in self.likes()[:8]],
+                "dislikes": [thing.key for thing in self.dislikes()[:8]],
+                "wants": [want.as_dict() for want in self._standing[:8]],
+            }
+
+
+
+class WhatSheWants(_WantReadouts):
     """The things she has met, what each has been worth, and what follows."""
 
     def __init__(self, path: str | Path | None = None, *, engine: Any = None) -> None:
@@ -983,27 +1010,6 @@ class WhatSheWants:
             held = _held(self)
         _save(self, held)
 
-    def standing(self) -> list[Want]:
-        """What she wanted the last time it was asked, without asking again.
-
-        Asking appraises every thing, and an appraisal is itself a look at
-        it. A readout takes the last answer.
-        """
-        with self._lock:
-            return list(self._standing)
-
-    def status(self) -> dict[str, Any]:
-        with self._lock:
-            reachable = sum(1 for thing in self._things.values() if thing.reachable)
-            return {
-                "things": len(self._things),
-                "reachable": reachable,
-                "turns": self._turns,
-                "noise": round(self._noise, 6),
-                "likes": [thing.key for thing in self.likes()[:8]],
-                "dislikes": [thing.key for thing in self.dislikes()[:8]],
-                "wants": [want.as_dict() for want in self._standing[:8]],
-            }
 
 
 def read_turn(
