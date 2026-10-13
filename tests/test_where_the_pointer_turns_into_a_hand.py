@@ -206,3 +206,41 @@ def test_a_place_found_half_a_cell_beside_a_word_is_that_word():
     assert the_thing_there((0.77, 0.72), [back, on]) is on
     assert the_thing_there((0.73 + 1.5 / ACROSS, 0.72), [back]) is None  # a cell and a half off: something else
     assert the_thing_there((0.5, 0.5), [{"text": "middle", "center_x": 0.52, "center_y": 0.5}])["text"] == "middle"
+
+
+def test_a_page_asked_the_whole_sweep_at_once_finds_the_same_places_as_place_by_place():
+    """One move and one question to the browser a place took most of a second a screen; asked in one go, a few
+    thousandths. What is found must not change, and the mouse is left where the last move left it."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from core.perception import where_the_pointer_turns as sweep
+
+    doors = [(0.1, 0.2, 0.15, 0.25), (0.6, 0.55, 0.2, 0.3)]
+
+    def shown(x, y):
+        return "pointer" if any(a <= x / 1280 <= a + w and b <= y / 768 <= b + h for a, b, w, h in doors) else "auto"
+
+    class _Page:
+        viewport_size = {"width": 1280, "height": 768}
+
+        def __init__(self, at_once: bool):
+            self.at_once, self.at, self.asked = at_once, (0.0, 0.0), 0
+            self.mouse = SimpleNamespace(move=self._move)
+
+        async def _move(self, x, y):
+            self.at = (x, y)
+
+        async def evaluate(self, script, where):
+            self.asked += 1
+            if script == sweep._SWEPT_IN_THE_PAGE:
+                if not self.at_once:
+                    raise RuntimeError("this page is asked place by place")
+                return [shown(x, y) for x, y in where[0]]
+            return shown(*self.at)
+
+    at_once, by_place = _Page(True), _Page(False)
+    found = asyncio.run(sweep.where_the_pointer_turns(at_once))
+    assert found == asyncio.run(sweep.where_the_pointer_turns(by_place)) and len(found) == 2
+    assert at_once.asked < 10 < by_place.asked
+    assert at_once.at == by_place.at

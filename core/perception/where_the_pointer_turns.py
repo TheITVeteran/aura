@@ -68,6 +68,57 @@ def the_thing_there(place: tuple[float, float], regions: list[dict[str, Any]], a
     return best
 
 
+#: The pointer moved over each of a list of places inside the page, as the page's own pointer moves, and what it is
+#: shown as at each: the whole sweep in one asking of the page.
+_SWEPT_IN_THE_PAGE = """(([points]) => {
+  const at = (x, y) => {
+    let e = document.elementFromPoint(x, y);
+    for (let i = 0; e && i < 6; i++) {
+      const inner = e.shadowRoot && e.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === e) break;
+      e = inner;
+    }
+    return e;
+  };
+  const shown = [];
+  for (const [x, y] of points) {
+    const e = at(x, y);
+    if (e) {
+      const how = {clientX: x, clientY: y, bubbles: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true};
+      e.dispatchEvent(new PointerEvent('pointermove', how));
+      e.dispatchEvent(new MouseEvent('mousemove', how));
+    }
+    shown.push(""" + _SHOWN_AS + """([x, y]));
+  }
+  return shown;
+})"""
+
+
+async def _shown_at_each(page: Any, points: list[tuple[float, float]]) -> list[str]:
+    """What the pointer is shown as at each of ``points`` (the page's pixels), the pointer taken over them in turn.
+
+    Asked of the page in one go: the pointer's moves are handed to what is drawn under each place as the page hands it
+    the mouse's, and what the pointer is shown as is read after each. One move and one question to the browser a place
+    took most of a second for a screen (108 places), and was most of the time of a look at a screen that had something
+    to find under the pointer; in one go it takes a few thousandths. Offline 2026-10-12 the two found the same places
+    on sixteen screens of eight games. Where the page cannot be asked so, the mouse is moved over each place as before.
+    The mouse is left where the last move left the pointer, as it was."""
+    if not points:
+        return []
+    try:
+        shown = await page.evaluate(_SWEPT_IN_THE_PAGE, [[list(point) for point in points]])
+        if isinstance(shown, list) and len(shown) == len(points):
+            await page.mouse.move(*points[-1])
+            return [str(one or "") for one in shown]
+    except Exception as why:  # noqa: BLE001 - a page that will not be asked in one go is asked place by place
+        logger.debug("the pointer could not be swept inside the page: %s", str(why)[:120])
+    out = []
+    for x, y in points:
+        await page.mouse.move(x, y)
+        out.append(str(await page.evaluate(_SHOWN_AS, [x, y]) or ""))
+    return out
+
+
 def _groups(hands: set[tuple[int, int]]) -> list[list[tuple[int, int]]]:
     """The cells where the pointer was a hand, neighbours taken together."""
     left, groups = set(hands), []
@@ -115,15 +166,12 @@ async def where_the_pointer_turns(page: Any, over: tuple[float, float, float, fl
     if not width or not height:
         return []
     left, top, right, bottom = over or (0.0, 0.0, 1.0, 1.0)
-    hands: set[tuple[int, int]] = set()
+    cells = [(column, row) for row in range(DOWN) for column in range(ACROSS)]
     try:
-        for row in range(DOWN):
-            for column in range(ACROSS):
-                x = (left + (right - left) * (column + 0.5) / ACROSS) * width
-                y = (top + (bottom - top) * (row + 0.5) / DOWN) * height
-                await page.mouse.move(x, y)
-                if str(await page.evaluate(_SHOWN_AS, [x, y]) or "") in _A_HAND:
-                    hands.add((column, row))
+        shown = await _shown_at_each(page, [((left + (right - left) * (column + 0.5) / ACROSS) * width,
+                                             (top + (bottom - top) * (row + 0.5) / DOWN) * height)
+                                            for column, row in cells])
+        hands = {cell for cell, one in zip(cells, shown, strict=True) if one in _A_HAND}
     except Exception as why:  # noqa: BLE001 - a page that cannot be asked is a screen with no such places found
         logger.info("the pointer could not be swept over the page: %s", str(why)[:120])
         return []
@@ -162,17 +210,12 @@ async def _split_finer(page: Any, hands: set[tuple[int, int]], over: tuple[float
         rows = [r for _, r in group]
         c0, c1, r0, r1 = min(columns), max(columns) + 1, min(rows), max(rows) + 1
         wide, high = (c1 - c0) * FINER, (r1 - r0) * FINER
-        finer: set[tuple[int, int]] = set()
+        cells = [(column, row) for row in range(high) for column in range(wide)]
         try:
-            for row in range(high):
-                if time.monotonic() - began >= FINER_AT_MOST_S * 1.5:
-                    break
-                for column in range(wide):
-                    x = (left + (right - left) * (c0 + (column + 0.5) / FINER) / ACROSS) * width
-                    y = (top + (bottom - top) * (r0 + (row + 0.5) / FINER) / DOWN) * height
-                    await page.mouse.move(x, y)
-                    if str(await page.evaluate(_SHOWN_AS, [x, y]) or "") in _A_HAND:
-                        finer.add((column, row))
+            shown = await _shown_at_each(page, [((left + (right - left) * (c0 + (column + 0.5) / FINER) / ACROSS) * width,
+                                                 (top + (bottom - top) * (r0 + (row + 0.5) / FINER) / DOWN) * height)
+                                                for column, row in cells])
+            finer = {cell for cell, one in zip(cells, shown, strict=True) if one in _A_HAND}
         except Exception as why:  # noqa: BLE001 - a place that cannot be swept again is kept as it was
             logger.info("the pointer could not be swept finer: %s", str(why)[:120])
             return []
