@@ -128,3 +128,10 @@ def test_a_phrase_of_an_act_is_no_name_for_a_thing():
     guide.take_in(TOLD, ["Avoid crashing into obstacles and don't land too hard!", "Land on the landing platform."])
     assert not any("into" in n or "too" in n for n in guide.names.get("avoid", []))
     assert "landing platform" in guide.names.get("goal", [])
+
+
+def test_a_new_thing_is_said_with_the_article_it_takes():
+    """LIVE-like 2026-10-13 "That's new: a eds showed up" was said aloud."""
+    from core.agency.noticing_in_play import _one_new
+
+    assert [_one_new(x) for x in ("egg", "door", "eds", "Bloo", "glass")] == ["an egg", "a door", "eds", "Bloo", "a glass"]

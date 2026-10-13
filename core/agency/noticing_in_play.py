@@ -184,7 +184,8 @@ class NoticingInPlay:
             self.kinds_seen.add(kind)
             if at - (self.began or at) >= NEW_AFTER_S:
                 called = name(kind, thing, "") if name is not None else "thing"
-                notebook.notice(f"new {called}", f"that's new: a {called} showed up", at, kind="new", about=str(kind))
+                notebook.notice(f"new {called}", f"that's new: {_one_new(called)} showed up", at, kind="new",
+                                about=str(kind))
 
     def _said(self, became: Any, say: Any, at: float) -> None:
         """A theory as it becomes one, said, one in a while: the rest are in her log and her reasoning."""
@@ -209,6 +210,18 @@ def noticed(run: Any, moves: Any, meeting: Any, at: float, say: Any, named: Any)
         return named(moves, kind, thing, parts.get(meeting.stance(kind), ""))
 
     run.noticing.saw(run, moves, meeting, at, guide.notes, name, say)
+
+
+def _one_new(called: str) -> str:
+    """A thing as it is said on first seeing it: "a door", "an egg"; several, or a name, as they are ("eds", "Bloo").
+    LIVE-like 2026-10-13 "That's new: a eds showed up" was said aloud."""
+    plain = " ".join(str(called or "").split())
+    if not plain or not plain[:1].islower():
+        return plain
+    last = plain.split()[-1]
+    if last.endswith("s") and not last.endswith(("ss", "us", "is")):
+        return plain
+    return ("an " if plain[:1] in "aeiou" else "a ") + plain
 
 
 def a_key_that_pays(keys: Any) -> str:
