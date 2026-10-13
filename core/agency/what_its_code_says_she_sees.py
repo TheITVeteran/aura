@@ -19,7 +19,7 @@ from typing import Any
 
 logger = logging.getLogger("Aura.WhatItsCodeSaysSheSees")
 
-__all__ = ["GROUND_GONE_OVER", "CodeKind", "ground_gone_over", "kinds_its_code_draws", "nothing_inside_stops_her",
+__all__ = ["GROUND_GONE_OVER", "CodeKind", "a_strip_of_ground", "ground_gone_over", "kinds_its_code_draws", "nothing_inside_stops_her",
            "paces_its_code_says", "swerves_its_code_says", "what_its_code_says_she_sees"]
 
 #: How far a colour seen may be from a colour the code fills with and be that colour, on its most different channel, out
@@ -136,6 +136,29 @@ def nothing_inside_stops_her(moves: Any, mine: Any, guide: Any = None) -> bool:
         return False
     matched = kinds_its_code_draws(world, getattr(moves, "kinds", []), _laid(world, moves, guide))
     return getattr(matched.get(int(getattr(mine, "kind", -1))), "name", "") == "hers"
+
+
+def a_strip_of_ground(bar: Any, shape: tuple[int, int], guide: Any = None) -> bool:
+    """Whether a strip she follows as a bar (core/perception/how_full_a_bar_is.py), in a picture of ``shape`` (rows,
+    columns), is the ground the place's code says is to be gone over: drawn in the colour its code marks ground gone
+    over in, or lying on that ground. A row of floor shortens as it is painted, and it is the floor, not a bar of what
+    she has left. Offline 2026-10-13 rows of a painted floor were taken for bars, one of them named for the PAINTED
+    beside it, and what she learned from them falling was that holding down cost her."""
+    world, guide = _the_world(guide)
+    ground = getattr(world, "ground", None) if world else None
+    if ground is None:
+        return False
+    marks, seen = _rgb(getattr(ground, "drawn_in", "")), tuple(getattr(bar, "colour", ()) or ())
+    if marks is not None and len(seen) == 3 and _apart(seen, marks) <= SEEN_AS_DRAWN:
+        return True
+    from core.agency.ground_her_code_names import ground_in_her_picture
+
+    laid = ground_in_her_picture(world, shape, getattr(guide, "stage_in_her_picture", None))
+    if laid is None:
+        return False
+    (left, top), (wide, tall), (columns, rows) = laid.origin, laid.cell, laid.cells
+    return (top <= float(bar.row) <= top + rows * tall
+            and left - wide / 2 <= float(bar.start) and float(bar.end) <= left + (columns + 0.5) * wide)
 
 
 def ground_gone_over(moves: Any, guide: Any = None) -> set[int]:

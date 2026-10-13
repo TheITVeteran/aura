@@ -215,8 +215,8 @@ class _Choosing:
         for lift in self.lifts:
             self.ways.pop(lift, None)
         self.across, self.updown = hers.follows_along if hers.follows_pointer else hers.axes(keys)
-        self._what_its_code_says_of_her_keys(keys)
         self.pointing = hers.follows_pointer
+        self._what_its_code_says_of_her_keys(keys)
         shots = hers.makes
         self.shot = next(iter(shots.values()), None)
         # Low on what she has left, what costs her is given a wider berth.
@@ -239,7 +239,10 @@ class _Choosing:
             self.barred, self.nothing_stops_her = None, True
 
         for key, way in paces_its_code_says(self.moves, self.mine, keys).items():
-            if key in self.ways or key in getattr(self, "lifts", []):
+            if key in getattr(self, "lifts", []):
+                # Its code sets her pace by it, and lifts her by nothing: what play took for a lift was her walking.
+                self.lifts = [lift for lift in self.lifts if lift != key]
+            elif key in self.ways:
                 continue
             self.ways[key] = way
             self.across = True if abs(way[0]) > 0 else self.across
@@ -593,8 +596,12 @@ class _Choosing:
             ahead = (cx - mx) * heading[0] + (cy - my) * heading[1]
             rank = far - (0.25 * size if ahead > 0 else 0.0)
             if best is None or rank < best[0]:
-                best = (rank, x, y)
-        return (best[1], best[2]) if best is not None else None
+                best = (rank, x, y, (column, row), far)
+        if best is None:
+            return None
+        if hasattr(ground, "going_to"):
+            ground.going_to(best[3], near=best[4] <= 2.5 * max(ground.cell))
+        return best[1], best[2]
 
     def danger(self, way: tuple[float, float]) -> float:
         return self.danger_along(lambda after: (way[0] * after, way[1] * after))

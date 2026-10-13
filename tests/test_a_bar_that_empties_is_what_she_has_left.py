@@ -6,6 +6,8 @@ panel that shortens in steps, a plain strip that never changes, a band of sky, a
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -190,6 +192,33 @@ def test_a_thing_that_answered_once_and_stands_still_under_press_after_press_ans
     assert not _nothing_answers(run, hers, meeting, 60.0)
     run.input_key_downs.update({"space": 50})                            # keys that never moved it say nothing
     assert not _nothing_answers(run, hers, meeting, 75.0)
+
+
+def test_her_thing_seen_to_go_under_her_keys_answers_however_far_apart_the_pictures_are():
+    """Offline 2026-10-13, played whole at three pictures a second, her pictures came too far apart for her going to be
+    measured, and for eight seconds of painting a floor it went unmeasured: the stretch was ended as nothing answering
+    her, and she stood still five seconds while the bugs went on. Seen to have gone somewhere while a key was held, it
+    answers; standing still under her keys, or going while she holds none, it does not."""
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import WhichIsHers, last_moved
+
+    def seen(hers, x, at):
+        hers._remember_own_thing(SimpleNamespace(things={1: SimpleNamespace(
+            number=1, kind=0, x=x, y=50.0, vx=0.0, vy=0.0, seen=at, size=64.0, w=8.0, h=8.0, look=())}), at)
+
+    hers = WhichIsHers()
+    hers.number, hers.kind = 1, 0
+    hers.holding("right", 0.9)
+    seen(hers, 100.0, 1.0)
+    assert last_moved(hers) == -math.inf                     # first seen: nothing to have gone from
+    seen(hers, 130.0, 1.5)                                   # 30 pixels in half a second, holding right
+    assert last_moved(hers) == 1.5
+    seen(hers, 131.0, 2.0)                                   # held against a wall: it stands
+    assert last_moved(hers) == 1.5
+    hers.holding("", 2.1)
+    seen(hers, 170.0, 2.6)                                   # carried along with nothing held: not her keys
+    assert last_moved(hers) == 1.5
 
 
 def test_a_gauge_that_fills_from_one_end_is_not_her():

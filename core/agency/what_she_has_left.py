@@ -86,8 +86,13 @@ def bars_read(bars: Any, picture: Any, at: float, regions: list[dict[str, Any]],
               place: Callable[[float, float], str]) -> Iterator[dict[str, Any]]:
     """Every bar's rise or fall in one picture, as a verdict: a "gain" or a "loss" as its words say, named for its words
     or, without any, for ``place`` (where on the screen a point, as shares of it, is)."""
+    from core.agency.what_its_code_says_she_sees import a_strip_of_ground
+
     for change in bars.read(picture, at):
         bar = change["bar"]
+        # A strip on the ground the place's code says is gone over is that ground (core/agency/what_its_code_says_she_sees.py).
+        if a_strip_of_ground(bar, bars.shape):
+            continue
         tall, wide = bars.shape
         if not bar.meaning:
             bar.label, bar.meaning = what_a_bar_measures(bar, regions, wide, tall)
@@ -101,7 +106,9 @@ def bars_read(bars: Any, picture: Any, at: float, regions: list[dict[str, Any]],
 
 def what_is_left(bars: Any) -> float:
     """The lowest of what she has left, as a share of its fullest: 1 where no bar says."""
-    left = [bar.full for bar in bars.bars() if bar.meaning == "down is bad"]
+    from core.agency.what_its_code_says_she_sees import a_strip_of_ground
+
+    left = [bar.full for bar in bars.bars() if bar.meaning == "down is bad" and not a_strip_of_ground(bar, bars.shape)]
     return min(left) if left else 1.0
 
 

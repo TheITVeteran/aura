@@ -13,6 +13,7 @@ that are the test of what it is worth.
 from __future__ import annotations
 
 import math
+import random
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,7 +73,8 @@ class HerChoicesOnAWorld:
     """One world, run from its code, played by her choosing (see the module's words)."""
 
     def __init__(self, world: str, *, seed: int = 1, ground_from_code: bool = True, decide_every: float = 1 / 30,
-                 reading: Any = None, late_by: int = 0, swerves_from_code: bool = False) -> None:
+                 reading: Any = None, late_by: int = 0, swerves_from_code: bool = False, jitter: float = 0.0,
+                 marks_seen: bool = False) -> None:
         self.world, self.seed = world, seed
         self.reading = reading if reading is not None else reading_of(world)
         self.ground_from_code = ground_from_code
@@ -81,6 +83,15 @@ class HerChoicesOnAWorld:
         self.late_by = late_by
         #: Whether how fast each kind wanders is taken from the code's reading rather than seen in play.
         self.swerves_from_code = swerves_from_code
+        #: How much each wait between her decisions may differ from ``decide_every``, as a share of it, either way: live
+        #: pictures do not come like a clock's ticks, and a body moved only at exact ticks stands on a lattice she
+        #: never leaves.
+        self.jitter = jitter
+        #: Whether the ground's marks are seen, as her eyes see them where the code says what colour they are: every
+        #: cell nothing stands over, as the world has it. Without, she knows only where her body went.
+        self.marks_seen = marks_seen
+        self._waits = random.Random(seed)
+        self._last_wait = decide_every
         self._numbered = 10
         self.scale = SHAPE[1] / self.reading.stage[0]
         self._oracle = WorldRunFromItsCode(world, seed=seed)
@@ -105,6 +116,7 @@ class HerChoicesOnAWorld:
         body = game[hers.name]
         w, h = body.get("w", hers.size[0]), body.get("h", hers.size[1])
         things = {1: _a_thing(1, 0, (body["x"], body["y"], w, h), self.scale)}
+        things[1].seen = at
         free = dict(kept)
         for kind, of in enumerate(self.reading.things, start=1):
             for item in game.get(of.name) or []:
@@ -117,14 +129,29 @@ class HerChoicesOnAWorld:
                 if near is not None and math.dist((near.x, near.y), (thing.x, thing.y)) < 12:
                     del free[near.number]
                     thing.number, thing.path = near.number, near.path
-                    thing.vx = (thing.x - near.x) / self.decide_every
-                    thing.vy = (thing.y - near.y) / self.decide_every
+                    thing.vx = (thing.x - near.x) / self._last_wait
+                    thing.vy = (thing.y - near.y) / self._last_wait
                 else:
                     self._numbered += 1
                     thing.number = self._numbered
                 thing.path.append((at, thing.x, thing.y))
                 things[thing.number] = thing
         return things
+
+    def _the_marks_seen(self, ground: Any, state: dict[str, Any], things: dict[int, Any]) -> None:
+        """The cells nothing stands over, marked as the world has them: what her eyes read off the picture."""
+        columns = self.reading.ground.cells[0]
+        kept_in = self.reading.ground.kept_in
+        painted = {(k % columns, k // columns) for k, v in enumerate(state["game"].get(kept_in) or []) if v}
+        looked = set()
+        for row in range(ground.cells[1]):
+            for column in range(ground.cells[0]):
+                x0, y0 = ground.origin[0] + column * ground.cell[0], ground.origin[1] + row * ground.cell[1]
+                x1, y1 = x0 + ground.cell[0], y0 + ground.cell[1]
+                if not any(x0 < t.x + t.w / 2 and t.x - t.w / 2 < x1 and y0 < t.y + t.h / 2 and t.y - t.h / 2 < y1
+                           for t in things.values()):
+                    looked.add((column, row))
+        ground.saw(painted, looked)
 
     def run(self, seconds: float, *, each: Any = None) -> dict[str, Any]:
         """Played for ``seconds`` or until the world's game ends; ``each`` is called at every choice with the ground
@@ -160,6 +187,8 @@ class HerChoicesOnAWorld:
             mine = things[1]
             if ground is not None:
                 ground.marked_by(mine)
+                if self.marks_seen:
+                    self._the_marks_seen(ground, state, things)
                 if each is not None:
                     each(ground, state)
             else:
@@ -180,8 +209,11 @@ class HerChoicesOnAWorld:
             hers.last_velocity = hers.paces.get(applied, (0.0, 0.0)) if applied else (0.0, 0.0)
             if len(self.trace) < 100000:
                 self.trace.append({"at": round(at, 3), "key": key, "why": why, "x": mine.x, "y": mine.y})
-            state = self._oracle.step(self.decide_every, frame=FRAME_S)
-            at += self.decide_every
+            wait = self.decide_every * (1.0 + self._waits.uniform(-self.jitter, self.jitter)) if self.jitter else self.decide_every
+            wait = max(1, round(wait / FRAME_S)) * FRAME_S if self.jitter else wait
+            state = self._oracle.step(wait, frame=FRAME_S)
+            at += wait
+            self._last_wait = wait
         tally = state["world"]
         return {"world": self.world, "seed": self.seed, "ground_from_code": self.ground_from_code, "seconds": round(at, 2),
                 "state": tally["state"], "ended": tally.get("ended") or [], "score": tally.get("score"),

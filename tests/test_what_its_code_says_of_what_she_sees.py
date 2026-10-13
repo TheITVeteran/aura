@@ -83,3 +83,31 @@ def test_with_no_reading_of_its_code_nothing_is_said_of_what_she_sees():
     assert what_its_code_says_she_sees(None, moves, None, meeting, 0.0, None,
                                        SimpleNamespace(world_its_code_makes=None)) == {}
     assert meeting.told == {}
+
+
+def test_a_key_her_play_took_for_a_lift_is_a_way_to_go_where_its_code_paces_her_by_it():
+    """Her presses can take a key that walks her up for one that lifts her; where the code sets her pace by that key and
+    lifts her by none, it is a way to go. Followed by the pointer instead, her keys' paces are not hers to go by."""
+    from core.agency.choosing_where_to_be import _Choosing
+    from core.cognition.a_guide_to_a_place import THE_GUIDE, Guide
+    from tools.oracles.her_choices_on_a_world import SHAPE, _a_thing, _HerKeys
+
+    paint = _read("paint")
+    scale = SHAPE[1] / paint.stage[0]
+    keys = ["left", "right", "up", "down"]
+    mine = _a_thing(1, 0, (120, 100, 16, 16), scale)
+    moves = SimpleNamespace(shape=SHAPE, things={1: mine}, kinds=[_kind(0, (242, 242, 242))], out_of_sight={})
+    presses = SimpleNamespace(lifts=lambda kind, size, number: ["up"], path=lambda key, kind, number: None)
+    guide = Guide(place="paint")
+    guide.world_its_code_makes = paint
+    token = THE_GUIDE.set(guide)
+    try:
+        hers = _HerKeys({"left": (-150.0, 0.0), "right": (150.0, 0.0)}, scale)
+        choosing = _Choosing(moves, hers, WhatMeetingDoes(), keys, None, presses=presses)
+        assert "up" not in choosing.lifts
+        assert choosing.ways["up"] == (0.0, -150.0 * scale) and choosing.ways["down"] == (0.0, 150.0 * scale)
+        hers.follows_pointer, hers.follows_along = True, (True, True)
+        choosing = _Choosing(moves, hers, WhatMeetingDoes(), keys, None, presses=presses)
+        assert choosing.lifts == ["up"] and "down" not in choosing.ways
+    finally:
+        THE_GUIDE.reset(token)

@@ -137,17 +137,25 @@ class _Scene:
     answer_s: float = 0.0
 
 
-def plans_to_imagine(choices: Sequence[str], presses: Sequence[str], held: str) -> list[Plan]:
+def plans_to_imagine(choices: Sequence[str], presses: Sequence[str], held: str, *, every: float = 0.0) -> list[Plan]:
     """Every plan worth imagining: each key (or none) held throughout; each held and then another from a change time;
-    and each press made at a time while a key is held. ``choices`` includes "" (nothing held)."""
+    and each press made at a time while a key is held. ``choices`` includes "" (nothing held).
+
+    Nothing in a plan changes before her next decision, ``every`` seconds from now: a plan that changes keys sooner is
+    one she cannot follow. Offline 2026-10-13, deciding three times a second on the paint world's own code, she chose
+    plans that held a key for a sixth of a second and then turned, held each for a third, and went right and left in
+    turn on the spot while a bug came to her: she lost every life on six seeds of six."""
+    def kept(times: Sequence[float]) -> list[float]:
+        return sorted({max(when, every) if when > 0.0 else when for when in times})
+
     plans = [Plan(((0.0, key),)) for key in choices]
     for first in choices:
         for then in choices:
             if then != first:
-                plans += [Plan(((0.0, first), (when, then))) for when in CHANGES_AT]
+                plans += [Plan(((0.0, first), (when, then))) for when in kept(CHANGES_AT)]
     for press in presses:
         for key in choices:
-            plans += [Plan(((0.0, key),), ((when, press),)) for when in PRESSES_AT]
+            plans += [Plan(((0.0, key),), ((when, press),)) for when in kept(PRESSES_AT)]
     # The key held now first, so that among plans that come out alike she goes on as she is.
     return sorted(plans, key=lambda plan: plan.first != held)
 
@@ -160,7 +168,8 @@ def best_plan(choosing: Any, held: str, goal: tuple[float | None, float | None],
     scene = _the_scene(choosing, horizon)
     if scene is None:
         return None
-    plans = plans_to_imagine(["", *scene.ways], list(scene.paths), held)
+    plans = plans_to_imagine(["", *scene.ways], list(scene.paths), held,
+                             every=float(getattr(choosing, "next_picture_s", 0.0) or 0.0))
     arrival = None
     if arrive_at is not None and scene.pushes is not None:
         cadence = max(STEP_S, float(getattr(choosing, "next_picture_s", STEP_S)))

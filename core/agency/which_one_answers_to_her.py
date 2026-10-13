@@ -582,6 +582,10 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         self.kind: int | None = None
         self.last_seen: tuple[float, float] | None = None
         self.last_seen_at = -math.inf
+        #: When her thing was last seen to have gone somewhere while a key was held, however far apart the pictures:
+        #: where pictures come too far apart for her going to be measured, that it went is still seen.
+        self.went_at = -math.inf
+        self._remembered: int | None = None
         self.last_velocity = (0.0, 0.0)
         self.last_size = 0.0
         self.lowest: list[float] = [math.inf, math.inf]
@@ -978,6 +982,12 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         """Keep the observed pose for every established control, including the pointer."""
         mine = moves.things.get(self.number) if self.number is not None else None
         if mine is not None:
+            held = self._held_at(at) if at is not None else None
+            apart = float(mine.seen) - self.last_seen_at
+            if (held is not None and held[1] and mine.number == self._remembered and self.last_seen is not None
+                    and apart > 0 and math.dist((mine.x, mine.y), self.last_seen) >= REALLY_MOVES * apart):
+                self.went_at = float(at)
+            self._remembered = mine.number
             self.last_seen = (mine.x, mine.y)
             if at is not None:
                 self.last_seen_at = mine.seen
@@ -1327,8 +1337,11 @@ def _the_key_s_own_way(key: str, going: tuple[float, float]) -> bool:
 
 
 def last_moved(hers: WhichIsHers) -> float:
-    """When her thing was last seen to go, -inf where she has none."""
-    return hers._hers.moved_at if hers.kind is not None else -math.inf
+    """When her thing was last seen to go under her keys, -inf where she has none: its going measured, or, where
+    pictures come too far apart for that, seen to have gone somewhere while a key was held. Offline 2026-10-13, played
+    whole at three pictures a second, her going went unmeasured for eight seconds while she painted half a floor, and
+    the stretch was ended as nothing answering her."""
+    return max(hers._hers.moved_at, getattr(hers, "went_at", -math.inf)) if hers.kind is not None else -math.inf
 
 
 @invariant("agency.missing_motion_restarts_a_segment_and_contradiction_retires_the_trial", scope="agency",

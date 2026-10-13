@@ -132,10 +132,10 @@ def test_she_wins_the_painted_floor_by_its_code_s_ground(seed):
 
 
 @pytest.mark.slow
-def test_the_code_s_ground_alone_scrapes_in_late_where_it_wins_at_all_and_her_own_cells_never_win(monkeypatch):
-    """Measured on seeds 1 to 6 at 15 choices a second: both halves won all six in 40 to 51 s; the code's ground with
-    plans that do not count it won two, at 132 s, and painted 34% to 62% of the rest; her own cells scored as ground
-    won none. Held here on the seeds each half lost."""
+def test_the_code_s_ground_alone_wins_late_where_it_wins_at_all_and_her_own_cells_never_win(monkeypatch):
+    """Measured on seeds 1 to 6 at 15 choices a second, with the cells she passes between two choices counted: both
+    halves won all six, the slowest in 50 s; the code's ground with plans that do not count it won five, the quickest in
+    73 s, and on seed 3 ran out of time at 81%; her own cells scored as ground won none. Held here on seeds 1 and 3."""
     import core.agency.ground_her_code_names as laid
     import core.agency.imagining_ahead as imagining
 
@@ -153,10 +153,9 @@ def test_the_code_s_ground_alone_scrapes_in_late_where_it_wins_at_all_and_her_ow
         patched.setattr(imagining, "A_CELL_GONE_OVER", 0.0)
         for seed in (1, 3):
             with HerChoicesOnAWorld("paint", seed=seed, decide_every=1 / 15) as play:
-                assert play.run(150.0)["painted"] < 0.85
-        with HerChoicesOnAWorld("paint", seed=2, decide_every=1 / 15) as play:
-            came_to = play.run(150.0)
-        assert came_to["ended"][-1]["why"] == "won" and came_to["seconds"] > 120, came_to
+                came_to = play.run(150.0)
+            won = came_to["ended"] and came_to["ended"][-1]["why"] == "won"
+            assert not won or came_to["ended"][-1]["seconds"] > 70, came_to
     for seed in (1, 3):
         with HerChoicesOnAWorld("paint", seed=seed, decide_every=1 / 15, ground_from_code=False) as play:
             assert play.run(150.0)["painted"] < 0.85
