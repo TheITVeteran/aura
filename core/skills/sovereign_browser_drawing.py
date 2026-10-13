@@ -349,6 +349,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     """The runs of one game, until it is won, the time is up, or it cannot be gone on with."""
     import time
 
+    from core.agency.a_page_gone_blank import GONE_BLANK
     from core.language.how_a_game_ended import asks_to_win, requested_attempts
     from core.language.what_counts_as_done import MADE, MEASURE, terms_asked, without_conditions
     from core.skills.screen_pursuit_as_it_happens import (
@@ -410,6 +411,12 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
             result["completed"] = False
             run["ended"], run["reached_end"] = "", False
             _tell("I could not finish making something here; I have not verified a result to show.")
+            break
+        if reflexes.over_because == GONE_BLANK:
+            band, again = await _begun_again_where_it_went_blank(page, band, run, runs, keep, deadline)
+            if again:
+                continue
+            result["stopped_because"] = GONE_BLANK
             break
         shape = MADE if reflexes.over_because == MADE_NOT_WON else _the_shape_of(reflexes, run)
         if shape == MADE and (terms.made_once or terms.tell_what_was_made):
@@ -484,15 +491,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         # The screen's own words the first time; after that, the round counted: six of the same line read as one.
         await _between_runs(goal, reflexes, run, runs, keep, deadline)
     if time.monotonic() >= deadline - RAN_OUT_WITHIN_S and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
-        if runs and moves and (terms.made_once or terms.tell_what_was_made) and _a_place_for_making(keep):
-            # A person whose time is up in a thing for making shows what they made in it: offline 2026-10-12 a
-            # scrapbook of photographs was worked for five minutes and left with nothing said of what was in it.
-            _tell("My time with this one is up. " + await _what_was_made_as_seen(
-                page, band, runs[-1], moves, list(getattr(reflexes, "words", []) or []), keep))
-            result["stopped_because"] = MADE_AS_ASKED
-        else:
-            _tell("I've given this one its share of the time, and I leave it here." + _where_it_stood(runs))
-            result["stopped_because"] = "its share of the time is up"
+        result["stopped_because"] = await _said_as_the_time_ran_out(page, band, terms, runs, moves, reflexes, keep)
     elif until_won and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
         # Played to be won and stopped short of it, with no end said: an end is said, and the page is not begun again.
         result["stopped_because"] = "I could not get further with it"
@@ -531,6 +530,41 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         "the_ask_does_not_apply": result.get("stopped_because") in (NOTHING_TO_WIN, PLAYED_FOR_ITS_BEST, MADE_AS_ASKED),
         "best_score": max(scores) if scores else None,
     }
+
+
+async def _said_as_the_time_ran_out(page: Any, band: tuple[float, float, float, float], terms: Any,
+                                    runs: list[dict[str, Any]], moves: list[Any], reflexes: Any, keep: dict[str, Any]) -> str:
+    """What is said when her time with a thing is up, and why she stopped."""
+    if runs and moves and (terms.made_once or terms.tell_what_was_made) and _a_place_for_making(keep):
+        # A person whose time is up in a thing for making shows what they made in it: offline 2026-10-12 a
+        # scrapbook of photographs was worked for five minutes and left with nothing said of what was in it.
+        _tell("My time with this one is up. " + await _what_was_made_as_seen(
+            page, band, runs[-1], moves, list(getattr(reflexes, "words", []) or []), keep))
+        return MADE_AS_ASKED
+    _tell("I've given this one its share of the time, and I leave it here." + _where_it_stood(runs))
+    return "its share of the time is up"
+
+
+async def _begun_again_where_it_went_blank(page: Any, band: tuple[float, float, float, float], run: dict[str, Any],
+                                           runs: list[dict[str, Any]], keep: dict[str, Any],
+                                           deadline: float) -> tuple[tuple[float, float, float, float], bool]:
+    """A run whose page went blank is no run finished: the page is loaded again and the thing on it begun again, a
+    few times at most (core/agency/a_page_gone_blank.py). The band it draws in, and whether play goes on."""
+    import time
+
+    from core.agency.a_page_gone_blank import BEGUN_AGAIN_AT_MOST
+    from core.skills.screen_pursuit_as_it_happens import _this_game, begin_run
+
+    run["ended"], run["reached_end"] = "", False
+    keep.pop("blank_since", None)
+    keep["begun_again_blank"] = int(keep.get("begun_again_blank") or 0) + 1
+    if keep["begun_again_blank"] > BEGUN_AGAIN_AT_MOST or time.monotonic() >= deadline:
+        _tell("The game has gone blank again, and I leave it here." + _where_it_stood(runs))
+        return band, False
+    _tell("The game has gone blank, so I'm loading it again.")
+    band = await _from_the_top(page, band)
+    begin_run(keep, _this_game(page))
+    return band, True
 
 
 #: Why she stops to take stock when a round gains nothing (core/cognition/taking_stock.py).

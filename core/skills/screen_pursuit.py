@@ -798,6 +798,20 @@ async def _set_out(
     ), awake_from_here
 
 
+def _a_handed_over_run_is_over(observation: dict[str, Any], can_do: Any) -> bool:
+    """Whether the run handed over is over; a run whose page has shown nothing for a while is, to be begun again
+    (core/agency/a_page_gone_blank.py)."""
+    from core.agency.a_page_gone_blank import GONE_BLANK, gone_blank
+
+    from .screen_pursuit_as_it_happens import AS_IT_HAPPENS, a_handed_over_run_is_over
+
+    quick = AS_IT_HAPPENS.get()
+    if quick is not None and not quick.over_because and gone_blank(quick.keep, observation, time.monotonic()):
+        logger.info("the run is over: %s", GONE_BLANK)
+        quick.over_because = GONE_BLANK
+    return a_handed_over_run_is_over(observation, made=sum(can_do.did_something.values()), can_do=can_do)
+
+
 async def pursue_on_screen(
     *,
     goal: str,
@@ -1066,9 +1080,7 @@ async def pursue_on_screen(
         ))
 
     def satisfied(observation: dict[str, Any]) -> bool:
-        from .screen_pursuit_as_it_happens import a_handed_over_run_is_over
-
-        if a_handed_over_run_is_over(observation, made=sum(can_do.did_something.values()), can_do=can_do):
+        if _a_handed_over_run_is_over(observation, can_do):
             return True
         # A layout is met on the board, which the decision reads and says.
         if pending.get("the_layout_is_made"):
