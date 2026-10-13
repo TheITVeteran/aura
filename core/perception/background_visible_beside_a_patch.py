@@ -47,7 +47,8 @@ def _from_sides(picture: np.ndarray, inside: np.ndarray, left: int, top: int,
         return np.zeros_like(inside, dtype=bool)
     before = picture[top:top + h, left - 2:left].astype(np.float32)
     after = picture[top:top + h, left + w:left + w + 2].astype(np.float32)
-    first, second = np.median(before, axis=1), np.median(after, axis=1)
+    # Each side has exactly two pixels: their median is their mean.
+    first, second = before.mean(axis=1), after.mean(axis=1)
     agrees = np.abs(first - second).max(axis=1) < difference
     agrees &= np.abs(before - first[:, None, :]).max(axis=(1, 2)) < difference
     agrees &= np.abs(after - second[:, None, :]).max(axis=(1, 2)) < difference

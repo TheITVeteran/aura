@@ -79,6 +79,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     for name, owner, fixture, probe, statement in (
         *_visual_motion_claims(),
         *_control_discovery_claims(),
+        *_bounded_pixel_claims(),
         ("pixel_control_requires_resolved_displacement", "core/agency/controls_measured_on_one_thing.py",
          "tests/test_which_thing_answers_to_her.py", lambda: _resolved_motion_invariant() == (),
          "Pixel-derived control evidence requires observed displacement beyond the tracker resolution before assigning a new body identity."),
@@ -397,6 +398,16 @@ def install_realtime_control_claims(suite: Any) -> None:
         test=name, owner=owner, asserted_in=owner, evidence=Evidence.MEASURED_SYNTHETIC,
         evidence_note="Lane ownership measured; autonomous repair and use require separate live evidence.",
     ))
+
+
+def _bounded_pixel_claims() -> tuple:
+    from core.perception.boundary_support_for_translation import _bounded_edge_samples_invariant
+
+    return (
+        ("bounded_edge_samples_keep_their_observed_median", "core/perception/boundary_support_for_translation.py",
+         "tests/test_bounded_edge_samples_keep_their_pixels.py", lambda: _bounded_edge_samples_invariant() == (),
+         "Exterior edge samples retain the same observed colour medians through support holes; missing samples remain unavailable."),
+    )
 
 
 def _control_discovery_claims() -> tuple:

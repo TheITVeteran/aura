@@ -82,7 +82,7 @@ def _all_sides(picture: np.ndarray, support: np.ndarray, left: int, top: int) ->
         # Empty or invalid rows cannot warn or manufacture a visible boundary.
         inside[~valid] = np.nan
         inside[~(exists & finite)] = 0.
-        own = np.nanmedian(inside, axis=2)
+        own = _median_of_three_depths(inside)
     outside_places = edge[:, :, None] - _INWARD * _OUTER_DEPTH
     outside_x, outside_y = _coordinates(lines, outside_places)
     surrounding = picture[top + outside_y, left + outside_x, :3].astype(np.float32).mean(axis=2)
@@ -94,6 +94,23 @@ def _all_sides(picture: np.ndarray, support: np.ndarray, left: int, top: int) ->
 
 def _coordinates(lines: np.ndarray, places: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return np.where(_ACROSS, places, lines[:, :, None]), np.where(_ACROSS, lines[:, :, None], places)
+
+
+def _median_of_three_depths(inside: np.ndarray) -> np.ndarray:
+    """Three depths need only the middle observed sample, or the mean of the middle pair.
+
+    Holes are NaN, sorted after the observed pixels. Counting the remaining
+    depths preserves each colour's median without NumPy's masked-array path.
+    An empty sample stays NaN and cannot supply a visible boundary.
+    """
+    count = np.sum(~np.isnan(inside), axis=2, keepdims=True)
+    ordered = np.sort(inside, axis=2)
+    lower = np.take_along_axis(ordered, np.maximum(0, (count - 1) // 2), axis=2)
+    upper = np.take_along_axis(ordered, count // 2, axis=2)
+    paired = count % 2 == 0
+    np.add(lower, upper, out=lower, where=paired)
+    np.multiply(lower, .5, out=lower, where=paired)
+    return lower.squeeze(axis=2)
 
 
 def _enough_visible(side: BoundarySide) -> bool:
@@ -130,4 +147,14 @@ def _visible_boundary_invariant() -> tuple:
     moved[16:28, 21:33] = (210, 180, 70)
     second = visible_boundary(moved, 21, 16, 33, 28, support)
     assert boundaries_agree(first, second)
+    return ()
+
+
+@invariant("perception.bounded_edge_samples_keep_their_observed_median", scope="perception",
+           owner="core/perception/boundary_support_for_translation.py", observational=False)
+def _bounded_edge_samples_invariant() -> tuple:
+    depths = np.array([[[[20., 70., 40.], [np.nan, np.nan, np.nan], [60., 30., 80.]],
+                        [[90., 10., 50.], [30., 70., 20.], [60., 40., 80.]]]], dtype=np.float32)
+    assert np.array_equal(_median_of_three_depths(depths), [[[40., 50., 60.], [60., 40., 50.]]])
+    assert np.isnan(_median_of_three_depths(np.full((1, 1, 3, 3), np.nan))).all()
     return ()
