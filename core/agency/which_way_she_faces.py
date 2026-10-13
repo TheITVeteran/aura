@@ -249,7 +249,7 @@ class WhichWaySheFaces:
     def ahead_key(self, least: int = PRESSES) -> str | None:
         """The key that takes her along where she faces fastest, ahead or back, from ``least`` presses of it or more."""
         along = {key: statistics.median(speeds) for key, speeds in self.along.items()
-                 if len(speeds) >= least and not self.travel_turns.curved(key)}
+                 if len(speeds) >= least and not self.travel_turns.curved(key) and not self.travel_turns.needs_reprobe(key)}
         best = max(along.items(), key=lambda item: abs(item[1]), default=None)
         return best[0] if best is not None and abs(best[1]) >= MOVING else None
 
@@ -289,7 +289,7 @@ class WhichWaySheFaces:
         # her (turn left, turn right): in a place whose keys move her one way, one key that moves her nowhere is a shot
         # or a jump, and needs no trial. Two that turn her, tried in turn, cancel, and she never turns to show it.
         nowhere = {key for key in self.pressed if key not in self.along and key not in self.ways}
-        curved = {key for key in keys if self.travel_turns.curved(key)}
+        curved = {key for key in keys if self.travel_turns.curved(key) or self.travel_turns.needs_reprobe(key)}
         if ahead is None or self.facing is None or not (self.spread() or len(nowhere) >= 2 or curved):
             return None
         if curved and self.travel_turns.needs_neutral_travel():

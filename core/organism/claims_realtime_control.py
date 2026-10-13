@@ -404,9 +404,15 @@ def install_realtime_control_claims(suite: Any) -> None:
 def _travel_turn_claims() -> tuple:
     from core.agency.facing_seen_under_its_input import _fresh_heading_invariant
     from core.agency.response_in_the_body_frame import _body_heading_invariant
-    from core.agency.turning_while_travelling import _travel_turns_invariant
+    from core.agency.turning_while_travelling import (
+        _travel_segments_invariant,
+        _travel_turns_invariant,
+    )
 
     return (
+        ("travel_segments_keep_one_input_trial", "core/agency/turning_while_travelling.py",
+         "tests/test_a_travel_press_can_be_observed_again.py", lambda: _travel_segments_invariant() == (),
+         "Missing motion readings split observed arcs without merging samples or multiplying input trials; contradictory qualified arcs retire their press and require new independent repeats."),
         ("a_new_heading_requires_a_current_direction_experiment", "core/agency/facing_seen_under_its_input.py",
          "tests/test_a_new_body_requests_a_fresh_heading.py", lambda: _fresh_heading_invariant() == (),
          "Earlier owned responses can request bounded direction trials after a body is reacquired; they grant no heading or turning measurements, and unavailable controls cannot be requested."),
