@@ -92,6 +92,56 @@ def _record_learning_degradation(
         _mark_learning_degraded(state, stage=stage, error=error, action=action)
 
 
+async def read_what_the_turn_was_worth(state: AuraState) -> None:
+    """Read the turn that just ended against what she expected, and teach by it.
+
+    Its own function because the rest of this phase waits for a background
+    tick and this cannot. The phase is skipped on every tick somebody is
+    waiting on, so while the reading lived inside it no turn she spent with a
+    person was ever read: live, 10 to 13 October, 22 of her 500 choices were
+    appraised. The kernel calls this on those ticks in the phase's place
+    (core/kernel/aura_kernel_lifecycle.py).
+    """
+    try:
+        from core.affect.what_it_was_worth import (
+            broadcast,
+            disabled,
+            read_turn,
+            teach_connections,
+        )
+
+        if not disabled():
+            reading = read_turn(state)
+            direction = broadcast(reading)
+            lessons = await asyncio.to_thread(teach_connections, reading)
+            # And what it leaves her to work on. See core/soma/reserve.py.
+            from core.affect.what_it_was_worth import dose
+            from core.soma.reserve import get_reserve_ledger
+
+            if reading.measured:
+                get_reserve_ledger().charge(dose(reading))
+            _ensure_response_modifiers(state)["worth"] = {
+                **reading.as_dict(),
+                "sent": direction,
+                "taught": sorted(lessons),
+            }
+            # And what it was worth is what the things in it were worth:
+            # her likes, dislikes and wants are read off this record.
+            # See core/conation/what_she_wants.py.
+            from core.conation.what_she_wants import read_turn as met_this_turn
+
+            markers = getattr(getattr(state, "affect", None), "markers", None) or {}
+            about = (markers.get("feelings_about") or {}).get("present") or []
+            met_this_turn(about, reading)
+    except _LEARNING_RECOVERABLE_ERRORS as e:
+        _record_learning_degradation(
+            e,
+            stage="worth",
+            action="left this turn's payoff unread; her chemistry and connections were not taught by it",
+            state=state,
+        )
+
+
 class LearningPhase(Phase):
     """
     Post-response learning phase.
@@ -123,44 +173,7 @@ class LearningPhase(Phase):
         # What the turn was worth to her against what she expected, read before
         # anything below can return early: a turn with no reply still paid or
         # cost her something. See core/affect/what_it_was_worth.py.
-        try:
-            from core.affect.what_it_was_worth import (
-                broadcast,
-                disabled,
-                read_turn,
-                teach_connections,
-            )
-
-            if not disabled():
-                reading = read_turn(state)
-                direction = broadcast(reading)
-                lessons = await asyncio.to_thread(teach_connections, reading)
-                # And what it leaves her to work on. See core/soma/reserve.py.
-                from core.affect.what_it_was_worth import dose
-                from core.soma.reserve import get_reserve_ledger
-
-                if reading.measured:
-                    get_reserve_ledger().charge(dose(reading))
-                _ensure_response_modifiers(state)["worth"] = {
-                    **reading.as_dict(),
-                    "sent": direction,
-                    "taught": sorted(lessons),
-                }
-                # And what it was worth is what the things in it were worth:
-                # her likes, dislikes and wants are read off this record.
-                # See core/conation/what_she_wants.py.
-                from core.conation.what_she_wants import read_turn as met_this_turn
-
-                markers = getattr(getattr(state, "affect", None), "markers", None) or {}
-                about = (markers.get("feelings_about") or {}).get("present") or []
-                met_this_turn(about, reading)
-        except _LEARNING_RECOVERABLE_ERRORS as e:
-            _record_learning_degradation(
-                e,
-                stage="worth",
-                action="left this turn's payoff unread; her chemistry and connections were not taught by it",
-                state=state,
-            )
+        await read_what_the_turn_was_worth(state)
 
         # ISSUE-88: Self-Modification Awareness
         has_mod = False
