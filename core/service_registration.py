@@ -583,6 +583,16 @@ def _register_retrieval_and_organism_services(container) -> None:
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # What she wants, likes and dislikes, from what her own turns with each
+    # thing were worth. The interior reads it here to feel them.
+    container.register(
+        'what_she_wants',
+        lambda: __import__(
+            'core.conation.what_she_wants', fromlist=['get_what_she_wants']
+        ).get_what_she_wants(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     # Fourteen dispositions, each homed where it belongs rather than in one
     # bucket. Registered here for the same reason everything else is: an organ
     # nothing can look up is a file, and the point of building these as

@@ -526,6 +526,24 @@ class WhatSheWants:
             found = [thing for thing in self._things.values() if self.known(thing.key) is False]
         return sorted(found, key=lambda thing: (thing.liking, thing.key))
 
+    def regard_for_text(self, text: str) -> float:
+        """Her strongest stated like or dislike among the things a text names.
+
+        Zero when it names nothing she can say she likes or dislikes. A name
+        is a thing's own label, whole, so this reads which of her things an
+        option is about and nothing about how the option is worded.
+        """
+        lowered = " ".join(str(text or "").lower().split())
+        strongest = 0.0
+        with self._lock:
+            things = [thing for thing in self._things.values() if len(thing.label) > 2]
+        for thing in things:
+            if thing.label.lower() not in lowered or self.known(thing.key) is None:
+                continue
+            if abs(thing.liking) > abs(strongest):
+                strongest = thing.liking
+        return strongest
+
     # ── what she wants ───────────────────────────────────────────────────
 
     def _way_for(self, thing: Thing, offered: Iterable[str]) -> str:

@@ -68,7 +68,7 @@ from core.interiority.params import ParamKind, declare
 #: decorative: relevance gates implication, implication gates coping, and
 #: a faculty that reads coping potential without relevance is asking how
 #: to handle something that does not concern this agent.
-RELEVANCE_CHECKS = ("relevance", "novelty", "certainty", "urgency")
+RELEVANCE_CHECKS = ("relevance", "novelty", "pleasantness", "certainty", "urgency")
 IMPLICATION_CHECKS = (
     "congruence",
     "expectation_deviation",
@@ -231,6 +231,20 @@ class AppraisalEngine:
         if seen < 0:
             return absent(source="ledger:unseen-counter-missing")
         return measured(1.0 / (1.0 + seen), source=f"ledger:seen={seen}")
+
+    def _pleasantness(self, event: InteriorEvent) -> Reading:
+        """Is the thing itself, or who it is, pleasant to her? [-1, 1].
+
+        Scherer's intrinsic pleasantness check, which comes before any goal
+        is consulted: a thing can be good or bad to her whatever she is trying
+        to do. The reading is what her own turns with it have been worth
+        (core/conation/what_she_wants.py), and it is present only once she
+        can say she likes or dislikes it.
+        """
+        regard = self._ledger.notes.regard(event.subject, event.object)
+        if regard is None:
+            return absent(source="ledger:no-regard")
+        return measured(_clamp(regard, -1.0, 1.0), source="ledger:regard")
 
     def _certainty(self, event: InteriorEvent) -> Reading:
         return measured(event.confidence, source=f"event:{event.source or 'unsourced'}")
@@ -453,6 +467,7 @@ class AppraisalEngine:
         checks: dict[str, Reading] = {
             "relevance": self._relevance(event),
             "novelty": self._novelty(event),
+            "pleasantness": self._pleasantness(event),
             "certainty": self._certainty(event),
             "urgency": self._urgency(event),
             "congruence": self._congruence(event),

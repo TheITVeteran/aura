@@ -114,9 +114,14 @@ def core_affect(frame: AppraisalFrame) -> AffectDelta:
         else 0.0
     )
 
-    implication = abs(congruence) * relevance
+    # What the thing is to her in itself, apart from what it does to anything
+    # she is pursuing. Pleasantness and conduciveness are separate sources of
+    # valence in the sequence this frame follows, so they add.
+    pleasantness = frame["pleasantness"].value if frame["pleasantness"].present else 0.0
 
-    valence = relevance * congruence * certainty
+    implication = max(abs(congruence) * relevance, abs(pleasantness))
+
+    valence = (relevance * congruence + pleasantness) * certainty
     arousal = certainty * (
         _AROUSAL_NOVELTY.value * novelty
         + _AROUSAL_IMPLICATION.value * implication

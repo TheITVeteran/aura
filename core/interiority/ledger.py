@@ -344,6 +344,9 @@ class EventNotes:
         self._touch = touch
         self._record = record
         self._goal_deltas: dict[str, float] = {}
+        #: What she has found a thing or a person to be worth, in [-1, 1],
+        #: once she can say she likes or dislikes it.
+        self._regards: dict[str, float] = {}
         self._undo_costs: dict[str, float] = {}
         self._actions_that_change: dict[str, int] = {}
         self._own_actions_that_change: dict[str, int] = {}
@@ -353,6 +356,30 @@ class EventNotes:
         self._repairs: dict[str, tuple[str, ...]] = {}
         self._seen: dict[tuple[str, str | None], int] = {}
         self._expectations: dict[tuple[str, str | None], float] = {}
+
+    def note_regards(self, regards: Mapping[str, float]) -> None:
+        """Her standing likes and dislikes, replacing the last set.
+
+        Replaced whole, because a like she can no longer state has to stop
+        being felt, and a note that is only ever added to cannot do that.
+        """
+        with self._lock:
+            self._regards = {
+                str(name).strip().lower(): max(-1.0, min(1.0, float(liking)))
+                for name, liking in regards.items()
+                if str(name).strip()
+            }
+            self._touch()
+
+    def regard(self, *names: str | None) -> float | None:
+        """The strongest regard she holds for any of these, liked or disliked."""
+        with self._lock:
+            held = [
+                self._regards[key]
+                for key in (str(name).strip().lower() for name in names if name)
+                if key in self._regards
+            ]
+        return max(held, key=abs) if held else None
 
     def note_goal_delta(self, name: str, delta: float) -> None:
         with self._lock:
@@ -877,6 +904,10 @@ class RelationalLedger:
                 practice = self.making.practice_for(object_)
                 if practice is not None:
                     stakes.append(Stake("practice", None, practice.residual(), object_))
+            # A thing she likes or dislikes concerns her by as much as she does.
+            regard = self.notes.regard(subject, object_)
+            if regard is not None:
+                stakes.append(Stake("regard", subject, abs(regard), object_ or ""))
             return tuple(stakes)
 
     def attachment(self, entity: str) -> float | None:
