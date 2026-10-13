@@ -43,6 +43,10 @@ _NAMED_KEYS = (
 _KEY_CUES = frozenset({"key", "keys", "arrow", "arrows", "press", "pressing", "hold", "holding", "tap", "hit", "push"})
 
 
+#: Words just after a way's name that say it names a key.
+_NAMES_A_KEY_AFTER = frozenset({"key", "keys", "arrow", "arrows"})
+
+
 #: Words just after a way's name that say it is how a button or the pointer is pressed, not a key: "hold down the mouse
 #: button", "press down on the ball". LIVE 2026-10-09 "hold down the mouse while you aim" was read as the down arrow,
 #: and a game played with the mouse was taken to be played with keys.
@@ -53,7 +57,10 @@ def _a_key_is_meant(lowered: str, way: str) -> bool:
     import re
 
     words = re.findall(r"[a-z]+", lowered)
-    if any(word == way and (_KEY_CUES & set(words[max(0, at - 2):at + 3]) or _cued_through_a_list(words, at))
+    # A press is said before the key it presses ("press up"), a key is named after its name ("up arrow"): offline
+    # 2026-10-13 "press or [S] to pick it up Press or [S] again", its full stop lost, made "up" a key of a game.
+    if any(word == way and (_KEY_CUES & set(words[max(0, at - 2):at]) or _NAMES_A_KEY_AFTER & set(words[at + 1:at + 3])
+                            or _cued_through_a_list(words, at))
            and not _NOT_A_KEY_AFTER & set(words[at + 1:at + 4]) and not _holding_down_another(words, at)
            for at, word in enumerate(words)):
         return True
@@ -110,9 +117,15 @@ _A_LETTER_KEY = re.compile(
 _TO_BEGIN = frozenset({"start", "begin", "restart", "continue", "play", "pause", "quit"})
 
 
+#: A number key named after a word for pressing: "hit 1 to switch to Anais", "press 2".
+_A_NUMBER_KEY = re.compile(r"\b(?:press|hit|tap|push)\s+(?:the\s+)?[\"'“]?([0-9])[\"'”]?(?![\w'.,]?\d)(?:\s+key)?\b")
+
+
 def _letter_keys(text: str, *, during_play: bool = False) -> list[str]:
-    """Letter keys a game's own words name (LIVE 2026-10-09 "grenades (activated with the X key)" was not read as one)."""
-    keys: list[str] = []
+    """Letter keys a game's own words name (LIVE 2026-10-09 "grenades (activated with the X key)" was not read as one),
+    and number keys (offline 2026-10-13 "hit 1 to switch to anais. hit 2 to switch to gumball." named none)."""
+    keys: list[str] = [match.group(1) for match in _A_NUMBER_KEY.finditer(text)]
+    keys = list(dict.fromkeys(keys))
     for match in _A_LETTER_KEY.finditer(text):
         letter = match.group(1) or match.group(2) or match.group(4)
         purpose = (match.group(3) or match.group(5) or "").lower()
@@ -161,6 +174,9 @@ def controls_named_in(text: str, *, keys_without_words: Sequence[str] = ("up", "
     from core.runtime.watched_goal import keys_named_in
 
     lowered = " ".join(str(text or "").lower().split())
+    # A key's name in quotes is its name: offline 2026-10-13 "use your 'Up' arrow key to change direction, and press the
+    # 'Space' bar to fire" was read as all four arrows and no space, and the game fires with space alone.
+    lowered = re.sub(r"[\"'‘’“”`](\w+)[\"'‘’“”`]", r"\1", lowered)
     if during_play:
         # A lifecycle command belongs to the menu, rather than to the active
         # controls. Keep other uses of the same key, such as space to jump.
@@ -184,6 +200,9 @@ def controls_named_in(text: str, *, keys_without_words: Sequence[str] = ("up", "
                 keys.extend(key for key in meant if key not in keys)
             continue
         if meant == ("space",) and not _space_is_a_key(lowered):
+            continue
+        if meant == ("return",) and not (_a_key_is_meant(lowered, "enter") or _a_key_is_meant(lowered, "return")):
+            # Offline 2026-10-13 "Enter your name." made the Enter key one of a golf game's controls.
             continue
         if any((name in words) if " " not in name else (name in lowered) for name in names):
             keys.extend(key for key in meant if key not in keys)
