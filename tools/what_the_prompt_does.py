@@ -47,7 +47,11 @@ sys.path.insert(0, str(REPO))
 
 from tools.how_much_of_a_reply_is_about_her import share_about_her  # noqa: E402
 
-ARMS: tuple[str, ...] = ("none", "opening", "anchor", "examples", "attractors", "honesty", "bare")
+#: `opening`, `rules` and `state` are the three kinds of line in the compact
+#: prompt that serves live chat; `anchor`, `examples`, `attractors` and
+#: `honesty` are the headed sections of the long prompt the other lanes use.
+ARMS: tuple[str, ...] = ("none", "opening", "rules", "state", "bare", "anchor", "examples", "attractors", "honesty")
+LIVE_CHAT_ARMS = "none,opening,rules,state,bare"
 
 #: What a person might say to her on an ordinary day: about the world, about
 #: an opinion, something she cannot know, and one that turns to her.
@@ -164,7 +168,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--repeats", type=int, default=2)
-    parser.add_argument("--arms", default=",".join(ARMS))
+    parser.add_argument("--arms", default=LIVE_CHAT_ARMS)
     parser.add_argument("--timeout", type=float, default=420.0)
     parser.add_argument("--db", default=str(Path.home() / ".aura" / "data" / "conversations.db"))
     parser.add_argument("--out", default=str(Path.home() / ".aura" / "what-the-prompt-does"))

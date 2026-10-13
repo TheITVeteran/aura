@@ -108,6 +108,29 @@ PROMPT_PARTS: dict[str, str] = {
     "examples": "## CONVERSATIONAL EXAMPLES",
     "attractors": "## DIALOGUE SOURCE ATTRACTORS",
     "honesty": "## SELF-HONESTY REQUIREMENTS",
+    # The lane that serves live chat writes lines, not headed sections
+    # (core/phases/response_generation_unitary.py). Its rules and the lines
+    # that put her state into words are named here and matched by how each
+    # line begins (`_COMPACT_LINES`).
+    "rules": "",
+    "state": "",
+}
+
+#: How the lines of the compact live-chat prompt begin, by the part each
+#: belongs to. A line that begins none of these ways is content: what she
+#: remembers, what was said, what a skill returned.
+_COMPACT_LINES: dict[str, tuple[str, ...]] = {
+    "opening": ("You are Aura Luna", "VOICE:", "Be yourself"),
+    "rules": (
+        "The final user chat message is authoritative",
+        "HARD RULES:",
+        "- ",
+        "Speak in short",
+        "This question deserves a fuller answer",
+        "Answer all ",
+        "When the user asks why or how I know",
+    ),
+    "state": ("MOOD:", "VOICE SHAPING", "NEUROCHEMICAL TONE", "PHI:", "STATE_GROUNDING:"),
 }
 
 _LEFT_OUT: "contextvars.ContextVar[frozenset[str]]" = contextvars.ContextVar(
@@ -153,6 +176,33 @@ def this_turn_is_a_measurement() -> bool:
     return bool(_MEASURED.get())
 
 
+def compact_lines_kept(lines: list[str], parts: frozenset[str] | set[str] | None = None) -> list[str]:
+    """The lines of the compact live-chat prompt, less those of the parts left out."""
+    out = left_out() if parts is None else parts
+    if not out:
+        return lines
+    begins = tuple(start for part in out for start in _COMPACT_LINES.get(part, ()))
+    return [line for line in lines if not (begins and str(line).startswith(begins))]
+
+
+def as_measured(messages: list[Any]) -> list[Any]:
+    """The messages of a measurement turn: what frames the turn, and the one message asked.
+
+    A measurement asks the same thing several ways, and the earlier answers
+    were riding along in the history of the later ones: live on 13 October the
+    fourth arm of a probe was sent 29 messages. Each arm has to meet the
+    question fresh. On any other turn the messages come back untouched.
+    """
+    if not this_turn_is_a_measurement():
+        return messages
+    framing = [m for m in messages if isinstance(m, dict) and str(m.get("role", "")).lower() == "system"]
+    asked = next(
+        (m for m in reversed(messages) if isinstance(m, dict) and str(m.get("role", "")).lower() == "user"),
+        None,
+    )
+    return [*framing, asked] if asked is not None else messages
+
+
 def without_parts(prompt: str, parts: frozenset[str] | set[str]) -> str:
     """A system prompt with the named parts taken out, whole, by their headings.
 
@@ -166,7 +216,7 @@ def without_parts(prompt: str, parts: frozenset[str] | set[str]) -> str:
     import re as _re
 
     pieces = _re.split(r"(?m)^(?=## )", prompt)
-    headings = tuple(PROMPT_PARTS[part] for part in parts if PROMPT_PARTS.get(part))
+    headings = tuple(PROMPT_PARTS[part] for part in parts if PROMPT_PARTS.get(part, "").startswith("## "))
     kept: list[str] = []
     for index, piece in enumerate(pieces):
         if index == 0 and not piece.startswith("## "):

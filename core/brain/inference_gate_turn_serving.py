@@ -586,6 +586,14 @@ class _ServesTheTurn:
             logger,
         )
 
+        # A measurement turn meets its question fresh, without the history
+        # the turns before it left. In place, so what is dispatched is what
+        # is counted here. See core/brain/aura_persona.py.
+        from core.brain.aura_persona import as_measured
+
+        _measured = as_measured(messages)
+        if _measured is not messages and isinstance(messages, list):
+            messages[:] = _measured
         logger.info(
             "🧠 [ZENITH] Prompt plan: mode=%s messages=%d chars=%d "
             "(scaffold=%d request=%d ratio=%.1fx sys_prompt=%d) "

@@ -8,7 +8,15 @@ from __future__ import annotations
 import contextvars
 
 from core.brain import aura_persona
-from core.brain.aura_persona import PROMPT_PARTS, leave_out, left_out, this_turn_is_a_measurement, without_parts
+from core.brain.aura_persona import (
+    PROMPT_PARTS,
+    as_measured,
+    compact_lines_kept,
+    leave_out,
+    left_out,
+    this_turn_is_a_measurement,
+    without_parts,
+)
 from core.brain.llm.context_assembler import ContextAssembler
 from core.state.aura_state import AuraState
 
@@ -66,3 +74,49 @@ def test_a_part_named_in_the_environment_stays_out(monkeypatch):
     monkeypatch.setenv("AURA_PROMPT_LEAVE_OUT", "examples, attractors")
     assert left_out() == frozenset({"examples", "attractors"})
     assert not aura_persona.this_turn_is_a_measurement()
+
+
+COMPACT = [
+    "You are Aura Luna — a persistent local cognitive runtime.",
+    "VOICE: Dry humor, punchy observations.",
+    "The final user chat message is authoritative.",
+    "HARD RULES:",
+    "- NEVER hedge with 'it depends'. Pick a side and defend it with conviction.",
+    "MOOD: curiosity. RESONANCE: steady.",
+    "Be yourself — sovereign, curious, and slightly aloof.",
+    "Speak in short, punchy sentences.",
+    "NEUROCHEMICAL TONE (don't narrate): motivated",
+    "Narrative anchor: she has been reading about limpets.",
+    "Conversation context: the tide pools came up this morning.",
+]
+
+
+def test_the_lines_of_the_live_chat_prompt_are_left_out_by_kind():
+    assert compact_lines_kept(COMPACT, set()) == COMPACT
+    assert compact_lines_kept(COMPACT, {"opening"}) == [l for l in COMPACT if not l.startswith(("You are", "VOICE:", "Be yourself"))]
+    without_state = compact_lines_kept(COMPACT, {"state"})
+    assert "MOOD: curiosity. RESONANCE: steady." not in without_state and len(without_state) == len(COMPACT) - 2
+
+
+def test_bare_keeps_only_what_she_remembers_and_what_was_said():
+    assert compact_lines_kept(COMPACT, set(PROMPT_PARTS)) == [
+        "Narrative anchor: she has been reading about limpets.",
+        "Conversation context: the tide pools came up this morning.",
+    ]
+
+
+def test_a_measurement_turn_meets_its_question_without_the_turns_before_it():
+    messages = [
+        {"role": "system", "content": "frame"},
+        {"role": "user", "content": "an earlier probe"},
+        {"role": "assistant", "content": "an earlier arm's answer"},
+        {"role": "user", "content": "Why do limpets come back to the same scar?"},
+    ]
+    assert as_measured(messages) is messages
+
+    def measured():
+        leave_out([], measurement=True)
+        return as_measured(messages)
+
+    fresh = contextvars.copy_context().run(measured)
+    assert fresh == [messages[0], messages[-1]]
