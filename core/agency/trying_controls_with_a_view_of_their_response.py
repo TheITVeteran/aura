@@ -80,8 +80,12 @@ async def try_controls(hands: Any, run: Any, hers: Any, at: float, moves: Any, *
         else:
             return
     await hold(hands, run, hers, key, at, trying=True)
-    run.tried_at = run.held_since
+    # A trial of resting begun while nothing is held holds nothing new, and the hold leaves no time of its own: the
+    # trial begins now. Offline 2026-10-13 a game was ended in its first half minute by a rest asked for with nothing
+    # held (None + duration).
+    began = run.held_since if run.held_since is not None else at
+    run.tried_at = began
     duration = run.counter_trial.phase_seconds if run.counter_trial.key and not run.counter_trial.done else seconds
-    run.body_trial = ControlTrial(key, run.held_since, run.held_since + duration, epoch)
+    run.body_trial = ControlTrial(key, began, began + duration, epoch)
     lease_control_trial(hands, run, hers, run.body_trial, field='body_trial')
     run.longest_control_trial_s = max(getattr(run, "longest_control_trial_s", 0.), duration)

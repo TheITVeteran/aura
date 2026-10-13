@@ -170,3 +170,16 @@ async def test_leaving_play_cancels_deadlines_and_records_the_real_primary_relea
     await asyncio.gather(deadline, return_exceptions=True)
     assert deadline.cancelled() and not run.held and hers._held[-1][1:] == ('', False)
     assert [(kind, key) for kind, key, _at in actions] == [('down', 'opaque-a'), ('up', 'opaque-a')]
+
+
+async def test_a_rest_asked_for_with_nothing_held_begins_now():
+    """Offline 2026-10-13 a game was ended in its first half minute: a trial's rest came up with nothing held, the hold
+    had nothing to do and left no time, and the trial's end was reckoned from none."""
+    run, hers, actions, hands = setup()
+    run.trying = 1                                                        # the turn after a key's is a rest
+    moves = SimpleNamespace(things={}, shape=(200, 200))
+    at = time.monotonic()
+    await try_controls(hands, run, hers, at, moves, hold=hold_control, seconds=.015)
+    assert run.body_trial.key == "" and run.body_trial.began == at and run.body_trial.until > at
+    assert actions == []
+    cancel_trial_deadline(run)
