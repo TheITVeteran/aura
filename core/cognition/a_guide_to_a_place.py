@@ -379,11 +379,12 @@ class Guide:
         goal = self.goals[0] if self.goals else ""
         if goal:
             lines.append(f"• Goal: {_short(goal)}")
-        win = next((w for w in self.win if w != goal), "")
+        win = next((w for w in self.win if w != goal and _says_how(w)), "")
         if win:
             lines.append(f"• To win: {_short(win)}")
-        if self.lose:
-            lines.append(f"• What loses: {_short(self.lose[0])}")
+        lose = next((w for w in self.lose if _says_how(w)), "")
+        if lose:
+            lines.append(f"• What loses: {_short(lose)}")
         controls = self._controls_said()
         if controls:
             lines.append(f"• {controls}")
@@ -825,6 +826,18 @@ def said_for_itself(guide: Guide, goals: list[str]) -> list[str]:
         return []
     guide.supposed_goal = ""
     return [f"It says itself what it's for: {_short(goals[0])} That isn't what I'd thought, so I'm going by it."]
+
+
+#: What an end screen says of itself, which says nothing of how a round came to end there.
+_END_SCREEN_WORDS = re.compile(r"\b(?:game over|play again|try again|you (?:win|lose|lost|won)|the end|your score|"
+                               r"your rating|final score|score|congratulations|well done|continue|menu|quit)\b[:!.]*", re.I)
+
+
+def _says_how(said: str) -> bool:
+    """Whether a way a round is won or lost says how, not only what its last screen says: offline 2026-10-12 the guide to
+    game after game read out "What loses: Play Again Game Over Your score:", the end screen's labels from its program."""
+    rest = _END_SCREEN_WORDS.sub(" ", str(said or ""))
+    return len(re.findall(r"[A-Za-z]{2,}", rest)) >= 3
 
 
 def _short(text: str, most: int = 150) -> str:

@@ -383,3 +383,13 @@ def test_an_act_done_by_pressing_a_key_is_what_the_key_does():
     ghosts = Guide(place="a haunted house")
     ghosts.take_in(SCREEN, "Score points by clicking on the ghosts.")
     assert (ghosts.controls["the pointer"].act, ghosts.controls["the pointer"].on) == ("score", "ghosts")
+
+
+def test_a_way_of_losing_that_is_only_an_end_screens_labels_is_not_said():
+    """Offline 2026-10-12 the guide to game after game read out "What loses: Play Again Game Over Your score:"."""
+    from core.cognition.a_guide_to_a_place import _says_how
+
+    assert not _says_how("Play Again Game Over Your score:")
+    assert not _says_how("CONGRATULATIONS! Play again")
+    assert _says_how("the timer reaches zero before every lamp is lit")
+    assert _says_how("you lose a life each time a ghost touches you")
