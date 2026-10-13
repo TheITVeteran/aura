@@ -17,6 +17,7 @@ What the pointer is shown as is read from the page, as a person reads it off the
 from __future__ import annotations
 
 import logging
+import weakref
 from typing import Any
 
 __all__ = ["places_the_pointer_turns", "shown_as_a_hand", "the_thing_there", "where_the_hand_is_now", "where_the_pointer_turns"]
@@ -105,18 +106,45 @@ async def _shown_at_each(page: Any, points: list[tuple[float, float]]) -> list[s
     The mouse is left where the last move left the pointer, as it was."""
     if not points:
         return []
-    try:
-        shown = await page.evaluate(_SWEPT_IN_THE_PAGE, [[list(point) for point in points]])
-        if isinstance(shown, list) and len(shown) == len(points):
-            await page.mouse.move(*points[-1])
-            return [str(one or "") for one in shown]
-    except Exception as why:  # noqa: BLE001 - a page that will not be asked in one go is asked place by place
-        logger.debug("the pointer could not be swept inside the page: %s", str(why)[:120])
+    if page not in _NEEDS_THE_MOUSE:
+        try:
+            shown = await page.evaluate(_SWEPT_IN_THE_PAGE, [[list(point) for point in points]])
+            if isinstance(shown, list) and len(shown) == len(points):
+                shown = [str(one or "") for one in shown]
+                if await _the_mouse_agrees(page, points, shown):
+                    await page.mouse.move(*points[-1])
+                    return shown
+                # A page whose drawing answers only the mouse itself: swept with it, now and from now on.
+                _NEEDS_THE_MOUSE.add(page)
+                logger.info("the pointer swept inside the page did not show what the mouse shows: swept with the mouse")
+        except Exception as why:  # noqa: BLE001 - a page that will not be asked in one go is asked place by place
+            logger.debug("the pointer could not be swept inside the page: %s", str(why)[:120])
     out = []
     for x, y in points:
         await page.mouse.move(x, y)
         out.append(str(await page.evaluate(_SHOWN_AS, [x, y]) or ""))
     return out
+
+
+#: Pages where the pointer's moves handed inside the page were seen not to do what the mouse does.
+_NEEDS_THE_MOUSE: weakref.WeakSet[Any] = weakref.WeakSet()
+#: How many places, besides every place found to be a hand, the mouse itself is taken to after a sweep inside the page.
+CHECKED_BY_THE_MOUSE = 8
+
+
+async def _the_mouse_agrees(page: Any, points: list[tuple[float, float]], shown: list[str]) -> bool:
+    """Whether the mouse itself shows what the sweep inside the page showed, at every place it found to be a hand and
+    at places spread over the rest. A drawing may answer only moves the browser makes from a real mouse (a report on
+    a test page, 2026-10-13); on such a page the two part, and the sweep is not trusted."""
+    hands = [i for i, one in enumerate(shown) if one in _A_HAND][:CHECKED_BY_THE_MOUSE]
+    rest = [i for i, one in enumerate(shown) if one not in _A_HAND]
+    spread = rest[:: max(1, len(rest) // CHECKED_BY_THE_MOUSE)][:CHECKED_BY_THE_MOUSE] if rest else []
+    for i in [*hands, *spread]:
+        x, y = points[i]
+        await page.mouse.move(x, y)
+        if (str(await page.evaluate(_SHOWN_AS, [x, y]) or "") in _A_HAND) != (shown[i] in _A_HAND):
+            return False
+    return True
 
 
 def _groups(hands: set[tuple[int, int]]) -> list[list[tuple[int, int]]]:

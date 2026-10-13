@@ -242,5 +242,40 @@ def test_a_page_asked_the_whole_sweep_at_once_finds_the_same_places_as_place_by_
     at_once, by_place = _Page(True), _Page(False)
     found = asyncio.run(sweep.where_the_pointer_turns(at_once))
     assert found == asyncio.run(sweep.where_the_pointer_turns(by_place)) and len(found) == 2
-    assert at_once.asked < 10 < by_place.asked
+    # Each sweep in one go, checked by the mouse itself at the places found and a few spread over the rest.
+    assert at_once.asked * 3 < by_place.asked
     assert at_once.at == by_place.at
+
+
+def test_a_drawing_that_answers_only_the_mouse_itself_is_swept_with_the_mouse():
+    """Where the moves handed inside the page do not do what the mouse does (a drawing that listens only to moves the
+    browser makes from a real mouse), the mouse's own sweep is the one kept, for this page from then on."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from core.perception import where_the_pointer_turns as sweep
+
+    def shown(x, y):
+        return "pointer" if 0.1 <= x / 1280 <= 0.3 and 0.2 <= y / 768 <= 0.45 else "auto"
+
+    class _Page:
+        viewport_size = {"width": 1280, "height": 768}
+
+        def __init__(self):
+            self.at, self.swept_inside = (0.0, 0.0), 0
+            self.mouse = SimpleNamespace(move=self._move)
+
+        async def _move(self, x, y):
+            self.at = (x, y)
+
+        async def evaluate(self, script, where):
+            if script == sweep._SWEPT_IN_THE_PAGE:
+                self.swept_inside += 1
+                return ["auto" for _ in where[0]]                  # moves handed inside reach nothing
+            return shown(*self.at)
+
+    page = _Page()
+    found = asyncio.run(sweep.where_the_pointer_turns(page))
+    assert len(found) == 1 and 0.1 <= found[0][0] <= 0.3
+    asyncio.run(sweep.where_the_pointer_turns(page))
+    assert page.swept_inside == 1                                   # not asked inside the page again
