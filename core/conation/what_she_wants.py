@@ -403,34 +403,51 @@ class WhatSheWants:
         particular.
         """
         here = terms_of(*texts)
-        total = sum(here.values())
-        if total <= 0:
+        if sum(here.values()) <= 0:
             return []
         with self._lock:
-            before, before_total = self._said, self._said_total
-            scored: list[tuple[float, str]] = []
-            if before_total > 0:
-                # One test per term offered, so the level each is held to is
-                # the conventional one divided by how many there are.
-                critical = NormalDist().inv_cdf(1.0 - _WRONG / len(here) / 2.0) ** 2
-                for term, count in here.items():
-                    past = before.get(term, 0)
-                    if count / total <= past / before_total:
-                        continue
-                    pooled = (count + past) / (total + before_total)
-                    ratio = 2.0 * count * math.log(count / (total * pooled))
-                    if past:
-                        ratio += 2.0 * past * math.log(past / (before_total * pooled))
-                    if ratio <= critical:
-                        continue
-                    # Dwelt on: with this exchange counted, the exchanges it
-                    # is in are fewer than half of those a term used this
-                    # often would be in by chance.
-                    exchanges = self._exchanges + 1
-                    by_chance = exchanges * (1.0 - math.exp(-(past + count) / exchanges))
-                    if math.log2(by_chance / (self._said_in.get(term, 0) + 1)) > 1.0:
-                        scored.append((ratio, term))
+            found = self._subjects(here)
             self._count_exchange(here)
+        return found
+
+    def subjects_of(self, *texts: str) -> list[str]:
+        """What `about` would say of this exchange, without counting it.
+
+        For asking what something said is about when it is not one of her
+        exchanges yet, or may never be.
+        """
+        here = terms_of(*texts)
+        if sum(here.values()) <= 0:
+            return []
+        with self._lock:
+            return self._subjects(here)
+
+    def _subjects(self, here: Counter[str]) -> list[str]:
+        """The subjects among an exchange's terms. Lock held."""
+        total = sum(here.values())
+        before, before_total = self._said, self._said_total
+        scored: list[tuple[float, str]] = []
+        if before_total > 0:
+            # One test per term offered, so the level each is held to is the
+            # conventional one divided by how many there are.
+            critical = NormalDist().inv_cdf(1.0 - _WRONG / len(here) / 2.0) ** 2
+            exchanges = self._exchanges + 1
+            for term, count in here.items():
+                past = before.get(term, 0)
+                if count / total <= past / before_total:
+                    continue
+                pooled = (count + past) / (total + before_total)
+                ratio = 2.0 * count * math.log(count / (total * pooled))
+                if past:
+                    ratio += 2.0 * past * math.log(past / (before_total * pooled))
+                if ratio <= critical:
+                    continue
+                # Dwelt on: with this exchange counted, the exchanges it is in
+                # are fewer than half of those a term used this often would be
+                # in by chance.
+                by_chance = exchanges * (1.0 - math.exp(-(past + count) / exchanges))
+                if math.log2(by_chance / (self._said_in.get(term, 0) + 1)) > 1.0:
+                    scored.append((ratio, term))
         # A pair is one thing when neither word is there without the other.
         # Then the words are the pair, and a pair one of whose words also
         # stands alone is that word beside something else.

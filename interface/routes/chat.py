@@ -5598,6 +5598,24 @@ async def _run_cognitive_engine_chat_turn(
         return _left
 
 
+def _takes_up_what_was_raised(user_message: str, reply_text: str) -> bool:
+    """Whether a subject of the exchange is something the message said.
+
+    The subjects are the terms the two texts dwell on, set against her own
+    past exchanges (core/conation/what_she_wants.py). A reply about a story
+    nobody mentioned has subjects the message never used.
+    """
+    try:
+        from core.conation.what_she_wants import get_what_she_wants, terms_of
+
+        raised = terms_of(user_message)
+        subjects = get_what_she_wants().subjects_of(user_message, reply_text)
+        return any(term in raised for term in subjects)
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("what the exchange is about could not be read: %s", exc)
+        return False
+
+
 def _looks_like_unrequested_content_review(user_message: str, reply_text: str) -> tuple[bool, str]:
     user_text = _chat_memory_state._normalize_user_message(user_message)
     reply = _chat_memory_state._normalize_user_message(reply_text)
@@ -5605,6 +5623,12 @@ def _looks_like_unrequested_content_review(user_message: str, reply_text: str) -
         return False, ""
     # A link hands her a document: talking about it was asked for (LIVE 2026-10-03, a Wikipedia link).
     if re.search(r"https?://", str(user_message or "")) or any(m in user_text for m in _CONTENT_OBJECT_MARKERS):
+        return False, ""
+    # A reply that dwells on something the message itself raised is an answer
+    # to it, whatever words it uses on the way. LIVE 2026-10-13: asked what she
+    # made of a limpet that farms a patch of algae, her answer was discarded
+    # here and a fallback that invented a genus was sent in its place.
+    if _takes_up_what_was_raised(user_message, reply_text):
         return False, ""
     review_hits = sum(1 for marker in _UNREQUESTED_CONTENT_REVIEW_MARKERS if marker in reply)
     object_hits = sum(
