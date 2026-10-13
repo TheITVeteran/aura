@@ -54,10 +54,12 @@ def test_she_can_want_what_she_has_only_pictured(record):
         record.met([A, B], 0.6, reachable=[A, B], labels=LABELS)
         record.met([C], 0.0, reachable=[C], labels=LABELS)
     assert abs(record.thing(B).liking) < 0.1
-    assert record.pictured(B) > 0.4 > record.pictured(C)
+    episode = record.imagine(B)
+    assert episode["with"] == A and episode["worth"] > 0.25
+    assert record.pictured(B) > 0.1 > record.pictured(C)
     _rested(record)
     pull = {want.thing: want for want in record.wants()}
-    assert pull[B].wanting > 0.05
+    assert pull[B].wanting > 0.0 and pull[B].episode["with"] == A
     assert C not in pull or pull[B].wanting > pull[C].wanting
     assert "pictured from its company" in pull[B].why
 
@@ -113,3 +115,71 @@ def test_her_curiosity_takes_its_subject_from_what_she_wants_before_any_list(rec
     _rested(record)
     record.wants()
     assert _what_she_wants_most() == "tide pools"
+
+
+def test_a_picture_is_believed_as_far_as_her_pictures_have_matched_what_happened(record):
+    assert record.trust_in_her_pictures() == pytest.approx(0.5)
+    for _ in range(12):
+        record.met([A], 0.6, reachable=[A], labels=LABELS)
+    for _ in range(20):
+        record.went(A, "read", label="tide pools")
+        record.met([A], 0.6)
+    believed = record.trust_in_her_pictures()
+    assert believed > 0.85
+    for _ in range(20):
+        record.went(A, "read", label="tide pools")
+        record.met([A], -0.9)
+    assert record.trust_in_her_pictures() < believed - 0.2
+
+
+def test_a_conversation_is_under_way_between_its_messages_and_over_when_she_is_free(record):
+    who = "person:ines"
+    record.started(who, "conversation", label="ines")
+    for _ in range(5):
+        record.met(["self"], 0.4)
+    assert record.thing(who).contacts == 5 and record.thing(who).during.times == 5
+    assert record.stopped("conversation") == 1
+    record.met(["self"], 0.4)
+    assert record.thing(who).contacts == 5
+    assert all(want.kind != "finish" for want in record.wants())
+
+
+def test_a_game_is_gone_back_to_by_its_address(record):
+    from core.initiative_synthesis import InitiativeSynthesizer
+
+    where = "https://example.org/games/zap"
+    record.met(["self"], -0.3)
+    for _ in range(8):
+        record.started(f"game:{where}", "play", label=where, where=where)
+        record.met(["self"], 0.6)
+        record.went(f"game:{where}", "play", label=where, where=where)
+        record.stopped("play", f"game:{where}")
+        record.met(["self"], 0.7)
+        record.met(["self"], -0.4)
+    _rested(record)
+    want = next(w for w in record.wants() if w.thing == f"game:{where}")
+    assert (want.way, want.where) == ("play", where)
+    synthesizer = InitiativeSynthesizer()
+    synthesizer._gather_want_impulses()
+    assert f"Go to {where} and play it" in [i.content for i in synthesizer._impulse_queue]
+
+
+def test_what_the_doing_was_worth_is_a_reason_to_want_it(record):
+    for _ in range(10):
+        record.started(A, "act", label="tide pools")
+        record.met(["self"], 0.6)
+        record.stopped("act", A)
+        record.met([C], -0.6, reachable=[C], labels=LABELS)
+    _rested(record)
+    assert record.thing(A).during.liking > 0.3
+    assert record.wants()[0].thing == A
+
+
+def test_she_looks_at_herself_when_her_turns_have_gone_worse_than_she_expected(record):
+    assert not record.something_is_off()
+    for _ in range(30):
+        record.met(["self"], 0.4)
+    assert not record.something_is_off()
+    for _ in range(200):
+        record.met(["self"], -0.4)
+    assert record.something_is_off()

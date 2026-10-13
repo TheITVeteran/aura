@@ -540,6 +540,16 @@ class InitiativeSynthesizer:
 
         for want in get_what_she_wants().wants(limit=self._WANTS_ON_A_SLATE):
             metadata: dict[str, Any] = {"want": want.as_dict()}
+            if want.way == "play" and want.where:
+                # A place she has played is gone back to and played.
+                self.submit(
+                    content=f"Go to {want.where} and play it",
+                    source="want",
+                    urgency=want.priority,
+                    drive=want.origin or "interest",
+                    metadata=metadata,
+                )
+                continue
             if not want.unfinished:
                 # Finding out about a named thing is a search for it. Any other
                 # way is a skill she has taken to a thing before.

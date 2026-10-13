@@ -217,6 +217,11 @@ class Thing:
     #: What the turns were worth while something she had started with it was
     #: still under way: the doing, apart from how it ended.
     during: Way = field(default_factory=Way)
+    #: What she is in the middle of with it, by name, and the turn it began:
+    #: a conversation, a game being played, an act of hers in progress.
+    under_way: dict[str, int] = field(default_factory=dict)
+    #: How to get to it, where it has a place: a game's address.
+    where: str = ""
     #: The things it has come with, and in how many turns.
     came_with: dict[str, int] = field(default_factory=dict)
 
@@ -241,6 +246,8 @@ class Thing:
             "stood_out": self.stood_out,
             "named": self.named,
             "during": [self.during.times, self.during.liking],
+            "under_way": dict(self.under_way),
+            "where": self.where,
             "came_with": dict(self.came_with),
         }
 
@@ -263,6 +270,8 @@ class Thing:
         thing.named = max(0, int(data.get("named", 0)))
         times, liking = data.get("during", [0, 0.0])
         thing.during = Way(times=int(times), liking=float(liking))
+        thing.under_way = {str(k): int(v) for k, v in dict(data.get("under_way", {})).items()}
+        thing.where = str(data.get("where", ""))
         thing.came_with = {str(k): int(v) for k, v in dict(data.get("came_with", {})).items()}
         return thing
 
@@ -290,6 +299,11 @@ class Want:
     #: not had enough of it to say.
     known: bool | None
     unfinished: str = ""
+    #: Where the thing is, when it has a place she can go back to.
+    where: str = ""
+    #: The episode she pictures: who or what it would be with, what it would
+    #: be worth and in which kinds of good, and how many turns it is drawn from.
+    episode: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -306,6 +320,8 @@ class Want:
             "contacts": self.contacts,
             "known": self.known,
             "unfinished": self.unfinished,
+            "where": self.where,
+            "episode": dict(self.episode),
         }
 
 
@@ -340,6 +356,12 @@ class WhatSheWants:
         #: What she has decided to do when she next can, if anything: one of
         #: her wants, as it stood when she decided.
         self._decided: dict[str, Any] | None = None
+        #: What she pictured a going would be worth, by thing, until the turn
+        #: it belongs to is read; and how far her pictures have been from what
+        #: the turns were worth, as a count and a running mean of the miss.
+        self._forecast: dict[str, float] = {}
+        self._forecasts = 0
+        self._miss = 0.0
         self._standing: list[Want] = []
         self._engine = engine
         self._path = Path(path) if path is not None else None
@@ -380,6 +402,8 @@ class WhatSheWants:
             self._exchanges = max(0, int(stored.get("exchanges", 0)))
             decided = stored.get("decided")
             self._decided = dict(decided) if isinstance(decided, dict) and decided.get("thing") else None
+            self._forecasts = max(0, int(stored.get("forecasts", 0)))
+            self._miss = max(0.0, min(2.0, float(stored.get("miss", 0.0))))
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             self._things.clear()
             self._turns = self._good_turns = self._read = 0
@@ -405,6 +429,8 @@ class WhatSheWants:
             "said_in": dict(self._said_in),
             "exchanges": self._exchanges,
             "decided": self._decided,
+            "forecasts": self._forecasts,
+            "miss": self._miss,
         }
 
     def _save(self, payload: dict[str, Any]) -> None:
@@ -581,7 +607,7 @@ class WhatSheWants:
             # Whatever she has under way is part of this turn whether or not
             # the turn named it: the doing is lived turn by turn, and a thing
             # credited only when it ends is worth nothing until it is over.
-            doing = [key for key, thing in self._things.items() if thing.open]
+            doing = [key for key, thing in self._things.items() if thing.open or thing.under_way]
             for key in doing:
                 if key not in keys:
                     keys.append(key)
@@ -618,6 +644,11 @@ class WhatSheWants:
                         thing.channels[channel] = held + (paid - held) * rate
                 if went.get(thing.key):
                     thing.ways.setdefault(went[thing.key], Way()).went(liking)
+                    pictured = self._forecast.pop(thing.key, None)
+                    if pictured is not None:
+                        # What she pictured against what the turn was worth.
+                        self._forecasts += 1
+                        self._miss += (abs(liking - pictured) - self._miss) / min(self._forecasts, _WINDOW)
                 if thing.key in doing:
                     thing.during.went(liking)
                 if thing.reachable:
@@ -666,13 +697,136 @@ class WhatSheWants:
 
     # ── where she went, and what she started and did not finish ─────────
 
-    def went(self, key: str, way: str, *, label: str = "") -> None:
-        """She went to a thing herself, this way. Credited when the turn is read."""
+    def went(self, key: str, way: str, *, label: str = "", where: str = "") -> None:
+        """She went to a thing herself, this way. Credited when the turn is read.
+
+        What she pictured the going would be worth is kept beside it, and the
+        turn's reading is set against it.
+        """
         if not key or not way:
             return
+        pictured = self.imagine(key, way=way)
         with self._lock:
-            self._touch(key, label, True)
+            thing = self._touch(key, label, True)
+            if where:
+                thing.where = where[:500]
             self._went.append((key, way))
+            if pictured is not None:
+                self._forecast[key] = pictured["worth"]
+
+    def started(self, key: str, item: str, *, label: str = "", where: str = "") -> None:
+        """She is in the middle of something with a thing from now on.
+
+        A conversation, a game being played, an act in progress. Every turn
+        read until it stops is a turn of it, so the doing is worth what it is
+        worth as it goes.
+        """
+        if not key or not item:
+            return
+        with self._lock:
+            thing = self._touch(key, label, True)
+            if where:
+                thing.where = where[:500]
+            thing.under_way.setdefault(item, self._turns)
+            held = self._held()
+        self._save(held)
+
+    def stopped(self, item: str, key: str | None = None) -> int:
+        """What was under way by that name has stopped, with one thing or with all."""
+        closed = 0
+        with self._lock:
+            for thing in self._things.values():
+                if (key is None or thing.key == key) and thing.under_way.pop(item, None) is not None:
+                    closed += 1
+            held = self._held() if closed else None
+        if held is not None:
+            self._save(held)
+        return closed
+
+    # ── what she pictures ────────────────────────────────────────────────
+
+    def trust_in_her_pictures(self) -> float:
+        """How far a picture of hers is to be believed, from the ones she has checked.
+
+        One when her pictures have matched what the turns were worth, falling
+        with the mean miss over a span of two, the widest a miss can be. With
+        none checked it is one half: a picture is half believed until it has
+        been tried (people's forecasts of how a thing will feel run wide of
+        how it does; Wilson and Gilbert 2005).
+        """
+        with self._lock:
+            checked = min(self._forecasts, _WINDOW)
+            return (checked * (1.0 - self._miss / 2.0) + 1.0) / (checked + 2.0)
+
+    def imagine(self, key: str, *, way: str = "") -> dict[str, Any] | None:
+        """The episode she pictures of going to a thing: with what, worth what, in which kinds of good.
+
+        A person pictures a morning's walk from walks already had, put
+        together anew: the place, how they would go, who would be there
+        (Schacter and Addis 2007). Hers is put together from her record. What
+        the thing has been worth, what going that way has been worth with it
+        or with things of its kind, and what each thing it has come with has
+        been worth, each weighed by how many turns stand behind it. The
+        company pictured is whichever makes the episode worth most, and the
+        kinds of good are those of the thing and that company.
+        """
+        with self._lock:
+            thing = self._things.get(key)
+            if thing is None:
+                return None
+            parts: list[tuple[float, float]] = []
+            if thing.contacts:
+                parts.append((thing.liking, float(thing.contacts)))
+            if thing.during.times:
+                parts.append((thing.during.liking, float(thing.during.times)))
+            taken = thing.ways.get(way) if way else None
+            if taken is not None and taken.times:
+                parts.append((taken.liking, float(taken.times)))
+            elif way:
+                elsewhere = [
+                    other.ways[way]
+                    for other in self._things.values()
+                    if other.kind == thing.kind and other.key != key and way in other.ways
+                ]
+                if elsewhere:
+                    parts.append((
+                        sum(w.liking for w in elsewhere) / len(elsewhere),
+                        float(sum(w.times for w in elsewhere)),
+                    ))
+
+            def worth_with(company: Thing | None, turns: int) -> tuple[float, int]:
+                together = list(parts)
+                if company is not None and company.contacts:
+                    together.append((company.liking, float(turns)))
+                weight = sum(n / (n + 1.0) for _liking, n in together)
+                if weight <= 0.0:
+                    return 0.0, 0
+                worth = sum(liking * n / (n + 1.0) for liking, n in together) / weight
+                return worth, int(sum(n for _liking, n in together))
+
+            best_worth, drawn_from = worth_with(None, 0)
+            best_company: Thing | None = None
+            for other_key, turns in sorted(thing.came_with.items()):
+                other = self._things.get(other_key)
+                if other is None:
+                    continue
+                worth, drawn = worth_with(other, turns)
+                if worth > best_worth:
+                    best_worth, drawn_from, best_company = worth, drawn, other
+            if drawn_from <= 0:
+                return None
+            kinds: dict[str, float] = dict(thing.channels)
+            if best_company is not None:
+                for channel, paid in best_company.channels.items():
+                    kinds[channel] = (kinds.get(channel, 0.0) + paid) / 2.0 if channel in kinds else paid
+            return {
+                "thing": key,
+                "way": way,
+                "with": best_company.key if best_company is not None else "",
+                "worth": max(-1.0, min(1.0, best_worth)),
+                "kinds": {channel: round(paid, 4) for channel, paid in sorted(kinds.items()) if abs(paid) > 1e-9},
+                "drawn_from": drawn_from,
+            }
 
     def began(self, key: str, item: str, words: str, *, label: str = "") -> None:
         """She started something with a thing; it stays open until she ends it."""
@@ -752,16 +906,30 @@ class WhatSheWants:
         with (Wimmer and Shohamy 2012). Each companion counts by the share of
         this thing's turns it was in and by what she has found it worth.
         """
+        episode = self.imagine(key)
+        if episode is None:
+            return 0.0
+        return max(0.0, min(1.0, episode["worth"] * self.trust_in_her_pictures()))
+
+    def something_is_off(self) -> bool:
+        """Whether her recent turns have been worth less than she expected more often than chance.
+
+        A person turns to look at themselves when something does not match
+        what they expected of it (Duval and Wicklund 1972; Carver and Scheier
+        1981), and otherwise their attention is on what they are doing. Her
+        self-scans ran on a timer. This is the mismatch they wait for: a
+        one-sided sign test on her recent turns at the conventional level.
+        """
         with self._lock:
-            thing = self._things.get(key)
-            if thing is None or thing.contacts <= 0:
-                return 0.0
-            pictured = 0.0
-            for other_key, turns in thing.came_with.items():
-                other = self._things.get(other_key)
-                if other is not None:
-                    pictured += min(1.0, turns / thing.contacts) * max(0.0, other.liking)
-            return max(0.0, min(1.0, pictured))
+            turns = min(self._read, _WINDOW)
+            good = int(round(self._going * turns))
+        if turns <= 0:
+            return False
+        below = sum(
+            math.exp(math.lgamma(turns + 1) - math.lgamma(k + 1) - math.lgamma(turns - k + 1) - turns * math.log(2.0))
+            for k in range(0, good + 1)
+        )
+        return below < _WRONG
 
     def vigor(self) -> float:
         """How readily she acts, against a life going as she expected: 1.0.
@@ -889,7 +1057,13 @@ class WhatSheWants:
                     # Her own share of what its turns were worth, or what it
                     # is pictured to be worth from its company, whichever is
                     # more: she can want what she has only pictured.
-                    cached_value=max(max(0.0, thing.liking), pictured) if thing.contacts else None,
+                    cached_value=max(
+                        max(0.0, thing.liking),
+                        pictured,
+                        # And what the doing was worth while it lasted: a
+                        # thing worth doing is wanted whatever it came to.
+                        max(0.0, thing.during.liking) if thing.during.times else 0.0,
+                    ) if thing.contacts else None,
                     cue_salience=thing.stood_out,
                 ),
                 epistemic_affordance=foothold,
@@ -932,6 +1106,8 @@ class WhatSheWants:
                     contacts=thing.contacts,
                     known=known,
                     unfinished=unfinished,
+                    where=thing.where,
+                    episode=self.imagine(thing.key, way=way) or {},
                 )
             )
         found.sort(key=lambda want: (-want.utility, want.thing))

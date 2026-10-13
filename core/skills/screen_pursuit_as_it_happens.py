@@ -1846,6 +1846,16 @@ def _what_she_kept_of(page: Any) -> dict[str, Any]:
     from core.agency.what_she_keeps_of_a_game import INDEXED_TABLES, kept_from
     from core.runtime.what_she_learned import recall
 
+    # She is playing it from here until she keeps what she learned of it, and
+    # every turn read in between is a turn of the playing.
+    try:
+        from core.conation.what_she_wants import get_what_she_wants
+
+        where = str(getattr(page, "url", "") or "").strip()
+        if where:
+            get_what_she_wants().started(f"game:{where}", "play", label=where, where=where)
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("the game was not marked as under way: %s", exc)
     held = recall(_this_game(page), indexed_tables=INDEXED_TABLES)
     if held:
         logger.info("she has played this game before: starting from what she kept of it")
@@ -1862,9 +1872,11 @@ def _keep_what_she_learned(page: Any, keep: dict[str, Any]) -> None:
     try:
         from core.conation.what_she_wants import get_what_she_wants
 
-        name = str(_this_game(page) or "").strip()
-        if name:
-            get_what_she_wants().went(f"game:{name}", "play", label=name)
+        where = str(getattr(page, "url", "") or "").strip()
+        if where:
+            record = get_what_she_wants()
+            record.went(f"game:{where}", "play", label=where, where=where)
+            record.stopped("play", f"game:{where}")
     except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("the game did not reach her record of what she has met: %s", exc)
 

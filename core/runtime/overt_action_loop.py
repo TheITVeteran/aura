@@ -179,6 +179,7 @@ class OvertActionLoop:
                 self._decide_for_later()
                 return self._record_skip(f"background_policy:{reason}").to_dict()
 
+            self._she_is_free_again()
             state = self._state()
             # What she already decided is done first and is not argued again
             # against whatever else has come up since.
@@ -207,12 +208,16 @@ class OvertActionLoop:
                     will_receipt_id=will_receipt_id,
                 ).to_dict()
 
-            action = await self._execute_initiative(
-                initiative,
-                goal=goal,
-                selection=selection,
-                will_receipt_id=will_receipt_id,
-            )
+            doing = self._begin_doing(initiative)
+            try:
+                action = await self._execute_initiative(
+                    initiative,
+                    goal=goal,
+                    selection=selection,
+                    will_receipt_id=will_receipt_id,
+                )
+            finally:
+                self._end_doing(doing)
             self._history.append(action)
             return action.to_dict()
 
@@ -511,6 +516,52 @@ class OvertActionLoop:
         return await self._finish(result, raw_result=raw)
 
     @staticmethod
+    def _she_is_free_again() -> None:
+        """Nobody is waiting on her now, so the conversation she was in is over."""
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            get_what_she_wants().stopped("conversation")
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "overt_action_loop", exc, severity="debug",
+                action="left a conversation marked as still under way",
+            )
+
+    @staticmethod
+    def _begin_doing(initiative: dict[str, Any]) -> str:
+        """Her act on a want is under way from now until it returns."""
+        want = (initiative.get("metadata") or {}).get("want")
+        if not isinstance(want, dict) or not want.get("thing"):
+            return ""
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            thing = str(want["thing"])
+            get_what_she_wants().started(thing, "act", label=str(want.get("label") or ""))
+            return thing
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "overt_action_loop", exc, severity="debug",
+                action="her act was not marked as under way",
+            )
+            return ""
+
+    @staticmethod
+    def _end_doing(thing: str) -> None:
+        if not thing:
+            return
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            get_what_she_wants().stopped("act", thing)
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "overt_action_loop", exc, severity="debug",
+                action="left her act marked as still under way",
+            )
+
+    @staticmethod
     def _decide_for_later() -> None:
         try:
             from core.conation.what_she_wants import get_what_she_wants
@@ -536,11 +587,16 @@ class OvertActionLoop:
             if not held:
                 return {}, ""
             metadata: dict[str, Any] = {"want": held, "decided": True}
-            if not held.get("unfinished"):
+            goal = str(held.get("unfinished") or held.get("label") or "")
+            if held.get("way") == "play" and held.get("where"):
+                # A place she has played is gone back to and played; her
+                # hands and eyes own how, as they do when somebody asks.
+                goal = f"Go to {held['where']} and play it"
+            elif not held.get("unfinished"):
                 metadata["skill"] = "web_search" if held.get("way") == FIND_OUT else held.get("way")
                 metadata["params"] = {"query": held.get("label")}
             initiative = {
-                "goal": str(held.get("unfinished") or held.get("label") or ""),
+                "goal": goal,
                 "source": "want",
                 "type": "decided",
                 "urgency": float(held.get("priority", 0.0) or 0.0),
