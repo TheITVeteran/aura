@@ -37,3 +37,13 @@ def test_writing_read_another_way_in_its_place_is_not_added_twice():
     last = {"text": "", "layout": list(_PAGE)}
     _with_what_blinked(last, [earlier])
     assert len(last["layout"]) == len(_PAGE)
+
+
+def test_a_screen_of_few_words_that_stood_on_the_screen_before_is_another_screen():
+    """Offline 2026-10-13 a game's first picture after PLAY AGAIN shared its two words with the end screen, and was given
+    the end screen's PLAY AGAIN: the next end, its PLAY AGAIN no longer new, was played on for three minutes."""
+    end = [_label("GAME OVER", 0.5, 0.2), _label("YOUR SCORE", 0.5, 0.4), _label("LEVEL", 0.3, 0.05),
+           _label("SCORE", 0.7, 0.05), _label("Madame Foster will not be pleased", 0.5, 0.6), _label("PLAY AGAIN", 0.5, 0.8)]
+    game = {"text": "LEVEL SCORE", "layout": [_label("LEVEL", 0.3, 0.05), _label("SCORE", 0.7, 0.05)]}
+    _with_what_blinked(game, [end])
+    assert [r["text"] for r in game["layout"]] == ["LEVEL", "SCORE"]

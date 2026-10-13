@@ -1224,8 +1224,8 @@ def what_a_reading_says(reading: dict[str, Any]) -> tuple:
     return (grids, words)
 
 
-#: How much of its writing an earlier reading in one look must share with the last, of the fewer either has, for the
-#: two to be of one screen; and how near, as a share of the picture, writing read where other writing stands is to be
+#: How much of all their writing an earlier reading in one look must share with the last for the two to be of one
+#: screen; and how near, as a share of the picture, writing read where other writing stands is to be
 #: the same writing read another way.
 SAME_WRITING = 0.6
 ONE_PLACE = 0.03
@@ -1255,7 +1255,11 @@ def _with_what_blinked(reading: Any, earlier: list[list[dict[str, Any]]]) -> Non
     added: list[dict[str, Any]] = []
     for layout in earlier:
         texts = {_writing(r) for r in layout} - {""}
-        if not texts or len(texts & have) < SAME_WRITING * min(len(texts), len(have)):
+        # Most of all the writing of either the same: a screen of a few words that also stood on the screen before it
+        # is another screen, not the same one darkened (offline 2026-10-13 a game's first picture after PLAY AGAIN
+        # shared its two words with the end screen, and was given the end screen's PLAY AGAIN; the next end, its PLAY
+        # AGAIN no longer new, was played on for three minutes).
+        if not texts or len(texts & have) < SAME_WRITING * len(texts | have):
             continue
         for region in layout:
             said = _writing(region)
