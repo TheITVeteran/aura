@@ -505,6 +505,7 @@ def _visual_motion_claims() -> tuple:
         _velocity_uncertainty_invariant,
     )
     from core.agency.acting_on_a_prepared_motion import _prepared_input_set_invariant
+    from core.agency.an_input_answers_relative_to_motion import _motion_coordinates_invariant
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.controls_that_take_time_to_build import _stored_response_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
@@ -574,6 +575,9 @@ def _visual_motion_claims() -> tuple:
         ("worker_observations_keep_their_private_state", "core/perception/play_observation_without_holding_the_loop.py",
          "tests/test_play_observation_keeps_input_deadlines_alive.py", lambda: _owned_play_observation_invariant() == (),
          "A pending picture leaves input deadlines runnable; worker-owned mutable state reaches the public view only through a detached completed snapshot."),
+        ("rotated_control_trials_keep_their_own_motion", "core/agency/an_input_answers_relative_to_motion.py",
+         "tests/test_an_input_answers_relative_to_the_bodys_motion.py", lambda: _motion_coordinates_invariant() == (),
+         "Repeated isolated inputs distinguish speed change and signed curvature across headings; autonomous motion or absent neutral trials cannot supply the witness."),
         ("steering_preserves_measured_velocity_uncertainty", "core/agency/a_model_for_steering.py",
          "tests/test_steering_keeps_measured_velocity_uncertainty.py", lambda: _velocity_uncertainty_invariant() == (),
          "A current measured velocity keeps its uncertainty across the steering boundary; invalid uncertainty retires the current pose."),

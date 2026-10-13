@@ -8,8 +8,8 @@ import time
 from typing import Any
 
 from core.perception.motion_kept_between_pictures import (
-    current_motion_estimate,
     measured_motion_reference,
+    measured_velocity,
 )
 from core.perception.position_from_the_same_points import measured_position
 from core.perception.translation_from_visible_support import motion_was_measured
@@ -41,12 +41,7 @@ def observed_steering_model(faces: Any, mine: Any, hers: Any, moves: Any, at: fl
         model.arm(_turn_keys(run, faces), body_extent=max(mine.w, mine.h) if mine is not None else None)
     key, began = (receipt[1], receipt[0]) if receipt is not None else ('', at)
     x, y = measured_position(mine) if mine is not None else (0., 0.)
-    vx, vy = (float(mine.vx), float(mine.vy)) if mine is not None else (0., 0.)
-    estimate = current_motion_estimate(mine, at)
-    velocity_error = None
-    if estimate is not None and estimate.velocity_error <= max(2., .5 * math.hypot(*estimate.velocity)):
-        vx, vy = estimate.velocity
-        velocity_error = estimate.velocity_error
+    vx, vy, velocity_error = measured_velocity(mine, at)
     motion = getattr(moves, '_point_motion', {}).get(getattr(mine, 'number', None))
     fit = getattr(motion, 'rigid', None)
     error = max(1., float(fit.error)) if basis and fit is not None else 1. if basis else 2.

@@ -249,6 +249,14 @@ def current_motion_estimate(thing: Any, at: float) -> MotionEstimate | None:
     return None
 
 
+def measured_velocity(thing: Any, at: float) -> tuple[float, float, float | None]:
+    """One current state policy for input identification and physical controllers."""
+    estimate = current_motion_estimate(thing, at)
+    if estimate is not None and estimate.velocity_error <= max(2., .5 * math.hypot(*estimate.velocity)):
+        return *estimate.velocity, estimate.velocity_error
+    return float(getattr(thing, 'vx', 0.)), float(getattr(thing, 'vy', 0.)), None
+
+
 def predicted_box_from_motion(thing: Any, at: float) -> tuple | None:
     """A measured trajectory can propose correspondence, never prove it.
 
