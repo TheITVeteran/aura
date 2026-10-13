@@ -58,6 +58,9 @@ from .context_assembler_blocks import _BuildsThePromptBlocks
 
 logger = logging.getLogger("Brain.Context")
 
+#: A message that addresses her: the second person, or her name.
+_ADDRESSES_HER = re.compile(r"\b(you|your|yours|yourself|aura)\b", re.IGNORECASE)
+
 #: Longest a recognized trust level may be inherited by a later assembly. The
 #: inference gate caps a request at _MAX_REQUEST_TIMEOUT_S, so a binding older
 #: than that cannot belong to the request being assembled now.
@@ -1031,6 +1034,48 @@ class ContextAssembler(_BuildsThePromptBlocks):
 
         return system_msgs + result + recent
 
+    #: What the last system prompt was made of: whether her own state was let
+    #: in, how many characters of it there were, and the prompt's length.
+    LAST_COMPOSITION: dict[str, Any] = {}
+
+    @staticmethod
+    def _attention_turns_inward(objective: str, continuity: dict[str, Any] | None = None) -> bool:
+        """Whether this turn is one in which she attends to herself.
+
+        Every turn carried her affect, her felt state, her body and her
+        finitude, whatever it was about. Over her stored replies to messages
+        about something else, a median 0.286 of her sentences were about
+        herself (tools/how_much_of_a_reply_is_about_her.py, 13 October). A
+        person's attention is on what they are doing until it is turned to
+        them or something does not match what they expected (Duval and
+        Wicklund 1972; Leary 2004 on the quiet self).
+
+        She attends to herself when the message addresses her, in the second
+        person or by name, which is deliberately wide: a question that says
+        "you" keeps everything, so nothing she is asked about herself goes
+        unanswered for want of the reading. And when something is off: her
+        recent turns have run worse than she expected, or she has come back
+        to find she is not continuous with who she was, whoever is asking
+        about whatever. A turn with no message is her own time and keeps
+        everything too.
+        """
+        text = str(objective or "")
+        if not text.strip() or _ADDRESSES_HER.search(text):
+            return True
+        if continuity and (
+            continuity.get("identity_mismatch")
+            or continuity.get("continuity_reentry_required")
+            or float(continuity.get("continuity_pressure", 0.0) or 0.0) > 0.0
+        ):
+            return True
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            return bool(get_what_she_wants().something_is_off())
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("her record could not say whether something is off: %s", exc)
+            return True
+
     @staticmethod
     def build_system_prompt(
         state: AuraState,
@@ -1293,6 +1338,21 @@ class ContextAssembler(_BuildsThePromptBlocks):
         continuity_group = "".join(section for section in continuity_sections if section)
         personhood_group = "".join(section for section in personhood_sections if section)
 
+        # Her attention is on the turn. What she reads of her own state enters
+        # it when the turn turns to her or when something is off, and at other
+        # times it is left out, as a body that is fine is not attended to.
+        inward = ContextAssembler._attention_turns_inward(objective, continuity_obligations)
+        of_herself = {
+            "state_section": len(state_section),
+            "temporal_finitude_block": len(temporal_finitude_block),
+            "meta_qualia_block": len(meta_qualia_block),
+            "aura_now_block": len(aura_now_block),
+            "somatic_context": len(somatic_context),
+        }
+        if not inward:
+            state_section = temporal_finitude_block = meta_qualia_block = ""
+            aura_now_block = somatic_context = ""
+
         if is_casual and elevated_trust:
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
@@ -1306,7 +1366,7 @@ class ContextAssembler(_BuildsThePromptBlocks):
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
             # 2. Minimal affect for Guests
-            if not black_box_steering:
+            if inward and not black_box_steering:
                 tone = "positive" if affect.valence > 0.1 else "negative" if affect.valence < -0.1 else "balanced"
                 energy = "high" if affect.arousal > 0.7 else "mellow" if affect.arousal < 0.3 else "steady"
                 base += f"## CURRENT VIBE\nFunctional affect is {tone}; activation is {energy}. Self-report must stay grounded in telemetry.\n\n"
@@ -1332,6 +1392,14 @@ class ContextAssembler(_BuildsThePromptBlocks):
                 f"{world_context}"
                 f"{somatic_context}"
             )
+
+        ContextAssembler.LAST_COMPOSITION = {
+            "inward": inward,
+            "of_herself_available": sum(of_herself.values()),
+            "of_herself_included": sum(of_herself.values()) if inward else 0,
+            "prompt": len(base),
+            "blocks": of_herself,
+        }
 
         # ── Social Intelligence Layer (wired for ALL interactions) ──────────
         # Prefer the causal request principal, then the exact situation frame.

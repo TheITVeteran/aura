@@ -27,6 +27,10 @@ include_rules = [
     "+core.capability_engine",
     "+core.cognition",
     "+core.cognitive",
+    # The context assembler asks her record of what her turns were worth
+    # whether something is off, to decide whether her own state belongs in
+    # a turn's prompt.
+    "+core.conation",
     "+core.config",
     "+core.consciousness",
     "+core.constitution",
