@@ -39,6 +39,7 @@ include_rules = [
     "+core.perception.position_from_the_same_points", # Pure check of original marks supporting a measured path.
     "+core.perception.reading_again_after_loss", # Pure checks of measured loss and bounded request renewal.
     "+core.perception.the_whole_patch_around_a_visible_corner", # Pure check of connected support around initial foreground seeds.
+    "+core.perception.texture_that_continues_when_outlines_join", # Pure check of current texture and landmark support.
     "+core.perception.translation_from_visible_support", # Pure check of measured translation before learning controls.
     "+core.perception.what_moves_in_the_picture",
     "+core.perception.what_the_points_on_a_thing_say", # Pure check of current owned points before reading approach or identity.

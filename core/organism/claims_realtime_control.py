@@ -418,12 +418,18 @@ def _visual_motion_claims() -> tuple:
         _point_path_invariant,
     )
     from core.perception.reading_again_after_loss import _reading_renewal_invariant
+    from core.perception.texture_that_continues_when_outlines_join import (
+        _continuing_texture_invariant,
+    )
     from core.perception.the_whole_patch_around_a_visible_corner import _whole_patch_invariant
     from core.perception.translation_from_visible_support import _translation_support_invariant
     from core.perception.what_moves_in_the_picture import _missing_points_invariant
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("joined_outlines_require_current_owned_texture", "core/perception/texture_that_continues_when_outlines_join.py",
+         "tests/test_continuing_texture_can_separate_a_joined_outline.py", lambda: _continuing_texture_invariant() == (),
+         "A joined patch can yield a translated texture proposal only with current spread-out owned landmarks and matching visible foreground; all unassigned pixels remain."),
         ("new_point_marks_require_a_measured_origin_bridge", "core/perception/position_from_the_same_points.py",
          "tests/test_new_marks_join_only_through_a_measured_bridge.py", lambda: _point_handoff_invariant() == (),
          "Three continuing spread-out owned marks can admit a minority of new marks into the same measured origin; a replacement without that bridge cannot extend the path."),

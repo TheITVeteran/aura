@@ -616,6 +616,9 @@ class WhatMoves:
         )
         from core.perception.parts_when_things_touch import parts_when_things_touch
         from core.perception.picture_arithmetic import pieces
+        from core.perception.texture_that_continues_when_outlines_join import (
+            parts_from_continuing_texture,
+        )
 
         strict, mask = masks
         count, labels, stats, _centres = pieces(mask)
@@ -633,8 +636,12 @@ class WhatMoves:
                                                       backdrop=self._backdrop, difference=DIFFERENT_ENOUGH / 2)
             if int(inside.sum()) < SMALLEST:
                 continue
-            parts = parts_when_things_touch(small[y:y + h, x:x + w], inside, left=x, top=y,
-                                           things=[*self.things.values(), *self.pending.values()], at=self._now)
+            continuing = parts_from_continuing_texture(small[y:y + h, x:x + w], inside, left=x, top=y,
+                                                       things=[*self.things.values(), *self.pending.values()],
+                                                       motions=self._point_motion, at=self._now, difference=DIFFERENT_ENOUGH)
+            parts = [piece for part in continuing for piece in parts_when_things_touch(
+                small[y:y + h, x:x + w], part, left=x, top=y,
+                things=[*self.things.values(), *self.pending.values()], at=self._now)]
             separated = [piece for part in parts for piece in a_recent_thing_inside(
                 small[y:y + h, x:x + w], part, left=x, top=y,
                 things=[*self.things.values(), *self.pending.values()], at=self._now)]
