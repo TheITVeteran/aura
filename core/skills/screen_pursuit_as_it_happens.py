@@ -177,6 +177,10 @@ def _answered_since_typed(keep: dict[str, Any], observation: dict[str, Any]) -> 
     return part if part and new & {w.lower() for w in re.findall(r"[A-Za-z]{4,}", part)} else now
 
 
+#: Little words that join the words of a name or a phrase.
+_JOINING_WORDS = frozenset({"the", "a", "an", "of", "and", "de", "von", "van", "le", "la", "el", "da", "du"})
+
+
 def _the_new_part(now: str, before: str) -> str:
     """The longest run of a screen's words that were not on it before, nor misreadings of those (a letter or two off), nor
     a way to go again: what it answered, not the whole screen ("HENRY THE HATER", not "YOUR NAME HERE ... YOUR SECRET
@@ -195,16 +199,22 @@ def _the_new_part(now: str, before: str) -> str:
         off = 1 if len(word) <= 6 else 2
         return any(abs(len(word) - len(old)) <= off and _apart(word, old) <= off for old in was)
 
-    runs, run = [], []
+    # The little words that join a name together ("THE HYPNOTIST", "HENRY THE HATER") were on the screen before, in its
+    # other words; between or before new words they are part of what is new.
+    runs, run, glue = [], [], []
     for token in now.split():
         word = letters(token)
         fresh = bool(word) and word not in was and not near(word) and how_much_it_leads_on(token) <= 1.0 \
             and how_much_it_leads_on(word) <= 1.0 and "again" not in word
         if fresh:
-            run.append(token.strip("*•…"))
-        elif run:
-            runs.append(run)
-            run = []
+            run.extend([*glue, token.strip("*•…")])
+            glue = []
+        elif word in _JOINING_WORDS:
+            glue.append(token.strip("*•…"))
+        else:
+            if run:
+                runs.append(run)
+            run, glue = [], []
     if run:
         runs.append(run)
     best = max(runs, key=len, default=[])

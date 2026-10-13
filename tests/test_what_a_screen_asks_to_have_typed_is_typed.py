@@ -436,3 +436,12 @@ def test_a_second_players_name_is_another_ask_and_stray_numbers_are_not():
         assert len(typed) == 2 and typed[1].startswith("PLAYER 2")
     finally:
         typing.type_what_is_asked = original
+
+
+def test_the_little_words_of_an_answer_are_part_of_it():
+    """Offline 2026-10-12 a machine that answered "THE HYPNOTIST" was said to have answered "HYPNOTIST"."""
+    from core.skills.screen_pursuit_as_it_happens import _the_new_part
+
+    before = "Tell me the word that is the key to it all. TYPE A WORD HERE GO YOUR LUCKY COLOUR"
+    assert _the_new_part("TYPE A WORD HERE TRY AGAIN THE DEEP ORANGE YOUR LUCKY COLOUR", before) == "THE DEEP ORANGE"
+    assert _the_new_part("TYPE A WORD HERE TRY AGAIN PEARL OF THE SEA YOUR LUCKY COLOUR", before) == "PEARL OF THE SEA"
