@@ -92,6 +92,27 @@ def _record_learning_degradation(
         _mark_learning_degraded(state, stage=stage, error=error, action=action)
 
 
+def _said_this_turn(state: AuraState) -> list[str]:
+    """What the last person to speak said and what she answered, once each.
+
+    A turn is read every tick, and the same exchange is still the newest one
+    on the ticks after it. It is handed over on the first of them only, so an
+    exchange is counted once in what her later ones are set against.
+    """
+    cognition = getattr(state, "cognition", None)
+    heard = ""
+    for entry in reversed(list(getattr(cognition, "working_memory", []) or [])):
+        if isinstance(entry, dict) and str(entry.get("role", "")).lower() == "user":
+            heard = str(entry.get("content", "") or "")
+            break
+    answered = str(getattr(cognition, "last_response", "") or "")
+    exchange = (heard, answered)
+    if not heard or exchange == getattr(_said_this_turn, "last", None):
+        return []
+    _said_this_turn.last = exchange
+    return [heard, answered]
+
+
 async def read_what_the_turn_was_worth(state: AuraState) -> None:
     """Read the turn that just ended against what she expected, and teach by it.
 
@@ -132,7 +153,7 @@ async def read_what_the_turn_was_worth(state: AuraState) -> None:
 
             markers = getattr(getattr(state, "affect", None), "markers", None) or {}
             about = (markers.get("feelings_about") or {}).get("present") or []
-            met_this_turn(about, reading)
+            met_this_turn(about, reading, said=_said_this_turn(state))
     except _LEARNING_RECOVERABLE_ERRORS as e:
         _record_learning_degradation(
             e,

@@ -51,15 +51,27 @@ information gain, from `unsure`), and having just had it holds the pull down
 until it recovers. Whatever comes out above nothing is a want, with the thing,
 the way she would go, and the measurements behind it.
 
-Nothing here reads a sentence. Being told she loves something adds a thing she
-has met once and knows nothing about.
+What a turn was about is read from its words as counts and never as meaning.
+A term is one of a turn's things when the exchange uses it more than her
+exchanges have before, by Dunning's log-likelihood ratio (1993), the standard
+measure of which words are key to a text against a reference. The test is
+corrected for the number of terms the exchange offers, so a word that appears
+once does not pass and one that both of them keep coming back to does. Her
+reference is every exchange she has had since this was first kept, so the
+words everybody uses stop counting after the first.
+
+Nothing here reads what a sentence says. Being told she loves something adds
+a thing she has met once and knows nothing about.
 """
 from __future__ import annotations
 
 import json
 import logging
 import math
+import re
 import time
+from collections import Counter
+from statistics import NormalDist
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,6 +95,7 @@ __all__ = [
     "WhatSheWants",
     "get_what_she_wants",
     "liking_of",
+    "terms_of",
     "reset_for_test",
 ]
 
@@ -106,6 +119,24 @@ REACHABLE_KINDS: frozenset[str] = frozenset({"topic", "person"})
 FIND_OUT = "find_out"
 
 MAX_THINGS = 4096
+#: How many distinct terms her reference of past exchanges keeps.
+MAX_TERMS = 65536
+
+#: A word: letters only, in any script, long enough to carry content.
+_WORD = re.compile(r"[^\W\d_]{3,}")
+#: Where a run of words ends, so a pair never spans two clauses.
+_BREAK = re.compile(r"[.!?;:,()\[\]\n\"]+")
+
+
+def terms_of(*texts: str) -> Counter[str]:
+    """The words of an exchange and the pairs that stand side by side in it."""
+    found: Counter[str] = Counter()
+    for text in texts:
+        for run in _BREAK.split(str(text or "").lower()):
+            words = _WORD.findall(run)
+            found.update(words)
+            found.update(f"{a} {b}" for a, b in zip(words, words[1:], strict=False))
+    return found
 MAX_OPEN = 8
 SCHEMA = 1
 
@@ -267,6 +298,11 @@ class WhatSheWants:
         #: Where she went since the last turn was read, and how. The turn that
         #: is read next is the one that going is part of.
         self._went: list[tuple[str, str]] = []
+        #: How often each term has been used across her exchanges so far, and
+        #: how many terms those exchanges held: what a new exchange is set
+        #: against to say which of its terms are particular to it.
+        self._said: Counter[str] = Counter()
+        self._said_total = 0
         self._standing: list[Want] = []
         self._engine = engine
         self._path = Path(path) if path is not None else None
@@ -300,6 +336,8 @@ class WhatSheWants:
             for row in stored.get("things", []):
                 thing = Thing.from_dict(row)
                 self._things[thing.key] = thing
+            self._said = Counter({str(k): int(v) for k, v in dict(stored.get("said", {})).items()})
+            self._said_total = max(0, int(stored.get("said_total", 0)))
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             self._things.clear()
             self._turns = self._good_turns = self._read = 0
@@ -319,6 +357,8 @@ class WhatSheWants:
             "read": self._read,
             "saved_at": time.time(),
             "things": [thing.to_dict() for thing in self._things.values()],
+            "said": dict(self._said),
+            "said_total": self._said_total,
         }
 
     def _save(self, payload: dict[str, Any]) -> None:
@@ -340,6 +380,55 @@ class WhatSheWants:
 
             self._engine = get_conation()
         return self._engine
+
+    # ── what a turn was about ────────────────────────────────────────────
+
+    def about(self, *texts: str) -> list[str]:
+        """The terms this exchange uses more than her exchanges have before.
+
+        Most particular first. The exchange then joins what later ones are
+        set against. With nothing yet to set it against, nothing is
+        particular.
+        """
+        here = terms_of(*texts)
+        total = sum(here.values())
+        if total <= 0:
+            return []
+        with self._lock:
+            before, before_total = self._said, self._said_total
+            scored: list[tuple[float, str]] = []
+            if before_total > 0:
+                # One test per term offered, so the level each is held to is
+                # the conventional one divided by how many there are.
+                critical = NormalDist().inv_cdf(1.0 - _WRONG / len(here) / 2.0) ** 2
+                for term, count in here.items():
+                    past = before.get(term, 0)
+                    if count / total <= past / before_total:
+                        continue
+                    pooled = (count + past) / (total + before_total)
+                    ratio = 2.0 * count * math.log(count / (total * pooled))
+                    if past:
+                        ratio += 2.0 * past * math.log(past / (before_total * pooled))
+                    if ratio > critical:
+                        scored.append((ratio, term))
+            self._said.update(here)
+            self._said_total += total
+            if len(self._said) > MAX_TERMS:
+                self._said = Counter(dict(self._said.most_common(MAX_TERMS // 2)))
+        # A pair is one thing when neither word is there without the other.
+        # Then the words are the pair, and a pair one of whose words also
+        # stands alone is that word beside something else.
+        pairs = {
+            term
+            for _ratio, term in scored
+            if " " in term and all(here[word] <= here[term] for word in term.split())
+        }
+        inside = {word for term in pairs for word in term.split()}
+        return [
+            term
+            for _ratio, term in sorted(scored, key=lambda row: (-row[0], row[1]))
+            if (term in pairs) or (" " not in term and term not in inside)
+        ]
 
     # ── a turn ───────────────────────────────────────────────────────────
 
@@ -672,16 +761,29 @@ class WhatSheWants:
             }
 
 
-def read_turn(present: Iterable[str], reading: Any, record: WhatSheWants | None = None) -> dict[str, Any]:
+def read_turn(
+    present: Iterable[str],
+    reading: Any,
+    record: WhatSheWants | None = None,
+    *,
+    said: Iterable[str] = (),
+) -> dict[str, Any]:
     """Fold the turn that just ended into what she has met.
 
     `present` is what the turn was about, as core/affect/feelings_about.py
-    names it, and `reading` is what the turn was worth.
+    names it, and `reading` is what the turn was worth. `said` is what was
+    said in it, by anybody. Where something was said, the subjects are the
+    terms particular to the exchange, in place of the one topic label the
+    turn arrived with.
     """
+    record = record or get_what_she_wants()
     keys = [str(key) for key in present if str(key).strip()]
+    words = [str(text) for text in said if str(text or "").strip()]
+    if words:
+        keys = [key for key in keys if not key.startswith("topic:")]
+        keys.extend(f"topic:{term}" for term in record.about(*words))
     reachable = [key for key in keys if ":" in key and key.split(":", 1)[0] in REACHABLE_KINDS]
     labels = {key: key.split(":", 1)[1].strip() for key in reachable}
-    record = record or get_what_she_wants()
     return record.met(
         keys,
         liking_of(reading),

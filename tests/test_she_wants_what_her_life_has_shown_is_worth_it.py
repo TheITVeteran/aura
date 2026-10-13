@@ -162,3 +162,65 @@ def test_a_thing_in_every_one_of_her_turns_cannot_be_told_from_her_turns(record)
     _live(record, {TIDE: 0.6})
     assert record.known(TIDE) is None
     assert record.thing(TIDE).liking == pytest.approx(record.thing("self").liking, abs=0.05)
+
+
+ORDINARY = [
+    ("Can you check the time for me and tell me what you think of the plan?",
+     "I think the plan is fine, and the time is what you would expect for a second look."),
+    ("What do you make of the way that went? I would like to know what you think.",
+     "I think it went the way these things go. There is more to say and I would rather say it plainly."),
+    ("Tell me what surprised you more, the first one or the second one.",
+     "The second one, though the first has held up better than anything has a right to."),
+]
+
+
+def _has_talked_before(record, exchanges: int = 45) -> None:
+    """Enough ordinary talk behind her for a new subject to stand out against."""
+    for turn in range(exchanges):
+        record.about(*ORDINARY[turn % len(ORDINARY)])
+
+
+TIDE_TALK = (
+    "Back to the tide pools for a second. Do you think an anemone has anything it prefers? "
+    "The anemone let go of a small shell but held on to a mussel.",
+    "The mussel is alive and the shell is not, so the anemone holds what smells of meat. "
+    "In the tide pools that is most of what an anemone has to go on.",
+)
+
+
+def test_what_an_exchange_is_about_is_what_it_says_more_than_her_exchanges_have(record):
+    _has_talked_before(record)
+    about = record.about(*TIDE_TALK)
+    assert about == ["anemone", "mussel", "shell", "tide pools"]
+
+
+def test_a_word_said_once_is_not_what_the_exchange_is_about(record):
+    _has_talked_before(record)
+    assert "mussel" in record.about(*TIDE_TALK)
+    assert "meat" not in record.about(*TIDE_TALK)
+
+
+def test_with_nothing_to_set_it_against_nothing_is_particular(record):
+    assert record.about(*TIDE_TALK) == []
+
+
+def test_the_things_of_a_turn_are_its_particular_terms_in_place_of_the_topic_label(record):
+    from core.conation.what_she_wants import read_turn
+
+    class Worth:
+        measured, worth, size, payoff = True, 1.0, 0.7, {}
+
+    _has_talked_before(record)
+    read_turn(["self", "topic:times", "attended:deliberation"], Worth(), record, said=TIDE_TALK)
+    assert record.thing("topic:times") is None
+    assert record.thing("topic:tide pools").reachable
+    assert record.thing("topic:anemone").liking > 0.0
+    assert record.thing("self").contacts == 1
+
+
+def test_what_her_exchanges_have_said_is_kept_across_a_restart(record, tmp_path):
+    _has_talked_before(record)
+    record.met(["self"], 0.1)
+    flush_writes_behind()
+    again = WhatSheWants(tmp_path / "wants.json", engine=ConationEngine())
+    assert "tide pools" in again.about(*TIDE_TALK)
