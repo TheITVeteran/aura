@@ -14,7 +14,7 @@ from core.agency.subjective_choice import ChoiceOption, SubjectiveChoiceEngine
 from core.conation import what_she_wants
 from core.conation.engine import ConationEngine
 from core.initiative_synthesis import InitiativeSynthesizer
-from core.runtime.overt_action_loop import OvertActionLoop, OvertActionResult
+from core.runtime.overt_action_loop import OvertActionResult, _note_want
 
 TIDE, LOGS = "topic:tide pools", "topic:log files"
 LABELS = {TIDE: "tide pools", LOGS: "log files"}
@@ -98,7 +98,7 @@ def _acted(record, *, verified: bool, mode: str = "skill", unfinished: str = "")
         verified=verified,
         execution_mode=mode,
     )
-    OvertActionLoop._note_want({"metadata": {"want": want}}, result)
+    _note_want({"metadata": {"want": want}}, result)
     return result
 
 

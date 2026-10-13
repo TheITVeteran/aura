@@ -63,3 +63,12 @@ small helper. All nine source gates then passed, including smoke with
 165 passed and one skipped. The gate record is
 `/private/tmp/codex-steer/heading-lineage-clean-gates.log`.
 Whole-suite chunks and a normal desktop prompt have not been tested.
+
+After rebasing over five shared-runtime commits, the integrated smoke
+suite passed but the module-size gate reported that `OvertActionLoop`
+had grown from 37 to 38 methods. Its newly added stateless want-recording
+method was moved to a module function; behavior and error reporting were
+preserved. The corresponding want and control integration tests returned
+43 passed in 6.55 seconds. All nine integrated gates then passed, with
+smoke returning 165 passed and one skipped in 44.94 seconds. The record
+is `/private/tmp/codex-steer/heading-lineage-integration-clean-gates.log`.
