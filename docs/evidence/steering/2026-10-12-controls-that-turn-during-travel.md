@@ -92,3 +92,35 @@ in 49.50 seconds. All gates passed again; smoke passed 165 tests with one
 skip in 49.39 seconds. Logs:
 /private/tmp/codex-steer/travel-integrated-tests.log and
 /private/tmp/codex-steer/travel-integrated-gates.log.
+
+## Original-program result at the pushed checkpoint
+
+099589b59195ae25f69376315c26dd1c6114eba6 was pushed to main and loaded
+from a clean detached proof checkout. The normal archived-program harness
+used the existing model service; no desktop runtime or model service was
+restarted. Its own process completed in 193.4775702499901 seconds with no
+timeout. Both reported runs were lost; won was false and the last observed
+words were TIME'S UP and QUIT. Process exit zero is not gameplay success.
+
+Evidence root: /private/tmp/codex-steer/run-9-travel-turns-1012.
+owner.json and completion.json retain the exact revision and process custody.
+heading-models.jsonl records 297 bounded model snapshots. None records a
+qualified turning model. Sixty-five snapshots contain an identified thing,
+mostly late in the run. Continuous identity and correct body attribution
+were not independently established by this experiment.
+
+The tracker recorded 1350 inputs. Of 61 recorded frames corresponding to
+snapshots of identified thing 35, none supplies a point-motion estimate for
+that thing. Only two have a current observed speed at least 20 working pixels
+per second. This is evidence of missing inputs to the heading learner; it
+does not alone prove why those inputs are missing. The source checks show
+keyboard handling through Key.isDown, so no key-repeat repair is justified
+from this run.
+
+Stage medians were 43.35202049696818 ms for tracking and 127.49095802428201 ms
+for acquisition. These include instrumentation, different screen phases
+and overlapping stages. They are not an isolated speed comparison.
+
+The offline response-model repair passed its tests but has not produced a
+win in this original program. The next experiment must include perception
+and body discovery, rather than supplying a perfectly measured body.
