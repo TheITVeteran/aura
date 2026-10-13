@@ -72,11 +72,9 @@ def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MO
     step = max(1, int(round(pixels.shape[1] / LOOKED_AT_WIDE)))
     small = pixels[::step, ::step, :3]
     high, wide = small.shape[:2]
-    found: dict[tuple[int, int, int, int], tuple[float, np.ndarray]] = {}
-    for mask in (_standing_out(small), _outlined(small), _strongly_coloured(small)):
-        for box, filled, colour in _button_like(mask, small):
-            if not any(_same_place(box, other) for other in found):
-                found[box] = (filled, colour)
+    from core.perception.a_picture_read_once import read_once
+
+    found = read_once("pressable", small, lambda: _found_in(small))
     apart = _standing_apart(found)
     shapes: list[tuple[float, dict[str, Any]]] = []
     for box, (filled, _colour) in found.items():
@@ -127,6 +125,16 @@ def _named_by_their_writing(pixels: np.ndarray, shapes: list[tuple[float, dict[s
             share += 2.0 if len(words.split()) <= BUTTON_WORDS else 0.5
         worded.append((share, region))
     return sorted([*worded, *shapes[READ_ON_AT_MOST:]], key=lambda pair: -pair[0])
+
+
+def _found_in(small: np.ndarray) -> dict[tuple[int, int, int, int], tuple[float, np.ndarray]]:
+    """The shapes of a picture that look pressable, by where they are: how full each is, and its colour."""
+    found: dict[tuple[int, int, int, int], tuple[float, np.ndarray]] = {}
+    for mask in (_standing_out(small), _outlined(small), _strongly_coloured(small)):
+        for box, filled, colour in _button_like(mask, small):
+            if not any(_same_place(box, other) for other in found):
+                found[box] = (filled, colour)
+    return found
 
 
 def _standing_out(small: np.ndarray) -> np.ndarray:

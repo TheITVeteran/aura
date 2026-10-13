@@ -376,6 +376,13 @@ def recognize_text(image: Any) -> list[dict[str, Any]]:
     """
     if image is None:
         return []
+    from core.perception.a_picture_read_once import read_once  # noqa: PLC0415
+
+    # The same pixels are the same words: a picture read before is not read again (a_picture_read_once.py).
+    return read_once("words", image, lambda: _read_anew(image))
+
+
+def _read_anew(image: Any) -> list[dict[str, Any]]:
     try:
         import objc  # noqa: PLC0415
     except ImportError:

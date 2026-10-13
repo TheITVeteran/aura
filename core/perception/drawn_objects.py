@@ -172,7 +172,9 @@ def drawn_objects(picture: Any, *, writing: Sequence[Mapping[str, Any]] = (),
     scale = min(1., MAX_EDGE / max(snapshot.width, snapshot.height))
     wide, high = max(1, round(snapshot.width * scale)), max(1, round(snapshot.height * scale))
     small = pixels if (wide, high) == (snapshot.width, snapshot.height) else shrink(pixels, wide, high)
-    drawings = _separate(_components(small))
+    from core.perception.a_picture_read_once import read_once
+
+    drawings = read_once("drawn", small, lambda: _separate(_components(small)))
     containers = [drawing.box for drawing in drawings
                   if _area(drawing.box) > MAX_OBJECT_SHARE * wide * high
                   or (drawing.occupied / _area(drawing.box) < .18
