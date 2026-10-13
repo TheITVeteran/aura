@@ -88,3 +88,32 @@ def test_her_stored_conversations_are_what_a_new_subject_stands_out_against(tmp_
         assert "tide pools" in about and "anemone" in about and "the" not in about
     finally:
         what_she_wants.reset_for_test(tmp_path / "after.json", engine=ConationEngine())
+
+
+def test_what_was_said_is_the_newest_message_and_her_answer_after_it():
+    from core.phases import learning_phase
+
+    learning_phase._said_this_turn.last = None
+    state = SimpleNamespace(
+        cognition=SimpleNamespace(
+            working_memory=[
+                {"role": "user", "content": "an older question"},
+                {"role": "assistant", "content": "an older answer"},
+                {"role": "user", "content": "How does a limpet find its scar?"},
+                {"role": "assistant", "content": "By fit. The scar is its own shape."},
+            ],
+            last_response="an older answer",
+        )
+    )
+    assert learning_phase._said_this_turn(state) == [
+        "How does a limpet find its scar?",
+        "By fit. The scar is its own shape.",
+    ]
+    assert learning_phase._said_this_turn(state) == []
+
+
+def test_the_loop_that_serves_chat_reads_the_turn_once_she_has_answered():
+    from core.brain import cognitive_engine_thinking_loop
+
+    source = inspect.getsource(cognitive_engine_thinking_loop)
+    assert "await read_what_the_turn_was_worth(state)" in source

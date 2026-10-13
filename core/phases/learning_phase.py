@@ -134,12 +134,18 @@ def _said_this_turn(state: AuraState) -> list[str]:
     exchange is counted once in what her later ones are set against.
     """
     cognition = getattr(state, "cognition", None)
-    heard = ""
-    for entry in reversed(list(getattr(cognition, "working_memory", []) or [])):
-        if isinstance(entry, dict) and str(entry.get("role", "")).lower() == "user":
-            heard = str(entry.get("content", "") or "")
-            break
-    answered = str(getattr(cognition, "last_response", "") or "")
+    heard = answered = ""
+    # The newest thing somebody said, and what she said after it. Her answer
+    # is in working memory before it is committed as her last response.
+    for entry in list(getattr(cognition, "working_memory", []) or []):
+        if not isinstance(entry, dict):
+            continue
+        content = str(entry.get("content", "") or "")
+        if str(entry.get("role", "")).lower() == "user":
+            heard, answered = content, ""
+        elif heard and content:
+            answered = content
+    answered = answered or str(getattr(cognition, "last_response", "") or "")
     exchange = (heard, answered)
     if not heard or exchange == getattr(_said_this_turn, "last", None):
         return []
