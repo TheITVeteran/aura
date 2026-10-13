@@ -352,11 +352,10 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     from core.agency.a_page_gone_blank import GONE_BLANK
     from core.language.how_a_game_ended import asks_to_win, requested_attempts
     from core.language.what_counts_as_done import MADE, MEASURE, terms_asked, without_conditions
+    from core.skills.a_new_attempt_must_be_seen import AttemptObservation, attempt_activity_was_seen
     from core.skills.screen_pursuit_as_it_happens import (
         MADE_NOT_WON,
         MAKING_STALLED,
-        _this_game,
-        begin_run,
     )
 
     # What the person said counts as done for each shape of thing: an end reached, a measure bettered, a thing made.
@@ -376,6 +375,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     contract = step.get("runtime_contract") or {}
     keep: dict[str, Any] = {"required_edges": contract.get("required_edges") or [], "all_of_it_ends": deadline,
                             "edge_provenance": contract.get("provenance") or "", "stock": await _a_stocktaking(goal, page)}
+    keep['attempt_observation'] = AttemptObservation(time.time())
     runs: list[dict[str, Any]] = []
     moves: list[Any] = []
     result: dict[str, Any] = {}
@@ -390,6 +390,9 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         moves += [{"key": "played as it happened"} for stretch in reflexes.stretches if stretch.get("pictures")]
         run = _how_the_run_went(reflexes, result)
         run["reached_end"] = _run_reached_an_end(reflexes, run, result)
+        unobserved_ending = not attempt_activity_was_seen(reflexes) and run['ended'] in ('won', 'lost', 'drawn', 'finished')
+        if not attempt_activity_was_seen(reflexes):
+            run['ended'], run['reached_end'] = '', False
         run["took_s"] = time.monotonic() - started
         run["gains"] = sum(int(stretch.get("gains") or 0) for stretch in reflexes.stretches)
         run["observations"] = [
@@ -402,6 +405,9 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         # The counsel she played this round by, so that a round much worse than her best can go back to it.
         run["counsel"] = str(keep.get("counsel") or "")
         runs.append(run)
+        if unobserved_ending:
+            result['stopped_because'] = 'an ending was shown without new activity being observed'
+            break
         violations = [v for s in reflexes.stretches for v in (s.get("runtime_checks") or {}).get("violations", [])]
         if violations:
             result["runtime_violations"] = violations
@@ -439,7 +445,11 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
             finished_runs = [r for r in runs if r.get("reached_end")]
             if len(finished_runs) < where_none and time.monotonic() < deadline:
                 _tell(f"{_what_there_is_to_play_for(reflexes)} Run {len(finished_runs)} of {where_none}: {_scored(run)}. Again.")
-                begin_run(keep, _this_game(page))
+                next_band = await _restart_attempt(page, band, keep)
+                if next_band is None:
+                    result['stopped_because'] = 'the next attempt did not begin'
+                    break
+                band = next_band
                 continue
             _tell(_the_best_of(finished_runs))
             result["stopped_because"] = (PLAYED_FOR_ITS_BEST if len(finished_runs) >= where_none else
@@ -467,8 +477,11 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
             if terms.until_the_end and shape != MEASURE:
                 # Asked to carry it through to its end, a round that gained nothing is begun again from the top.
                 _tell(f"{round(ROUND_S / 60)} minutes in this round and nothing gained; I'm starting it again from the top.")
-                band = await _from_the_top(page, band)
-                begin_run(keep, _this_game(page))
+                next_band = await _restart_attempt(page, band, keep)
+                if next_band is None:
+                    result['stopped_because'] = 'the next attempt did not begin'
+                    break
+                band = next_band
                 continue
             _tell(f"{round(ROUND_S / 60)} minutes in this round and nothing gained; I'll leave this one here.")
             result["stopped_because"] = "getting nowhere in it"
@@ -490,6 +503,12 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
             break
         # The screen's own words the first time; after that, the round counted: six of the same line read as one.
         await _between_runs(goal, reflexes, run, runs, keep, deadline)
+        if run['reached_end'] and time.monotonic() < deadline:
+            next_band = await _restart_attempt(page, band, keep)
+            if next_band is None:
+                result['stopped_because'] = 'the next attempt did not begin'
+                break
+            band = next_band
     if time.monotonic() >= deadline - RAN_OUT_WITHIN_S and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
         result["stopped_because"] = await _said_as_the_time_ran_out(page, band, terms, runs, moves, reflexes, keep)
     elif until_won and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
@@ -553,7 +572,6 @@ async def _begun_again_where_it_went_blank(page: Any, band: tuple[float, float, 
     import time
 
     from core.agency.a_page_gone_blank import BEGUN_AGAIN_AT_MOST
-    from core.skills.screen_pursuit_as_it_happens import _this_game, begin_run
 
     run["ended"], run["reached_end"] = "", False
     keep.pop("blank_since", None)
@@ -562,9 +580,8 @@ async def _begun_again_where_it_went_blank(page: Any, band: tuple[float, float, 
         _tell("The game has gone blank again, and I leave it here." + _where_it_stood(runs))
         return band, False
     _tell("The game has gone blank, so I'm loading it again.")
-    band = await _from_the_top(page, band)
-    begin_run(keep, _this_game(page))
-    return band, True
+    next_band = await _restart_attempt(page, band, keep)
+    return (next_band, True) if next_band is not None else (band, False)
 
 
 #: Why she stops to take stock when a round gains nothing (core/cognition/taking_stock.py).
@@ -607,8 +624,6 @@ async def _between_runs(goal: str, reflexes: Any, run: dict[str, Any], runs: lis
                         deadline: float) -> None:
     """A run lost and another begun: how it ended said, the counsel in force judged, and stock taken where she keeps
     losing (core/skills/sovereign_browser_taking_stock.py)."""
-    from core.skills.screen_pursuit_as_it_happens import _this_game, begin_run
-
     # The screen's own words the first time; after that, the round counted: six of the same line read as one. And what
     # cost her, by name, where play came to keep clear of it: a person going again says what they will do differently.
     _tell((f"That one ended {run['words'][:80]!r}: {run['ended'] or 'unread'}. Again, with what I learned." if len(runs) == 1
@@ -624,7 +639,6 @@ async def _between_runs(goal: str, reflexes: Any, run: dict[str, Any], runs: lis
         why = stock.due(runs)
         if why:
             await stock.take(why, goal, list(reflexes.words), run["words"], runs, keep, deadline)
-    begin_run(keep, _this_game(getattr(reflexes, "page", None)))
 
 
 def _steps_done(keep: dict[str, Any]) -> int:
@@ -899,6 +913,10 @@ def _run_reached_an_end(reflexes: Any, run: Mapping[str, Any], result: Mapping[s
         says_play_is_ongoing,
         what_says_the_game_is_over,
     )
+    from core.skills.a_new_attempt_must_be_seen import attempt_activity_was_seen
+
+    if not attempt_activity_was_seen(reflexes):
+        return False
 
     words = "\n".join([str(result.get("last_seen") or ""), str(run.get("words") or ""),
                        *list(getattr(reflexes, "ending_parts", None) or [])])
@@ -1072,7 +1090,22 @@ def _what_was_made(run: Mapping[str, Any], moves: list[Any]) -> str:
     return f"There's nothing to win or score in this one; it's for making things. {what}{how}"
 
 
-async def _from_the_top(page: Any, band: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+async def _restart_attempt(page: Any, band: tuple, keep: dict) -> tuple | None:
+    """Reset memory only after the page's physical restart succeeds."""
+    import time
+
+    from core.skills.a_new_attempt_must_be_seen import AttemptObservation
+    from core.skills.screen_pursuit_as_it_happens import _this_game, begin_run
+
+    next_band = await _from_the_top(page, band)
+    if next_band is None:
+        return None
+    begin_run(keep, _this_game(page))
+    keep['attempt_observation'] = AttemptObservation(time.time())
+    return next_band
+
+
+async def _from_the_top(page: Any, band: tuple[float, float, float, float]) -> tuple[float, float, float, float] | None:
     """The page reloaded and the thing on it begun again, as a person starts again when a go has got nowhere."""
     from core.runtime.errors import record_degradation
 
@@ -1083,6 +1116,7 @@ async def _from_the_top(page: Any, band: tuple[float, float, float, float]) -> t
         await page.evaluate(_HOLD_IT_STILL)
     except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
         record_degradation("sovereign_browser", exc, severity="info", action="begin the page's thing again")
+        return None
     return band
 
 

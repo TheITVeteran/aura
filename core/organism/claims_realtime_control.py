@@ -558,6 +558,7 @@ def _visual_motion_claims() -> tuple:
     from core.perception.translation_from_visible_support import _translation_support_invariant
     from core.perception.what_moves_in_the_picture import _missing_points_invariant
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
+    from core.skills.a_new_attempt_must_be_seen import _new_attempt_invariant
 
     return (
         ("source_marks_return_to_one_working_geometry", "core/perception/points_before_the_picture_is_reduced.py",
@@ -578,6 +579,9 @@ def _visual_motion_claims() -> tuple:
         ("rotated_control_trials_keep_their_own_motion", "core/agency/an_input_answers_relative_to_motion.py",
          "tests/test_an_input_answers_relative_to_the_bodys_motion.py", lambda: _motion_coordinates_invariant() == (),
          "Repeated isolated inputs distinguish speed change and signed curvature across headings; autonomous motion or absent neutral trials cannot supply the witness."),
+        ("an_ending_after_reset_needs_new_activity", "core/skills/a_new_attempt_must_be_seen.py",
+         "tests/test_a_retry_restarts_the_page_and_observes_a_new_attempt.py", lambda: _new_attempt_invariant() == (),
+         "A new attempt requires current activity after reset; an old capture or another reading of its ending supplies no completed run."),
         ("steering_preserves_measured_velocity_uncertainty", "core/agency/a_model_for_steering.py",
          "tests/test_steering_keeps_measured_velocity_uncertainty.py", lambda: _velocity_uncertainty_invariant() == (),
          "A current measured velocity keeps its uncertainty across the steering boundary; invalid uncertainty retires the current pose."),
