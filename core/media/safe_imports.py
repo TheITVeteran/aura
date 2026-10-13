@@ -74,6 +74,10 @@ def blocked_native_media_import(name: str) -> str | None:
     return None
 
 
+#: The imports the guard looks at: top-level ``cv2`` and ``torchcodec``, and their submodules.
+_GUARDED_PREFIXES = ("cv2", "torchcodec")
+
+
 def install_main_process_cv2_guard() -> None:
     """Reject native-media imports that collide in the primary process.
 
@@ -87,7 +91,11 @@ def install_main_process_cv2_guard() -> None:
         return
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
-        blocked = blocked_native_media_import(name) if level == 0 else None
+        # Only the two guarded names are looked at: every other import, many of them inside functions called each
+        # picture of play, goes straight through (offline 2026-10-12 the guard's checks were a fiftieth of a game's play).
+        if level != 0 or not name.startswith(_GUARDED_PREFIXES):
+            return _ORIGINAL_IMPORT(name, globals, locals, fromlist, level)
+        blocked = blocked_native_media_import(name)
         if blocked == "cv2":
             raise ImportError(
                 "OpenCV import is blocked in Aura's primary macOS process; "

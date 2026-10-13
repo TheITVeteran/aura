@@ -193,3 +193,20 @@ def test_the_live_repository_has_no_dead_guarded_imports():
     findings, checked = gate._findings()
     assert checked > 3000, "the scanner stopped seeing the codebase"
     assert findings == [], "\n".join(findings)
+
+
+def test_an_import_of_anything_else_goes_straight_through_the_media_guard(monkeypatch):
+    """Offline 2026-10-12 the guard's checks on every import, many inside functions called each picture of play, were a
+    fiftieth of a game's play: only the guarded names are looked at."""
+    import builtins
+
+    from core.media import safe_imports
+
+    looked: list[str] = []
+    monkeypatch.setattr(safe_imports, "_CV2_IMPORT_GUARD_INSTALLED", False)
+    monkeypatch.setattr(builtins, "__import__", builtins.__import__)
+    monkeypatch.setattr(safe_imports, "blocked_native_media_import", lambda name: looked.append(name) or None)
+    safe_imports.install_main_process_cv2_guard()
+    import collections.abc  # noqa: F401
+    import json  # noqa: F401
+    assert looked == []
