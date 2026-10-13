@@ -762,6 +762,9 @@ class PlayingAsItHappens:
         from core.skills.visible_words_from_their_pixels import current_visible_words
 
         observation = current_visible_words(self, observation)
+        from core.skills.a_new_attempt_must_be_seen import note_attempt_activity
+
+        note_attempt_activity(self, observation)
         self.keep.pop("signs_showing_over", None)                # the screen after a showing of signs has been read
         _ways_on_read_right_before(self, observation)
         said = " ".join(str(observation.get("text") or "").split())

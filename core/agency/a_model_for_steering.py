@@ -186,7 +186,8 @@ class ProvisionalSteeringBank:
         return (x - ox) / span, (y - oy) / span, heading_error, speed_error
 
     def saw(self, owner: Owner | None, key: str, began: float, at: float, x: float, y: float,
-            vx: float, vy: float, *, position_error: float = 1., measured: bool = True) -> None:
+            vx: float, vy: float, *, position_error: float = 1., measured: bool = True,
+            measured_velocity_error: float | None = None) -> None:
         """An absent interval breaks verification; it cannot teach a stationary response."""
         valid_owner = (isinstance(owner, tuple) and len(owner) == 3 and isinstance(owner[0], int)
                        and isinstance(owner[2], int) and _finite(owner[1]) and owner[2] >= 0)
@@ -195,7 +196,10 @@ class ProvisionalSteeringBank:
             return
         if owner != self.owner:
             self._reset(owner)
-        if (not measured or not isinstance(key, str) or not _finite(began, at, x, y, vx, vy, position_error)
+        valid_error = (measured_velocity_error is None or
+                       not isinstance(measured_velocity_error, bool) and
+                       _finite(measured_velocity_error) and measured_velocity_error >= 0.)
+        if (not measured or not valid_error or not isinstance(key, str) or not _finite(began, at, x, y, vx, vy, position_error)
                 or began > at or position_error < 0):
             self.pending = None
             self._pose = None
@@ -232,9 +236,12 @@ class ProvisionalSteeringBank:
         interval = at - previous.at if previous is not None and not gap else None
         velocity_error = ((position_error + previous.error) / interval
                           if interval is not None and interval > 0 else math.inf)
-        moving = speed > velocity_error if interval is not None else speed > 0
+        if measured_velocity_error is not None:
+            velocity_error = measured_velocity_error
+        has_error = interval is not None or measured_velocity_error is not None
+        moving = speed > velocity_error if has_error else speed > 0
         heading = math.atan2(vy, vx) if moving else (previous.heading if previous and not gap else None)
-        heading_error = math.asin(min(1., velocity_error / speed)) if moving and interval is not None else 0.
+        heading_error = math.asin(min(1., velocity_error / speed)) if moving and has_error else 0.
         speed_error = velocity_error if math.isfinite(velocity_error) else 0.
         accumulated = self._motion_from_positions(key, at, x, y, position_error) if not closed else None
         owned_interval = (interval is not None and previous is not None and previous.at >= began and not gap
@@ -546,4 +553,20 @@ def _slow_motion_invariant() -> tuple:
     assert all(p.linear_error > 0 for p in action.predictions)
     model.saw((1, 0., 1), 'a', 0., .65, 2.6, 0., 0., 0., measured=False)
     assert model.driver(['a', 'b']) is None
+    return ()
+
+
+@invariant('agency.steering_preserves_measured_velocity_uncertainty', scope='agency',
+           owner='core/agency/a_model_for_steering.py', observational=False)
+def _velocity_uncertainty_invariant() -> tuple:
+    model = ProvisionalSteeringBank()
+    model.arm(['b'], body_extent=12.)
+    for at in (1., 1.01, 1.02):
+        model.saw((1, 0., 0), 'a', .5, at, 50 + 30 * (at - 1), 50., 30., 0.,
+                  position_error=2., measured_velocity_error=3.)
+    assert model.driver(['a', 'b']) == 'a'
+    assert model._pose.speed_error == 3.
+    assert model._pose.heading_error == math.asin(.1)
+    model.saw((1, 0., 0), 'a', .5, 1.03, 51., 50., 30., 0., measured_velocity_error=math.nan)
+    assert model._pose is None and not model._drivers
     return ()

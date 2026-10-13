@@ -119,6 +119,7 @@ def test_a_measure_is_tried_the_asked_number_of_times_and_its_best_said(monkeypa
     runs = [_Run(words, f"GAME OVER YOUR SCORE: {score} PLAY AGAIN") for score in (120, 340, 200)]
     played, said = _played_through(monkeypatch, runs, "Play this game. " + CONDITIONS)
     assert played["best_score"] == 340 and len(played["runs"]) == 3 and played["completed"]
+    assert said.count('(started again)') == 2
     assert any("Run 1 of 3: scored 120" in line for line in said)
     assert said[-1].startswith("That's 3 runs. My best was run 2, with 340")
 
@@ -139,6 +140,7 @@ def test_a_thing_with_an_end_is_kept_at_past_not_getting_better(monkeypatch):
     runs = [_Run(words, "GAME OVER") for _ in range(13)] + [_Run(words, "YOU WIN! Level 1 complete")]
     played, said = _played_through(monkeypatch, runs, "Play this game. " + CONDITIONS)
     assert played["won"] and played["runs"][-1] == "won" and len(played["runs"]) == 14
+    assert said.count('(started again)') == 13
     assert not any("no better than my best" in line for line in said)
 
 

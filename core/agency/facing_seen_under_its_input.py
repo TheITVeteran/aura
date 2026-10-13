@@ -4,8 +4,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from core.agency.an_input_answers_relative_to_motion import moving_inputs_in_trials
 from core.agency.response_in_the_body_frame import body_epoch
 from core.agency.which_way_she_faces import MOVING
+from core.perception.motion_kept_between_pictures import measured_velocity
 from core.perception.translation_from_visible_support import motion_was_measured
 from core.verify import invariant
 
@@ -29,6 +31,8 @@ def observe_facing(faces: Any, mine: Any, hers: Any, at: float) -> None:
             faces.heading_hints.update(key for key in hers._hers.free if key
                 and (velocity := hers._hers.typical(key)) is not None
                 and all(math.isfinite(v) for v in velocity) and math.hypot(*velocity) >= MOVING)
+            own_trials = getattr(hers, '_by_thing', {}).get(hers.number)
+            faces.heading_hints.update(moving_inputs_in_trials(own_trials or hers._hers, least_speed=MOVING))
     faces.body_epoch = identity
     if (identity is not None and mine is not None and getattr(mine, 'number', None) == hers.number
             and getattr(mine, 'seen', None) == at):
@@ -39,7 +43,7 @@ def observe_facing(faces: Any, mine: Any, hers: Any, at: float) -> None:
     measured = (identity is not None and receipt is not None and mine is not None
                 and mine.number == hers.number and motion_was_measured(mine, at)
                 and at >= hers._beside_until)
-    vx, vy = (float(mine.vx), float(mine.vy)) if mine is not None else (0., 0.)
+    vx, vy, _uncertainty = measured_velocity(mine, at)
     faces.saw(vx, vy, key, at, measured=measured, began=began)
 
 
@@ -99,6 +103,13 @@ def _facing_input_invariant() -> tuple:
     observe_facing(faces, thing, hers, .35)
     assert not faces.going and faces.settled_pictures == 0
     assert not faces.turns_measured, "unmeasured motion was read as stationary turning"
+    from core.perception.motion_kept_between_pictures import MotionEstimate
+
+    thing.born, thing.seen, thing.motion_measured_at = 0., .4, .4
+    thing.motion_estimate = MotionEstimate((1, 0.), ((100, 100), 'box'), .4, .4, (30., 30.),
+                                         (0., 80.), (0., 0.), 1., 2., 10, 'observed', (1.,))
+    observe_facing(faces, thing, hers, .4)
+    assert math.isclose(faces.facing, math.pi / 2) and faces.going == [(0., 80.)]
     return ()
 
 
@@ -123,4 +134,13 @@ def _fresh_heading_invariant() -> tuple:
     hers.number = None
     observe_facing(faces, None, hers, 1.4)
     assert not faces.heading_hints and faces.trial(['a']) is None
+    hers, faces = WhichIsHers(), WhichWaySheFaces()
+    hers.number, hers.kind = 3, 1
+    hers.holding('', 1.)
+    for began, speed in ((-3., 80.), (-2., -80.)):
+        for after in (.25, .3, .35, .4):
+            hers._by_thing[3].add('opaque', speed, 0., press=began, when=began + after)
+    body = SimpleNamespace(number=3, vx=0., vy=0., seen=1.3, motion_evidence='direct')
+    observe_facing(faces, body, hers, 1.3)
+    assert faces.trial(['opaque']) == 'opaque' and faces.facing is None and not faces.along
     return ()

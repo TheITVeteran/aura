@@ -500,8 +500,12 @@ def _control_discovery_claims() -> tuple:
 
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
-    from core.agency.a_model_for_steering import _slow_motion_invariant
+    from core.agency.a_model_for_steering import (
+        _slow_motion_invariant,
+        _velocity_uncertainty_invariant,
+    )
     from core.agency.acting_on_a_prepared_motion import _prepared_input_set_invariant
+    from core.agency.an_input_answers_relative_to_motion import _motion_coordinates_invariant
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.controls_that_take_time_to_build import _stored_response_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
@@ -529,7 +533,10 @@ def _visual_motion_claims() -> tuple:
         _frame_session_invariant,
         _frame_time_invariant,
     )
-    from core.perception.motion_kept_between_pictures import _motion_belief_invariant
+    from core.perception.motion_kept_between_pictures import (
+        _motion_belief_invariant,
+        _motion_proposal_invariant,
+    )
     from core.perception.play_observation_without_holding_the_loop import (
         _owned_play_observation_invariant,
     )
@@ -551,6 +558,7 @@ def _visual_motion_claims() -> tuple:
     from core.perception.translation_from_visible_support import _translation_support_invariant
     from core.perception.what_moves_in_the_picture import _missing_points_invariant
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
+    from core.skills.a_new_attempt_must_be_seen import _new_attempt_invariant
 
     return (
         ("source_marks_return_to_one_working_geometry", "core/perception/points_before_the_picture_is_reduced.py",
@@ -568,12 +576,24 @@ def _visual_motion_claims() -> tuple:
         ("worker_observations_keep_their_private_state", "core/perception/play_observation_without_holding_the_loop.py",
          "tests/test_play_observation_keeps_input_deadlines_alive.py", lambda: _owned_play_observation_invariant() == (),
          "A pending picture leaves input deadlines runnable; worker-owned mutable state reaches the public view only through a detached completed snapshot."),
+        ("rotated_control_trials_keep_their_own_motion", "core/agency/an_input_answers_relative_to_motion.py",
+         "tests/test_an_input_answers_relative_to_the_bodys_motion.py", lambda: _motion_coordinates_invariant() == (),
+         "Repeated isolated inputs distinguish speed change and signed curvature across headings; autonomous motion or absent neutral trials cannot supply the witness."),
+        ("an_ending_after_reset_needs_new_activity", "core/skills/a_new_attempt_must_be_seen.py",
+         "tests/test_a_retry_restarts_the_page_and_observes_a_new_attempt.py", lambda: _new_attempt_invariant() == (),
+         "A new attempt requires current activity after reset; an old capture or another reading of its ending supplies no completed run."),
+        ("steering_preserves_measured_velocity_uncertainty", "core/agency/a_model_for_steering.py",
+         "tests/test_steering_keeps_measured_velocity_uncertainty.py", lambda: _velocity_uncertainty_invariant() == (),
+         "A current measured velocity keeps its uncertainty across the steering boundary; invalid uncertainty retires the current pose."),
         ("slow_motion_keeps_its_input_and_pixel_uncertainty", "core/agency/a_model_for_steering.py",
          "tests/test_slow_observed_motion_can_anchor_a_steering_model.py", lambda: _slow_motion_invariant() == (),
          "Slow motion accumulates displacement within one observed input receipt; unresolved pixel jitter cannot supply a driver, and chord uncertainty stays in provisional forecasts."),
         ("a_stream_frame_keeps_its_session_owner", "core/perception/frames_as_they_are_drawn.py",
          "tests/test_a_stream_callback_keeps_its_producing_session.py", lambda: _frame_session_invariant() == (),
          "A browser callback, calibration and decoded frame belong to their producing stream generation; an old session cannot publish or acknowledge through its replacement."),
+        ("motion_proposals_keep_the_last_measured_box", "core/perception/motion_kept_between_pictures.py",
+         "tests/test_measured_motion_proposes_visual_correspondence.py", lambda: _motion_proposal_invariant() == (),
+         "Correspondence proposals retain the last measured box and uncertainty without refreshing observation or control identity."),
         ("motion_forecasts_do_not_renew_observations", "core/perception/motion_kept_between_pictures.py",
          "tests/test_motion_is_kept_between_measured_pictures.py", lambda: _motion_belief_invariant() == (),
          "Motion beliefs retain their measured identity and reference; forecasts grow uncertainty without renewing observations."),

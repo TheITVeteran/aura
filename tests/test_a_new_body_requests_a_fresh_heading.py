@@ -58,6 +58,28 @@ def test_hints_cannot_add_a_key_that_the_current_environment_does_not_offer():
     assert faces.trial(['different']) is None
 
 
+@pytest.mark.parametrize('departure', [None, 'single', 'interrupted', 'clock'])
+def test_opposed_trial_directions_request_fresh_motion_without_declaring_a_heading(departure):
+    hers, faces = WhichIsHers(), WhichWaySheFaces()
+    hers.number, hers.kind = 2, 1
+    hers.holding('', 1.)
+    evidence = hers._by_thing[2]
+    for index, began in enumerate((-3., -2.)):
+        for elapsed in (.25, .3, .35, .4):
+            evidence.add('opaque', 80. * (-1 if index else 1), 0., press=began, when=began + elapsed)
+    if departure == 'single':
+        evidence.timed.pop(('opaque', -2.))
+    elif departure == 'interrupted':
+        evidence.interrupted.add(('opaque', -2.))
+    elif departure == 'clock':
+        values = evidence.timed['opaque', -2.]
+        values[-1] = (values[0][0], *values[-1][1:])
+    body = SimpleNamespace(number=2, vx=0., vy=0., seen=1.3, motion_evidence='direct')
+    observe_facing(faces, body, hers, 1.3)
+    assert faces.trial(['opaque']) == ('opaque' if departure is None else None)
+    assert faces.facing is None and not faces.along and not faces.turning_keys()
+
+
 def test_the_fresh_heading_experiment_has_a_registered_measured_claim():
     from core.agency.facing_seen_under_its_input import _fresh_heading_invariant
     from core.organism.claims_realtime_control import install_realtime_control_claims

@@ -42,6 +42,7 @@ from core.agency.controls_ready_for_the_motion_model import has_a_measured_respo
 from core.agency.finding_her_another_way import FoundAnotherWay
 from core.agency.response_in_the_body_frame import bound_facing_response, expected_travel
 from core.agency.what_follows_the_pointer import FollowsThePointer
+from core.perception.motion_kept_between_pictures import measured_velocity
 from core.perception.parts_when_things_touch import same_colour_mix
 from core.perception.position_from_the_same_points import measured_position
 from core.perception.translation_from_visible_support import motion_status, motion_was_measured
@@ -293,7 +294,9 @@ class _Speeds:
         # Doing nothing stays in where fewer than two keys have been tried, being then the only thing to compare with.
         keyed = {key: values for key, values in groups.items() if key} if sum(1 for key in groups if key) >= 2 else groups
         by_pace = _contingency({key: [(math.hypot(*value), 0.0) for value in values] for key, values in keyed.items()})
-        return max(by_way, by_pace, self.by_push())
+        from core.agency.an_input_answers_relative_to_motion import response_in_motion_coordinates
+
+        return max(by_way, by_pace, self.by_push(), response_in_motion_coordinates(self))
 
     def carried(self) -> bool:
         """Whether it answers to her keys by how they push it, more than by the pace it goes under each, and goes on
@@ -687,7 +690,8 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         if math.hypot(*way) <= REALLY_MOVES or self._pinned_toward(thing, way):
             return
         heard = self._answered.setdefault(key, [])
-        heard.append((thing.vx * way[0] + thing.vy * way[1]) / (way[0] ** 2 + way[1] ** 2))
+        vx, vy, _uncertainty = measured_velocity(thing, at)
+        heard.append((vx * way[0] + vy * way[1]) / (way[0] ** 2 + way[1] ** 2))
         del heard[:-ANSWERING_OVER]
         # Judged key by key: a thing none of her keys moves is not hers, but one
         # key taken wrongly for hers is not every key. LIVE 2026-10-05 "left"
@@ -904,13 +908,14 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
                     continue
                 if thing.born == at:
                     continue
+                vx, vy, _uncertainty = measured_velocity(thing, at)
                 if trying:
-                    self._by_thing[thing.number].add(key, thing.vx, thing.vy, press=press,
+                    self._by_thing[thing.number].add(key, vx, vy, press=press,
                                                    settled=press is not None, position=measured_position(thing), when=at)
-                    self._by_kind[thing.kind].add(key, thing.vx, thing.vy, press=press,
+                    self._by_kind[thing.kind].add(key, vx, vy, press=press,
                                                  settled=press is not None)
                 if thing.number == self.number and at >= self._beside_until:
-                    self._hers.add(key, thing.vx, thing.vy, pinned=self._pinned(thing), press=press,
+                    self._hers.add(key, vx, vy, pinned=self._pinned(thing), press=press,
                                    settled=press is not None, position=measured_position(thing), at=at, when=at)
                     self._answering(thing, key, at - began, at)
         self._what_follows_the_pointer(moves, at)
@@ -991,7 +996,8 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
             self.last_seen = (mine.x, mine.y)
             if at is not None:
                 self.last_seen_at = mine.seen
-            self.last_velocity = (mine.vx, mine.vy)
+            vx, vy, _uncertainty = measured_velocity(mine, at)
+            self.last_velocity = (vx, vy)
             self.last_size = mine.size
             self.last_shape = (mine.w, mine.h)
             self.last_look = tuple(getattr(mine, "look", ())) or None

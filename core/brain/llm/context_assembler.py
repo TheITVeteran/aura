@@ -90,7 +90,6 @@ _WORLD_MAX_ENTITIES = 24
 _WORLD_MAX_RELATIONSHIPS = 24
 _WORLD_MAX_PREFERENCES = 32
 _WORLD_NAME_MAX_CHARS = 80
-_WORLD_VALUE_MAX_CHARS = 200
 
 #: Sources a dialogue message may carry and still count as something that was
 #: actually said between two parties. Anything else labelled is somebody's
@@ -505,32 +504,6 @@ class ContextAssembler(_BuildsThePromptBlocks):
             "checked_markers": list(_BLACK_BOX_STATE_MARKERS),
             "prompt_sha256": ContextAssembler._content_digest(text),
         }
-
-    @staticmethod
-    def _sample_aura_now(state: AuraState, objective: str) -> tuple[Any, Any] | None:
-        """One reading of the being runtime, taken once per assembly.
-
-        ``runtime.sample`` is a measurement of a system that keeps moving, and
-        it was taken twice while building a single system message: once inside
-        build_system_prompt and again in build_messages. The two readings can
-        disagree — different valence, different focal object — inside one
-        prompt that presents both as Aura's state right now, and any read the
-        organ accounts for happened twice for one turn.
-        """
-        try:
-            from core.being.runtime import get_being_runtime
-
-            runtime = get_being_runtime()
-            return runtime, runtime.sample(state, objective=objective)
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            record_degradation(
-                "context_assembler",
-                exc,
-                severity="warning",
-                action="continued prompt assembly without AuraNow state-grounded block",
-            )
-            logger.debug("AuraNow sample unavailable: %s", exc)
-            return None
 
     #: What a correction block must show before the assembler will hand it
     #: system-prompt authority. The docstring below described a contract —
@@ -1037,64 +1010,6 @@ class ContextAssembler(_BuildsThePromptBlocks):
     #: What the last system prompt was made of: whether her own state was let
     #: in, how many characters of it there were, and the prompt's length.
     LAST_COMPOSITION: dict[str, Any] = {}
-
-    @staticmethod
-    def _attention_turns_inward(objective: str, continuity: dict[str, Any] | None = None) -> bool:
-        """Whether this turn is one in which she attends to herself.
-
-        Every turn carried her affect, her felt state, her body and her
-        finitude, whatever it was about. Over her stored replies to messages
-        about something else, a median 0.286 of her sentences were about
-        herself (tools/how_much_of_a_reply_is_about_her.py, 13 October). A
-        person's attention is on what they are doing until it is turned to
-        them or something does not match what they expected (Duval and
-        Wicklund 1972; Leary 2004 on the quiet self).
-
-        She attends to herself when the message addresses her, in the second
-        person or by name, which is deliberately wide: a question that says
-        "you" keeps everything, so nothing she is asked about herself goes
-        unanswered for want of the reading. And when something is off: her
-        recent turns have run worse than she expected, or she has come back
-        to find she is not continuous with who she was, whoever is asking
-        about whatever. A turn with no message is her own time and keeps
-        everything too.
-        """
-        text = str(objective or "")
-        if not text.strip() or _ADDRESSES_HER.search(text):
-            return True
-        if continuity and (
-            continuity.get("identity_mismatch")
-            or continuity.get("continuity_reentry_required")
-            or float(continuity.get("continuity_pressure", 0.0) or 0.0) > 0.0
-        ):
-            return True
-        try:
-            from core.conation.what_she_wants import get_what_she_wants
-
-            return bool(get_what_she_wants().something_is_off())
-        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-            logger.debug("her record could not say whether something is off: %s", exc)
-            return True
-
-    @staticmethod
-    def _less_what_is_left_out(whole: str) -> str:
-        """A finished system prompt, less whatever parts are left out of this turn.
-
-        See `left_out` in core/brain/aura_persona.py.
-        """
-        from core.brain.aura_persona import left_out, without_parts
-
-        parts = left_out()
-        if not parts:
-            return whole
-        less = without_parts(whole, parts)
-        ContextAssembler.LAST_COMPOSITION = {
-            **ContextAssembler.LAST_COMPOSITION,
-            "left_out": sorted(parts),
-            "prompt": len(less),
-            "whole_prompt": len(whole),
-        }
-        return less
 
     @staticmethod
     def build_system_prompt(
@@ -1677,18 +1592,6 @@ class ContextAssembler(_BuildsThePromptBlocks):
         return ContextAssembler._less_what_is_left_out(base)
 
     @staticmethod
-    def _latest_user_message(state: AuraState) -> str:
-        try:
-            for message in reversed(getattr(state.cognition, "working_memory", []) or []):
-                role = str(message.get("role", "") or "").strip().lower()
-                if role == "user":
-                    return str(message.get("content", "") or "")
-        except (AttributeError, TypeError) as _exc:
-            record_degradation('context_assembler', _exc)
-            logger.debug("Suppressed Exception: %s", _exc)
-        return ""
-
-    @staticmethod
     def _is_casual_interaction(objective: str) -> bool:
         """Domain-aware heuristic for small-talk versus full-context dialogue."""
         if not objective:
@@ -1715,6 +1618,7 @@ class ContextAssembler(_BuildsThePromptBlocks):
         # survivable direction: a full prompt for small talk costs context,
         # while a trimmed prompt for a real question costs the answer.
         return False
+
 
     @staticmethod
     def _self_state_number(
@@ -1757,29 +1661,6 @@ class ContextAssembler(_BuildsThePromptBlocks):
             )
             number = min(max(number, low), high)
         return f"{number:+.2f}" if signed else f"{number:.2f}"
-
-    @staticmethod
-    def _prompt_safe_line(text: Any, *, limit: int = _WORLD_VALUE_MAX_CHARS) -> str:
-        """One line of stored world state, fit to be read rather than obeyed.
-
-        Newlines are collapsed because a stored value carrying its own is a
-        value that can invent a section header in a list of dashes. Credential
-        shapes go through the same redactor the log sink uses: a preference is
-        whatever the conversation put there, and "my key is sk-..." is a
-        sentence people say.
-
-        The credential tier only. The personal tier would take an email address
-        or a phone number out of a preference, and here those are the payload
-        rather than the leak — this prompt stays on this machine, and a person
-        who told her their number expects her to know it.
-        """
-        from core.security.structural_redaction import CREDENTIAL_PATTERNS, redact_text
-
-        flat = " ".join(str(text or "").split())
-        redacted, _ = redact_text(flat, patterns=CREDENTIAL_PATTERNS)
-        if len(redacted) > limit:
-            redacted = redacted[:limit] + "…"
-        return redacted
 
     @staticmethod
     def build_world_context(state: AuraState) -> str:

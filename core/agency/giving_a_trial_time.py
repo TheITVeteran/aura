@@ -78,9 +78,14 @@ async def try_a_facing_control(hands: Any, run: Any, hers: Any, choosing: Any, a
     if programme is not None and not programme.take_trial():
         return False
     run.facing_trials += 1
+    if key and key == run.held:
+        # A new experiment needs a new physical receipt; rechoosing the held
+        # input otherwise reuses its old deadline and may end immediately.
+        await hold(hands, run, hers, '', at, trying=False)
     await hold(hands, run, hers, key, at, trying=True)
-    run.tried_at = run.held_since
-    run.facing_trial = ControlTrial(key, run.held_since, run.held_since + seconds, epoch, owner)
+    began = run.held_since if run.held_since is not None else at
+    run.tried_at = began
+    run.facing_trial = ControlTrial(key, began, began + seconds, epoch, owner)
     from core.agency.a_trial_has_a_physical_end import lease_control_trial
 
     lease_control_trial(hands, run, hers, run.facing_trial, field='facing_trial')
