@@ -83,3 +83,30 @@ def test_a_sign_held_for_and_never_judged_is_not_a_line_seen(monkeypatch):
     reflexes = _reflexes(signs_told=True)
     assert asyncio.run(_answered_the_signs(reflexes, time.monotonic())) is False
     assert not reflexes.keep.get("signs_seen") and reflexes.keep["signs_none"] == 1
+
+
+def test_only_the_place_s_own_screens_tell_her_signs_are_to_be_followed():
+    """Offline 2026-10-12: advice she had looked up for a game of falling eggs read as asking for signs to be
+    followed, and a line of signs was looked for in it for eleven seconds of its third run."""
+    from core.skills.screen_pursuit_as_it_happens import PlayingAsItHappens
+
+    reflexes = PlayingAsItHappens(page=None, band=(0, 0, 1, 1), goal="Play it", ends_at=time.monotonic() + 30)
+    reflexes.keep["counsel"] = "Repeat the pattern of moves it shows you."
+    reflexes.read({"text": "HOW TO PLAY Use the mouse to move. Click to throw the ball.", "layout": []})
+    assert not reflexes.keep.get("signs_told") and not _signs_may_come(reflexes)
+    reflexes.read({"text": "Follow the arrow keys in the book to cast the spell.", "layout": []})
+    assert reflexes.keep.get("signs_told") and _signs_may_come(reflexes)
+
+
+def test_the_screen_after_a_showing_is_read_whole_before_it_is_taken_for_play_again(monkeypatch):
+    """Offline 2026-10-12: a room's last sign went by and the screen that followed offered NEXT. Taken for a screen
+    of play, it was looked at quickly and without its words, and she pressed keys at it until her time was up."""
+    from core.skills.screen_pursuit_as_it_happens import PlayingAsItHappens
+
+    _stretches(monkeypatch, {"judged": 30, "answered": 28, "known": LINE, "ended": "no signs are coming"})
+    reflexes = PlayingAsItHappens(page=None, band=(0, 0, 1, 1), goal="Play it", ends_at=time.monotonic() + 600)
+    reflexes.keep["signs_told"] = True
+    assert asyncio.run(_answered_the_signs(reflexes, time.monotonic())) is True
+    assert not _signs_may_come(reflexes)                         # until the screen has been read
+    reflexes.read({"text": "Excellent! But what about the next room! NEXT", "layout": [{"text": "NEXT"}]})
+    assert _signs_may_come(reflexes) and reflexes.way_on_shown

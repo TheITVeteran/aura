@@ -29,6 +29,7 @@ WIDE, TALL = 640, 360
 STRIP = (170, 222, 150)
 INK = (50, 120, 50)
 ON_THE_PAD = (235, 240, 120)
+NEAR_THE_INK = (48, 150, 50)
 PAD_FROM, PAD_TO = 520, 610
 WAYS = ("left", "right", "up", "down")
 
@@ -56,7 +57,8 @@ class _Strip:
     """Signs come along a strip to a pad; each is judged over the pad by exactly what is down."""
 
     def __init__(self, seed: int = 3, pace: float = 170.0, pairs_from: int = 8, alone_for: float = 0.75,
-                 judged_from: int = PAD_FROM, whirl: bool = False, drawn_again: bool = False) -> None:
+                 judged_from: int = PAD_FROM, whirl: bool = False, drawn_again: bool = False,
+                 near_edge: bool = False) -> None:
         self.random = random.Random(seed)
         self.pace, self.pairs_from = pace, pairs_from
         #: How far along a sign must be to be judged: it is not to be seen from the pad's edge on, wherever that is.
@@ -65,6 +67,8 @@ class _Strip:
         self.whirl = whirl
         #: Whether a sign is drawn again in its own ink, bigger, on the far half of the pad as it leaves.
         self.drawn_again = drawn_again
+        #: Whether the lower part of the strip is a band of a green near the signs' own, under the lower arrow of a pair.
+        self.near_edge = near_edge
         #: How long the first sign is on the strip alone before the second is sent after it.
         self.alone_for = alone_for
         self.coming: list[dict] = []
@@ -95,6 +99,8 @@ class _Strip:
                 self.coming.remove(sign)
         picture = np.full((TALL, WIDE, 3), (228, 240, 246), np.uint8)
         picture[262:340] = STRIP
+        if self.near_edge:
+            picture[316:336] = NEAR_THE_INK
         picture[258:262] = INK                                       # the strip's edges, in the arrows' own ink
         picture[336:340] = INK
         picture[264:338, PAD_FROM + 24:PAD_TO - 4] = (150, 205, 135)   # the pad
@@ -320,3 +326,13 @@ def test_a_sign_drawn_again_bigger_past_where_it_went_from_sight_is_not_the_one_
     strip = _Strip(seed=19, drawn_again=True)
     asyncio.run(_played(strip, 16.0, SignsComing(dict(LINE), told=True)))
     assert strip.wrong <= 1 and strip.good >= 14, (strip.good, strip.wrong)
+
+
+def test_a_sign_passing_over_a_part_of_the_strip_that_is_nearly_its_own_colour_is_still_read_whole():
+    """Offline 2026-10-12: the strip's lower edge was a green near the arrows' own. Kept as ink that stays, with a
+    little left out round it, it cut the head off the lower arrow of every pair, and an arrow up beside an arrow
+    down was held for as up alone. In the fourth room, where most signs are pairs, that was the game."""
+    strip = _Strip(seed=23, near_edge=True, pairs_from=14)
+    asyncio.run(_played(strip, 26.0, SignsComing(dict(LINE), told=True)))
+    assert strip.pairs >= 6 and strip.wrong <= 1, (strip.good, strip.wrong, strip.pairs, strip.good_pairs)
+    assert strip.good_pairs >= strip.pairs - 4            # all but those still on the strip at the end

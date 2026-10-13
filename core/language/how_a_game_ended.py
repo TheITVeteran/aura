@@ -29,11 +29,14 @@ _THE_OPPONENT: Final = frozenset({"computer", "cpu", "opponent", "enemy", "rival
                                 "player 2", "player two", "p2", "other player"})
 _THE_TASK: Final = frozenset({"game", "round", "stage", "level", "wave", "mission", "world"})
 #: An end lost, as end screens say it. LIVE 2026-10-09 "Out of Time. You have failed." was read as no end at all.
+#: And a player consoled: offline 2026-10-12 "Oh, no! Dad's home! ... Better luck next time!" was read as no end at
+#: all, and "Welcome home! Great job, kids!", the same game won, as the same.
 _OVER: Final = re.compile(r"\b(game over|you lose|you lost|try again|out of lives|no lives|time'?s up|you died|defeat|"
                           r"(?:you )?(?:have )?failed|mission failed|out of time|time over|you crashed|crash(?:ed)?|"
-                          r"(?:you were|you got|you've been) (?:caught|captured)|busted)\b")
+                          r"(?:you were|you got|you've been) (?:caught|captured)|busted|better luck next time)\b")
 _PRAISED: Final = re.compile(
     r"\b(congratulations|congrats|well done|you did it|you made it|victory|"
+    r"(?:great|good|nice|excellent|awesome|fantastic|super) (?:job|work)|"
     r"(?:level|stage|round|wave|mission|world)\s*\d*\s*(?:complete|completed|clear|cleared|passed|beaten))\b"
 )
 _SIDES: Final = re.compile(r"\b(you|player)\s*:?\s*(\d+)\D{1,24}?\b([a-z]+)\s*:?\s*(\d+)\b")

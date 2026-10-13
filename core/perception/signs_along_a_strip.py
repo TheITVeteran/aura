@@ -9,9 +9,14 @@ person reads is the strip: the row of signs on it now, front to back.
 So once the line is known (where it runs, which way, what ink the signs are
 drawn in and how big one is), the band it runs in is read whole at each look:
 
-- the signs' ink, less what is ink there at every look (the strip's own edge
-  is often the signs' colour, and the place they are judged on is often shaded
-  like one of them);
+- the signs' ink, where it is not what is usually there. What is usually
+  at each place of the band is kept as a picture, learned from every look at
+  it that no sign was passing. The strip's own edge is often near the signs'
+  colour, and the place they are judged on is often shaded like one of them:
+  neither is a sign, and a sign passing over the edge is still seen whole
+  wherever the two are not one colour. (Kept as places that stay ink, with a
+  little left out round them, the edge cut the head off the lower arrow of
+  every pair that lay on it, and the pair read as its upper arrow alone.);
 - of that, only what has come along the line since the look before: the
   ink of the last look, moved on by as far as the signs have gone, lies under
   a sign on its way and not under anything else. What the signs come out of
@@ -45,11 +50,12 @@ INK_WITHIN = 40
 #: How far a mark stands from its ground to be a mark, of 255.
 MARKED = 36.0
 
-#: How much of the looks a place must have been ink to be the strip's own, how fast that is forgotten, and how far
-#: round it is left out too, in pixels.
-STAYS_FROM = 0.75
+#: How unlike what is usually at a place a pixel must be, of 255, to be a sign passing over it (and never less
+#: unlike it than it is unlike the signs' ink); how fast what is usually there is learned from a look that shows
+#: something in the signs' ink staying, and how fast from one that shows no ink there at all.
+UNLIKE_THE_USUAL = 14.0
 STAYS_FORGETS = 0.04
-ROUND_WHAT_STAYS = 2
+CLEAR_FORGETS = 0.3
 
 #: The band read, either side of the line, in sizes of one sign; a piece's sides and area, in sizes of one sign; and
 #: how far apart along the line, in sizes of one sign, two pieces of one sign may be.
@@ -58,12 +64,12 @@ SIDES = (0.3, 4.5)
 LEAST_AREA = 0.12
 ONE_SIGN_WITHIN = 2.2
 
-#: How much of a piece must lie under the last look's ink moved on along the line for it to be on its way; how much
-#: faster than the signs were first seen to go they may be going now; and the longest wait for a picture that the
-#: one after it may be making up for, in seconds. (A picture come again shows nothing as having come along: whoever
-#: takes the signs in turn forgives a look.)
+#: How much of a piece must lie under the last look's ink moved on along the line for it to be on its way; the
+#: fastest a sign goes, in lengths of the line a second (one crossing the whole line in under a second is past
+#: answering); and the longest wait for a picture that the one after it may be making up for, in seconds. (A
+#: picture come again shows nothing as having come along: whoever takes the signs in turn forgives a look.)
 COMES_ALONG = 0.7
-PACES = (0.0, 2.2)
+MOST_A_SECOND = 1.2
 A_PICTURE_WAITS_S = 0.15
 
 #: How much bigger or smaller than a usual single sign a mark may be and still be taught as one, and how many times a
@@ -116,7 +122,7 @@ class StripOfSigns:
         self.going, self.on_line, self.ink, self.size = going, on_line, tuple(int(v) for v in ink), float(size)
         self.level = abs(going[0]) >= 3 * abs(going[1])
         self.readable = self.level or abs(going[1]) >= 3 * abs(going[0])
-        self._stays: np.ndarray | None = None
+        self._usual: np.ndarray | None = None                   # what is usually at each place of the band
         self._was: tuple[np.ndarray, float] | None = None       # the ink that does not stay, at the look before, and when
         #: The single signs known by their shapes, by the key each shows; and the ones seen so far, before they are kept.
         self.known: dict[str, np.ndarray] = {}
@@ -140,12 +146,18 @@ class StripOfSigns:
             middle = round(self.on_line[0] * wide)
             first, last = max(0, middle - reach), min(wide, middle + reach)
             band = pixels[:, first:last, :3]
-        ink = np.abs(band.astype(np.int16) - np.asarray(self.ink, dtype=np.int16)).max(axis=2) <= INK_WITHIN
-        if self._stays is None or self._stays.shape != ink.shape:
-            self._stays = ink.astype(np.float32)
-        else:
-            self._stays += STAYS_FORGETS * (ink - self._stays)
-        moving = ink & ~ndimage.binary_dilation(self._stays > STAYS_FROM, iterations=ROUND_WHAT_STAYS)
+        now = band.astype(np.float32)
+        from_ink = np.abs(now - np.asarray(self.ink, dtype=np.float32)).max(axis=2)
+        ink = from_ink <= INK_WITHIN
+        if self._usual is None or self._usual.shape != now.shape:
+            self._usual = now.copy()
+        from_usual = np.abs(now - self._usual).max(axis=2)
+        moving = ink & (from_usual > np.maximum(UNLIKE_THE_USUAL, from_ink))
+        # What is usually there is learned at every look: fast where there is no ink, and slowly where there is, so
+        # that a sign passing does not become what is usual in the time it takes to pass, and a thing in the signs'
+        # ink that comes and stays does.
+        learns = np.where(ink, STAYS_FORGETS, CLEAR_FORGETS).astype(np.float32)
+        self._usual += learns[:, :, None] * (now - self._usual)
         gone = self._gone_along(moving, at)
         labels, _count = ndimage.label(moving)
         pieces = []
@@ -187,7 +199,11 @@ class StripOfSigns:
         long = moving.shape[1] if self.level else moving.shape[0]
         # Pictures do not come as evenly as their times say: two may show a tenth of a second's going a thirtieth of
         # a second apart. So by anything from a pixel to as far as the signs go in the longest wait for a picture.
-        furthest = PACES[1] * abs(self.going[0] if self.level else self.going[1]) * long * max(at - before[1], A_PICTURE_WAITS_S)
+        # How fast the signs were first seen to go says which way they go and no more: by anything from a pixel to
+        # as far as a sign may have come in the longest wait for a picture, at any pace a sign can be answered at.
+        # Offline 2026-10-12 the line was found by a thing going a quarter as fast as the signs; they were looked
+        # for no further on than that thing could have got, seen in the first room, and not in the faster second.
+        furthest = MOST_A_SECOND * long * max(at - before[1], A_PICTURE_WAITS_S)
         # A pixel's give either way: a picture scaled to the screen puts an edge on one side of a pixel or the other.
         return ndimage.binary_dilation(before[0], iterations=1), range(1, min(long - 1, int(furthest) + 3))
 
@@ -196,7 +212,11 @@ class StripOfSigns:
         of the distances a sign may have come, lies under most of it."""
         forward = (self.going[0] if self.level else self.going[1]) > 0
         rows, columns = place
-        most = COMES_ALONG * int(shape.sum())
+        # A thing that has stayed where it was lies under itself as it is, and under itself moved on a little if it
+        # is long the way the line goes: it has come along only where moving the last look's ink on covers more of
+        # it than leaving that ink where it was. (Offline 2026-10-12: a strip of the line's own ink, shown again when
+        # a sign of another colour had passed over it, was taken for a sign, and the sign coming up to it for part of it.)
+        most = max(COMES_ALONG * int(shape.sum()), int((was[rows, columns] & shape).sum()) + 1)
         for by in tries:
             back = -by if forward else by
             if self.level:
@@ -210,13 +230,13 @@ class StripOfSigns:
         return False
 
     def what_stays(self) -> Any:
-        """What has been learned of the line's own ink, for whoever reads the same line next: without it the first
-        signs of the next showing are read through what stays."""
-        return self._stays
+        """What is usually on the band, for whoever reads the same line next: without it the first signs of the next
+        showing are read against a picture that had signs in it."""
+        return self._usual
 
     def stays_as_before(self, kept: Any) -> None:
-        if isinstance(kept, np.ndarray):
-            self._stays = kept
+        if isinstance(kept, np.ndarray) and kept.ndim == 3:
+            self._usual = kept.astype(np.float32, copy=True)
 
     def _along(self, place: tuple, tall: int, wide: int, first: int) -> float:
         """How far along the line a piece is: its middle along the way they go, as a share of the picture."""

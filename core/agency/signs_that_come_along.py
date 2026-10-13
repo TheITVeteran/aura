@@ -263,6 +263,11 @@ class SignsComing:
         if self.going is None or self.on_line is None or self.signs_read < SIGNS_READ_AT_LEAST:
             return None
         known: dict[str, Any] = {"going": tuple(self.going), "on_line": tuple(self.on_line)}
+        pace = self.turn.pace if self.turn is not None else None
+        if pace and self.strip is not None and self.strip.readable:
+            # As fast as the signs themselves have been seen to go along the line, not the first thing that showed it.
+            way = 1.0 if (self.going[0] if self.strip.level else self.going[1]) > 0 else -1.0
+            known["going"] = (way * pace, 0.0) if self.strip.level else (0.0, way * pace)
         if self.strip is not None:
             known.update({"ink": self.strip.ink, "size": self.strip.size, "shapes": dict(self.strip.known),
                           "stays": self.strip.what_stays()})
@@ -372,10 +377,10 @@ async def answer_signs_as_they_come(look: Callable[[], Any], hands: Any, *, seco
             if began is None:
                 began = came_at = at
             if signs.strip is None:
-                happened = moves.see(picture, at)
-                if looks > 3 and any(event.get("what") == "new screen" for event in happened):
-                    ended = "the screen changed"
-                    break
+                # Until the line is found. A screen that changes under the looking is not a reason to stop: the
+                # screen signs come on has just come up itself, and one they do not come on gives none for a while.
+                # Offline 2026-10-12 the loop gave the screen back as the room came up, and the round was lost.
+                moves.see(picture, at)
             signs.see(moves, picture, at)
             if signs.asks(at):
                 came_at = at
@@ -390,6 +395,8 @@ async def answer_signs_as_they_come(look: Callable[[], Any], hands: Any, *, seco
     lasted = at - began if began is not None else 0.0
     return {"seconds": lasted, "ended": ended, "pictures": looks, "pictures_a_second": round(looks / max(0.1, lasted), 1),
             "answered": signs.answered, "judged": signs.turn.judged if signs.turn is not None else 0,
+            "unread": signs.turn.unread if signs.turn is not None else 0,
+            "a_sign_across": round(signs.strip.size) if signs.strip is not None else 0,
             "known": signs.known()}
 
 

@@ -312,6 +312,11 @@ def _signs_may_come(reflexes: Any) -> bool:
     """Whether signs to be followed may be coming along a line in this place: its words ask for signs to be followed,
     and a line has been seen here or has not yet been looked for and ruled out."""
     keep = reflexes.keep
+    if keep.get("signs_showing_over"):
+        # A showing has just ended: whatever screen is up is read whole before it is taken for one of play again.
+        # Offline 2026-10-12 a room's last sign went by, the screen that followed offered NEXT, and it was looked
+        # at as play is, quickly and without its words, for as long as the game had left.
+        return False
     return bool(keep.get("signs_going") or keep.get("signs_seen")
                 or keep.get("signs_told") and not keep.get("signs_shown_in_turn")
                 and int(keep.get("signs_none") or 0) < A_LINE_LOOKED_FOR)
@@ -748,6 +753,7 @@ class PlayingAsItHappens:
         from core.skills.visible_words_from_their_pixels import current_visible_words
 
         observation = current_visible_words(self, observation)
+        self.keep.pop("signs_showing_over", None)                # the screen after a showing of signs has been read
         _ways_on_read_right_before(self, observation)
         said = " ".join(str(observation.get("text") or "").split())
         labels = [" ".join(str(r.get("text") or "").split()) for r in observation.get("layout") or () if isinstance(r, dict)]
@@ -781,7 +787,14 @@ class PlayingAsItHappens:
             from core.agency.doing_again_what_was_shown import asks_to_follow
 
             if asks_to_follow(said):
-                self.keep["asked_to_follow"] = self.keep["signs_told"] = True
+                self.keep["asked_to_follow"] = True
+            # And asked by the place's own screens, not by what she looked up or was counselled: offline 2026-10-12
+            # advice found for a game of falling eggs read as asking for signs to be followed, and a line of signs
+            # was looked for in it for eleven seconds of its third run.
+            from core.agency.signs_that_come_along import told_to_follow_signs
+
+            if told_to_follow_signs(said):
+                self.keep["signs_told"] = True
         if self.first_ways_back is None and observation.get("ok", True):
             self.first_ways_back = restart_controls(observation)
 
@@ -980,7 +993,6 @@ class PlayingAsItHappens:
         # led from an animated menu into a boat game, which played itself to GAME OVER in the quiet left on the menu.
         if now < self.quiet_until and self.said_now != self.quiet_on and _a_different_screen(self.said_now, self.quiet_on):
             self.quiet_until = 0.0
-        from core.agency.signs_that_come_along import told_to_follow_signs
         from core.agency.the_controls_a_game_names import the_pointer_only_clicks, tried_in_turn
         from core.cognition.a_guide_to_a_place import THE_GUIDE as _THE_GUIDE
 
@@ -1028,7 +1040,7 @@ class PlayingAsItHappens:
         # And where its words ask for signs to be followed, the loop that only answers signs has the screen once it is no
         # menu, and finds the line itself: offline 2026-10-12 the watch for a showing went first, saw nothing in order
         # for ten seconds, and the first round was lost before a key was held.
-        signs_here = self.keep["signs_told"] = bool(self.keep.get("signs_told")) or told_to_follow_signs(said)
+        signs_here = bool(self.keep.get("signs_told"))
         if not self.under_her_hand and self._a_menu_first():
             # Past a menu is another screen: a line not found before it may be looked for again.
             self.keep["signs_none"] = 0
@@ -1466,6 +1478,7 @@ async def _answered_the_signs(reflexes: PlayingAsItHappens, now: float) -> bool:
         keep["signs_going"] = None
         return False
     keep["signs_going"], keep["signs_none"], keep["signs_seen"] = learned or before, 0, True
+    keep["signs_showing_over"] = stretch.get("ended") == "no signs are coming"
     # A sign answered and judged is getting somewhere, whether or not the place counts it in sight.
     stretch["gains"], stretch["losses"] = int(stretch.get("judged") or 0), 0
     reflexes.stretches.append(stretch)

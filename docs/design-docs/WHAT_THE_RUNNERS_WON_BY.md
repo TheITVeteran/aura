@@ -148,9 +148,39 @@ the first sign and looked for the line on the book's page), and signs being answ
 the round is looked at (a round's four minutes were up twelve signs from the end of the last room, and the game
 was lost in the ten seconds the looking took).
 
-Still open: after its third room the game says the kitchen is a mess again and begins again from the kitchen,
-faster. Nothing on any screen says she has won, and she does not yet take coming round to the first room for
-having done all of it.
+The game has a fourth stage. Its program sets a losing background for each of four, and the fourth is the kitchen
+again with five messes; the sheet written before the runner said three rooms, and the runner stopped at "the
+kitchen is a mess again" taking that for the end. What the fourth stage took, most of its signs being pairs:
+
+- **What is usually on the strip is kept as a picture, not as places that stay ink.** The strip's lower edge is
+  a green within the reader's reach of the arrows' own. Kept as ink that stays, with two pixels left out round it,
+  the edge cut the head off the lower arrow of every pair, and an arrow up beside an arrow down was held for as up
+  alone. A pixel is a sign's where it is the signs' ink and unlike what is usually there
+  (`StripOfSigns.signs`); a sign over the edge is seen whole.
+- **A thing has come along only where moving the last look's ink on covers more of it than leaving it.** A strip
+  of the line's own ink, shown again when a sign of another colour had passed over it, lay under itself moved on
+  a pixel and was taken for a sign, and the sign coming up to it for part of it.
+- **How fast the first thing seen went says which way the signs go and no more.** One run found the line by a
+  thing going a quarter as fast as the signs, looked for them no further on than it could have got, and saw
+  them in the first room and not in the faster second.
+- **Praise for the job done is a win, and a player consoled has lost.** The game's two endings each offer PLAY
+  AGAIN. "Welcome home! Great job, kids!" and "Oh, no! Dad's home! ... Better luck next time!" were both read as a
+  round over with no result (`core/language/how_a_game_ended.py`).
+
+Driven straight against the game the loop then cleans all four stages in 311 seconds, 132 signs judged in the
+fourth, and reaches "Welcome home! Great job, kids!".
+
+And her own run, from a frozen copy, by the prompt's terms: all four stages at 30 pictures a second (61, 85, 111
+and 132 signs judged, three of them unread), 6.7 minutes with its menus, ending "That one ended 'WELCOME HOME!
+... Great job, kids! ... PLAY AGAIN': won." Two things in her pursuit stood between the loop and that:
+
+- **The screen after a showing is read whole before it is taken for play again.** While signs may be coming the
+  place is taken to go on without her, and a screen of such a place is looked at quickly, without its words. The
+  screen after a room's last sign offers NEXT; looked at that way it was never read, and she pressed keys at it.
+- **An act that led to another screen did not do nothing.** The first look after a story page's NEXT came before
+  the page turned, and the press was written down as having done nothing; on the page it led to, NEXT was not
+  tried, and four keys were, one at a time, for 27 seconds. Where the reading the verdict is given shows plainly
+  another screen, the act led there (`core/agency/deliberate_action.py`).
 
 Still open: a sign made of one single she knows and one she has not yet seen alone. It is fitted well enough by the
 known one and another laid over the same part of it, and both their keys are held. The game shows every single

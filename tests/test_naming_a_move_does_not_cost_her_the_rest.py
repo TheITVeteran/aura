@@ -32,6 +32,7 @@ MOVES = [
 class _Held:
     held = True
     observed_change = True
+    measured = True                 # a verdict says whether it was measured (Verdict.measured), and choosing reads it
 
     def why(self):
         return "as expected"

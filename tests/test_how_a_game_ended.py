@@ -85,3 +85,14 @@ def test_an_ending_split_across_pieces_of_writing_is_read_on_from_one_to_the_nex
     assert how_it_ended_in(["GAME", "OVER", "CONTINUE"]) == "lost"
     assert how_it_ended_in(["LEVEL", "COMPLETE", "NEXT"]) == how_it_ended_in(["LEVEL COMPLETE", "NEXT"])
     assert how_it_ended_in(["SCORE", "120", "LIVES", "3"]) == ""
+
+
+def test_praise_for_the_job_done_is_a_win_and_a_player_consoled_has_lost():
+    """Offline 2026-10-12: a game's two endings each offered PLAY AGAIN, and both were read as a round over with no
+    result: its last room cleaned, she would have begun it again not knowing she had won."""
+    assert how_it_ended("WELCOME HOME! Great job, kids! PLAY AGAIN") == "won"
+    assert how_it_ended("OH, NO! DAD'S HOME! Looks like Billy and Mandy are in big trouble! "
+                        "Better luck next time! PLAY AGAIN") == "lost"
+    # Praise on the way is not the end, and a job spoken of is not a job praised.
+    assert how_it_ended("Excellent! This place is clean as a whistle... But what about the next room! NEXT") == ""
+    assert how_it_ended("Do a good job and Dad will never know.") == ""

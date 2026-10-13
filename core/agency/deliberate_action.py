@@ -65,6 +65,18 @@ class _NotAskedError(Exception):  # noqa: N818 - a control signal, not a failure
     """
 
 
+
+def _plainly_another_screen(before: str, after: str) -> bool:
+    """Whether what is read now is plainly another screen than the one acted on: each has words to tell it by, and
+    they share fewer than one screen read twice does. A look taken at once after an act may find the screen as it
+    was and at rest, and the act be measured as having done nothing; where the reading the verdict is given then
+    shows another screen, the act led there. Offline 2026-10-12 a story page's NEXT was pressed, the first look came
+    before the page turned, and on the next page NEXT was not tried: four keys were, one at a time, for 27 seconds."""
+    from core.agency.where_things_lead import SAME_SCREEN, screen_words
+
+    was, now = screen_words([], before), screen_words([], after)
+    return len(was) >= 2 and len(now) >= 2 and len(was & now) < SAME_SCREEN * len(was | now)
+
 @dataclass(frozen=True)
 class Expectation:
     """What should be observably different once a move lands.
@@ -104,7 +116,8 @@ class Expectation:
         for needle in self.absent:
             if needle.lower() in after_lower:
                 lingering.append(needle)
-        moved = before.strip() != after.strip() if measured_change is None else measured_change
+        moved = (before.strip() != after.strip() if measured_change is None
+                 else measured_change or _plainly_another_screen(before, after))
         stuck = self.changed and not moved
         held = not (missing or lingering or stuck)
         return Verdict(
@@ -125,7 +138,8 @@ class Expectation:
         """
         from core.perception.what_is_there import holds_in  # noqa: PLC0415
 
-        moved = before.as_text() != after.as_text() if measured_change is None else measured_change
+        moved = (before.as_text() != after.as_text() if measured_change is None
+                 else measured_change or _plainly_another_screen(before.as_text(), after.as_text()))
         ok, why = holds_in(
             after,
             contains=self.contains,

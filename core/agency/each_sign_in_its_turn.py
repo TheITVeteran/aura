@@ -93,7 +93,9 @@ class InTurn:
         self.behind: float | None = None
         self.widest = 0.0
         self.empty_since: float | None = None
+        #: How many signs have gone on to be judged, and how many of those went with no key of theirs known.
         self.judged = 0
+        self.unread = 0
 
     def take(self, signs: Sequence[Any], at: float, read: Callable[[Any], frozenset[str]]) -> frozenset[str]:
         """The keys to have down now, given the signs on the line (furthest along first, each with ``along``) and a
@@ -174,6 +176,7 @@ class InTurn:
         self._went_at = [*self._went_at, went_at][-GONE_FROM_SIGHT_OF:]
         self.seen_to = sorted(self._went_at)[len(self._went_at) // 2]
         self.keys_of_the_last = self._wanted()
+        self.unread += not self.keys_of_the_last
         self.behind = behind if behind is not None else self.behind
         if self.pace and self.pace > 0 and self.behind:
             more = min(HELD_FOR * self.behind, HELD_AT_MOST) / self.pace
