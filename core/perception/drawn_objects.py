@@ -73,13 +73,15 @@ def _region_box(region: Any, wide: int, high: int) -> tuple[int, int, int, int] 
 def _components(small: np.ndarray) -> list[_Drawing]:
     from scipy import ndimage
 
+    from core.perception.picture_arithmetic import middle_values
+
     # Each channel contributes: equal-brightness objects of different colours
     # must still have boundaries. Closing joins only one-pixel outline gaps.
     values = small.astype(np.int16)
     edge = np.zeros(small.shape[:2], dtype=bool)
     edge[:, 1:] |= np.max(np.abs(values[:, 1:] - values[:, :-1]), axis=2) >= 24
     edge[1:, :] |= np.max(np.abs(values[1:] - values[:-1]), axis=2) >= 24
-    around = ndimage.median_filter(small, size=(9, 9, 1), mode="nearest").astype(np.int16)
+    around = middle_values(small, (9, 9)).astype(np.int16)
     contrast = np.max(np.abs(values - around), axis=2) >= 24
     masks = (ndimage.binary_closing(edge, iterations=1),
              ndimage.binary_closing(contrast, iterations=1))

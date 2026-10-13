@@ -155,7 +155,7 @@ def _places_that_stand_out(picture: Any, largest: float, least: float) -> list[t
     import numpy as np
     from scipy import ndimage
 
-    from core.perception.picture_arithmetic import apart, median, pieces, shrink
+    from core.perception.picture_arithmetic import apart, median, middle_values, pieces, shrink
 
     frame = np.asarray(picture)[..., :3]
     tall, wide = frame.shape[:2]
@@ -163,7 +163,7 @@ def _places_that_stand_out(picture: Any, largest: float, least: float) -> list[t
     small = shrink(frame, PLACED_WIDE, small_tall)
     reach = max(9, int(2.4 * largest * max(PLACED_WIDE, small_tall)) | 1)
     floor = median(small, min(reach, (min(PLACED_WIDE, small_tall) // 2) | 1))
-    along = ndimage.median_filter(small, size=(1, min(2 * reach + 1, PLACED_WIDE | 1), 1), mode="nearest")
+    along = middle_values(small, (1, min(2 * reach + 1, PLACED_WIDE | 1)))
     unlike = (apart(small, floor).max(axis=2) > STANDS_OUT_BY) & (apart(small, along).max(axis=2) > STANDS_OUT_BY)
     thin = max(2, int(0.5 * least * PLACED_WIDE))
     unlike = ndimage.binary_opening(unlike, structure=np.ones((thin, thin), bool))

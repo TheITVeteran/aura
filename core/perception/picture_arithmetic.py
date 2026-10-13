@@ -19,7 +19,7 @@ import io
 
 import numpy as np
 
-__all__ = ["apart", "decode", "grey", "grow", "median", "pieces", "shrink"]
+__all__ = ["apart", "decode", "grey", "grow", "median", "middle_values", "pieces", "shrink"]
 
 _EIGHT_WAYS = np.ones((3, 3), dtype=bool)
 
@@ -62,10 +62,67 @@ def grow(mask: np.ndarray) -> np.ndarray:
 
 def median(picture: np.ndarray, reach: int) -> np.ndarray:
     """Each pixel replaced by the middle value around it, colour by colour."""
+    return middle_values(picture, (reach, reach))
+
+
+#: The most distinct values a picture's values may take for the middle of them to be counted rather than sorted.
+COUNTED_UP_TO = 4096
+_COUNTING: dict[str, object] = {}
+
+
+#: How the values beyond the edge are taken: the edge carried outward, or the values mirrored about it (scipy's names),
+#: and numpy's names for the same.
+_BEYOND = {"nearest": "edge", "reflect": "symmetric"}
+
+
+def middle_values(values: np.ndarray, size: tuple[int, int], mode: str = "nearest") -> np.ndarray:
+    """Each value replaced by the middle of the values in the ``size`` (down, across) around it, channel by channel:
+    exactly ``scipy.ndimage.median_filter(values, size=size (+ (1,) by channel), mode=mode)``, value for value, the
+    middle of an even count being the upper of the two, beyond the edge the edge carried outward ("nearest") or the
+    values mirrored about it ("reflect").
+
+    Found by counting, not by sorting. Where the values are whole numbers of a small range, as a picture's are, the
+    values in a window are kept as a count of each, and moving the window one place along takes one column out of the
+    count and puts one in, the middle found again from where it was (Huang, Yang and Tang, 1979): a few dozen steps a
+    pixel where sorting the window took hundreds. Measured offline 2026-10-12 on a game's screen: the filter was three
+    quarters of finding what looks pressable and what is drawn, read at every look. Other values are sorted as before.
+    """
     from scipy import ndimage
 
-    size = (reach, reach, 1) if picture.ndim == 3 else (reach, reach)
-    return ndimage.median_filter(picture, size=size, mode="nearest")
+    values = np.asarray(values)
+    down, across = int(size[0]), int(size[1])
+    whole = values.dtype.kind in "ui" or values.dtype == bool
+    count = _counting()
+    if (count is None or not whole or values.ndim not in (2, 3) or values.size == 0 or down < 1 or across < 1
+            or mode not in _BEYOND or int(values.min()) < 0 or int(values.max()) >= COUNTED_UP_TO
+            # Mirrored more than once over, as a window wider than the values is, the two ways of mirroring part.
+            or (mode == "reflect" and (down // 2 > values.shape[0] or across // 2 > values.shape[1]))):
+        full = (down, across, 1) if values.ndim == 3 else (down, across)
+        return ndimage.median_filter(values, size=full, mode=mode)
+    planes = values[..., None] if values.ndim == 2 else values
+    out = np.empty(planes.shape, dtype=values.dtype)
+    bins = int(planes.max()) + 1
+    middle = (down * across) // 2
+    for channel in range(planes.shape[2]):
+        plane = np.ascontiguousarray(planes[..., channel], dtype=np.int32)
+        padded = np.pad(plane, ((down // 2, down - down // 2 - 1), (across // 2, across - across // 2 - 1)),
+                        mode=_BEYOND[mode])
+        found = np.empty(plane.shape, dtype=np.int32)
+        count(padded, down, across, bins, middle, found)
+        out[..., channel] = found
+    return out[..., 0] if values.ndim == 2 else out
+
+
+def _counting() -> object | None:
+    """The counting itself, compiled once (core/perception/counted_middle.py); None where it cannot be, and the values
+    are sorted instead."""
+    if "kernel" not in _COUNTING:
+        try:
+            from core.perception.counted_middle import count_the_middle
+        except ImportError:
+            count_the_middle = None
+        _COUNTING["kernel"] = count_the_middle
+    return _COUNTING["kernel"]
 
 
 def pieces(mask: np.ndarray) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:

@@ -133,8 +133,21 @@ def _standing_out(small: np.ndarray) -> np.ndarray:
     """What stands out in brightness from what is near it, as a mask."""
     from scipy import ndimage
 
+    from core.perception.picture_arithmetic import middle_values
+
     gray = small.mean(axis=2)
-    around = ndimage.median_filter(gray, size=max(9, small.shape[1] // 12))
+    reach = max(9, small.shape[1] // 12)
+    # Where the colours are whole, as a picture's are, the brightness of a place is its sum of three over three, and
+    # the middle brightness around it is the middle sum's: counted, not sorted (core/perception/picture_arithmetic.py),
+    # then turned to a brightness by the same arithmetic that made each one.
+    colours = small[..., :3]
+    if colours.size and 0 <= float(colours.min()) and float(colours.max()) <= 255 and np.array_equal(colours, np.floor(colours)):
+        sums = colours.astype(np.int32).sum(axis=2)
+        each = np.zeros((766, 3), dtype=colours.dtype)
+        each[:, 0] = np.arange(766)
+        around = each.mean(axis=1)[middle_values(sums, (reach, reach), mode="reflect")]
+    else:
+        around = ndimage.median_filter(gray, size=reach)
     mask = ndimage.binary_closing(np.abs(gray - around) > 28.0, iterations=2)
     return ndimage.binary_fill_holes(mask)
 
