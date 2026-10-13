@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 __all__ = ["ProgramRead", "key_named", "merged", "read_program", "says_how_it_is_worked"]
 
@@ -105,6 +106,8 @@ class ProgramRead:
     mechanics_found: list[str] = field(default_factory=list)
     #: Its code as statements, as written (core/cognition/reading_the_code.py reads it for how the thing is played).
     code: list[str] = field(default_factory=list)
+    #: What its code says of how it is played, read from its statements (core/perception/how_a_program_plays.py).
+    plays: Any = None
 
     def __bool__(self) -> bool:
         return bool(self.text or self.keys or self.words or self.pointer or self.mechanics_found)
@@ -259,6 +262,9 @@ def read_program(data: bytes, name: str = "") -> ProgramRead:
             return ProgramRead()
         statements = [str(line) for line in got["code"]]
         code = "\n".join(statements)
+        from core.perception.how_a_program_plays import how_it_plays
+
+        plays = how_it_plays(statements)
         names = list(dict.fromkeys([*got["symbols"], *got["instances"], *got["fields"], *got["as3_names"]]))
         texts = [*got["texts"], *(s for s in got["as3_strings"] if " " in s)]
         kind = "flash (AS3)" if got["as3_names"] else "flash"
@@ -270,6 +276,7 @@ def read_program(data: bytes, name: str = "") -> ProgramRead:
         texts = re.findall(r"(?:\"([^\"\n]{12,240})\"|'([^'\n]{12,240})'|>([^<>\n]{12,240})<)", code)
         texts = [next(t for t in group if t) for group in texts]
         kind, labels = "script" if not re.search(r"<html|<body", code[:4000], re.I) else "page", []
+        plays = None
     text = "\n".join([code, *texts, " ".join(names), " ".join(labels)])[:MOST_TEXT].lower()
     pointer = [way for way, sign in _POINTER.items() if sign.search(text)]
     keys = {key: purpose for key, purpose in _keys_in(text, names).items() if purpose != "cheat"}
@@ -278,7 +285,7 @@ def read_program(data: bytes, name: str = "") -> ProgramRead:
     return ProgramRead(words=prose[:80], keys=keys, keyed=_acts_keyed(names), pointer=pointer,
                        buttons=_buttons_in(names),
                        names=[n for n in names if 3 <= len(n) <= 32][:600], labels=labels[:200], text=text, kind=kind,
-                       code=statements[:40_000])
+                       code=statements[:40_000], plays=plays or None)
 
 
 def merged(reads: list[ProgramRead]) -> ProgramRead:
@@ -296,5 +303,6 @@ def merged(reads: list[ProgramRead]) -> ProgramRead:
         out.text += "\n" + read.text
         out.mechanics_found += [m for m in read.mechanics_found if m not in out.mechanics_found]
         out.code += read.code
+        out.plays = out.plays or read.plays
     return out
 

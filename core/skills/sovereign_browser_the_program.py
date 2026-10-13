@@ -27,7 +27,7 @@ logger = logging.getLogger("Skills.SovereignBrowser.TheProgram")
 MOST_BYTES = 40 * 1024 * 1024
 MOST_PROGRAMS = 6
 #: Which reading of programs a kept read was made by: one made by an earlier reader is read again.
-READER = 3
+READER = 4
 
 #: What a page loaded, from its own record, with the size the browser was given of each.
 _WHAT_IT_LOADED = """
@@ -113,16 +113,20 @@ async def read_what_the_page_runs(page: Any) -> Any:
 def _kept(read: Any) -> dict[str, Any]:
     """A read as it is kept: what it says of how the thing is worked, and the mechanics' signs, not the program."""
     from core.agency.mechanics_she_knows import mechanics_in
+    from core.perception.how_a_program_plays import kept
 
     return {"kind": read.kind, "words": read.words[:40], "keys": read.keys, "keyed": read.keyed, "pointer": read.pointer,
-            "buttons": read.buttons, "mechanics": sorted(mechanics_in(program=read.text))}
+            "buttons": read.buttons, "mechanics": sorted(mechanics_in(program=read.text)),
+            "plays": kept(getattr(read, "plays", None))}
 
 
 def _from_kept(held: dict[str, Any]) -> Any:
+    from core.perception.how_a_program_plays import unkept
     from core.perception.reading_a_program import ProgramRead
 
-    # The mechanics found in it stand in for its text, as their names, so the guide finds them again.
+    # The mechanics found in it stand in for its text, as their names, so the guide finds them again; and what its code
+    # says of how it is played, as it was read.
     return ProgramRead(words=list(held.get("words") or []), keys=dict(held.get("keys") or {}),
                        keyed=list(held.get("keyed") or []), pointer=list(held.get("pointer") or []),
                        buttons=list(held.get("buttons") or []), kind=str(held.get("kind") or ""),
-                       text="", mechanics_found=list(held.get("mechanics") or []))
+                       text="", mechanics_found=list(held.get("mechanics") or []), plays=unkept(held.get("plays")))

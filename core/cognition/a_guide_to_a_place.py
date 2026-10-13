@@ -99,7 +99,8 @@ _AIMS = ("aim", "shoot", "fire", "throw", "aim and shoot", "aim and fire", "aim 
 #: The keys a body is moved by.
 _MOVING = frozenset({"up", "down", "left", "right", *"wasdijklefzq"})
 #: What a key kept for something other than play is for: the menu's keys, not play's.
-_KEYS_NOT_FOR_PLAY = ("pause", "mute", "sound", "quit", "menu", "help", "restart", "play", "start", "begin", "continue")
+_KEYS_NOT_FOR_PLAY = ("pause", "mute", "sound", "quit", "menu", "help", "restart", "play", "start", "begin", "continue",
+                      "cheat")
 
 
 @dataclass
@@ -147,6 +148,8 @@ class Guide:
     readouts: dict[str, str] = field(default_factory=dict)
     #: Controls that are not part of play, by what they are for.
     not_for_play: list[str] = field(default_factory=list)
+    #: What its code was read to say of how it is played (core/perception/how_a_program_plays.py), where it was.
+    code_says: Any = None
     strategy: list[str] = field(default_factory=list)
     #: (when, what changed), oldest first.
     changes: list[tuple[float, str]] = field(default_factory=list)
@@ -285,6 +288,10 @@ class Guide:
         for name in getattr(read, "mechanics_found", []) or []:
             self._know(name, ["its program shows it"], PROGRAM, at)
         self.sources.add(PROGRAM)
+        # What its code says of how it is played is the surest thing known of it (core/cognition/what_its_code_says.py).
+        from core.cognition.what_its_code_says import take_in_how_it_plays
+
+        take_in_how_it_plays(self, getattr(read, "plays", None), at)
 
     def take_in_counsel(self, told: str, at: float | None = None) -> None:
         if told:
@@ -412,7 +419,7 @@ class Guide:
             lines.append(f"• Its {_listed(names)} controls aren't part of play.")
         if len(lines) < 2:
             return ""
-        sources = [x for x in (SCREEN, TOLD, PAGE, COUNSEL, MODEL, PROGRAM) if x in self.sources]
+        sources = [x for x in ("its code", SCREEN, TOLD, PAGE, COUNSEL, MODEL, PROGRAM) if x in self.sources]
         place = f" to {self.place}" if self.place and len(self.place) <= 60 else ""
         return f"My guide{place}, from {_listed(sources)}:\n" + "\n".join(lines)
 

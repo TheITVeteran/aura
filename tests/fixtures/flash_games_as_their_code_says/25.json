@@ -1,0 +1,52 @@
+{
+  "game": 25,
+  "title": "Camp Lazlo: Paintcan Panic",
+  "read_from": "programs/25.swf, AS2 (Flash 7): GameBoard, Hero, Enemy, Edward, Chip",
+  "stage": [600, 400],
+  "start": [
+    "the title screen's START, then PLAY",
+    "the level prompt ('LEVEL n / Paint q% of the ground to continue.') goes on by any key",
+    "the engine runs from then on every frame (GameBoard.update)"
+  ],
+  "controls": {
+    "left": "run west", "up": "run north", "right": "run east", "down": "run south",
+    "two arrows together": "run diagonally, each axis at speed / 1.4",
+    "z": "jump: keeps running the way she faces; paints nothing; enemies cannot hit her while it lasts",
+    "p": "pause", "m": "mute the music",
+    "w, l": "end the level passed / failed: cheat keys, listened to only where _cheatKeys is true, which it is not"
+  },
+  "hers": {
+    "class": "Hero", "symbol": "Lazlo", "spawn": [200, 150],
+    "speed_max": 7, "speeds_up_by": 1, "per": "frame",
+    "kept_inside": [10, 110, 590, 390],
+    "blocked_by": "the level's obstacles (canoe, bush1, cage, bushwall, downtree, stump, tools, chair, cooler, speaker, tree, grass, totempole, cow, sacks, chest, bush2)"
+  },
+  "goal": {
+    "kind": "cover the ground",
+    "how": "running (not jumping) over a 30 x 25 cell not yet painted paints it",
+    "cell": [30, 25],
+    "field": [10, 110, 590, 390],
+    "coverage": "painted cells / 2.4, as a percentage",
+    "pass": "coverage >= the level's quota",
+    "quota_by_level": [50, 50, 55, 55, 60, 60, 65, 65, 70, 70, 70, 75, 75, 75, 80, 80, 85, 85, 90, 90],
+    "levels": 20,
+    "won": "the 'win' screen, after the twentieth level is passed"
+  },
+  "fail": [
+    {"when": "paint supply < 0", "supply": 5000, "costs": {"a cell newly painted": 15, "an enemy's touch": 1000}}
+  ],
+  "hazards": [
+    {"what": "Edward", "does": "steers toward her: speed grows by 0.2 a frame to 0.4, added to a velocity kept at 0.97 a frame (about 13 px a frame at most), turning with inertia",
+     "touch": "within 15 px: costs 1000 paint unless she is jumping; then every enemy backs off to 80 px and chases again 2 s later",
+     "from_level": 1},
+    {"what": "Chip", "does": "the same, at most 0.15 (about 5 px a frame)", "from_level": 3},
+    {"what": "Skip", "does": "the same, at most 0.15", "from_level": 7}
+  ],
+  "readouts": {
+    "AREA PAINTED": "coverage toward the quota (paintCoverage_mc)",
+    "PAINT SUPPLY": "paint left (paintSupply_mc)",
+    "score": "added after a level: coverage x 100, paint left x 2, a bonus for each try not lost, 1000 for no hits"
+  },
+  "families": ["a body steered with the arrows, 8 ways", "covering ground", "keeping clear of chasers", "a jump that cannot be hit"],
+  "what_wins": "run the field in rows over ground not yet painted, never back over painted ground where it can be helped; jump with z when a chaser is close and coming on"
+}
