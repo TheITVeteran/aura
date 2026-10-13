@@ -152,6 +152,12 @@ class Guide:
     not_for_play: list[str] = field(default_factory=list)
     #: What its code was read to say of how it is played (core/perception/how_a_program_plays.py), where it was.
     code_says: Any = None
+    #: Its world as its code makes it: her body's physics, the ground, the clock
+    #: (core/perception/a_world_as_its_code_makes_it.py), where its code was read.
+    world_its_code_makes: Any = None
+    #: Where the thing that draws it lies in her picture of play (left, top, width, height, as shares of the picture);
+    #: None for the whole picture.
+    stage_in_her_picture: Any = None
     strategy: list[str] = field(default_factory=list)
     #: (when, what changed), oldest first.
     changes: list[tuple[float, str]] = field(default_factory=list)
@@ -294,6 +300,7 @@ class Guide:
         from core.cognition.what_its_code_says import take_in_how_it_plays
 
         take_in_how_it_plays(self, getattr(read, "plays", None), at)
+        self.world_its_code_makes = getattr(read, "world", None) or self.world_its_code_makes
 
     def take_in_counsel(self, told: str, at: float | None = None) -> None:
         if told:

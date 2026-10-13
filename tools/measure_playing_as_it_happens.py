@@ -113,7 +113,7 @@ async def _random_player(eyes, seconds):
     return {"ended": "out of time"}
 
 
-async def _one(browser, world, seed, seconds, player, observations="pixels"):
+async def _one(browser, world, seed, seconds, player, observations="pixels", code=False):
     from core.agency.playing_as_it_happens import play_as_it_happens
     from core.perception.what_the_pixels_show import recognize_text
 
@@ -138,6 +138,11 @@ async def _one(browser, world, seed, seconds, player, observations="pixels"):
 
     guide = Guide(place=world)
     guide.take_in(TOLD, rules)
+    if code:
+        # What its code says, read as her browser reads a page's programs (core/skills/sovereign_browser_the_program.py).
+        from core.skills.sovereign_browser_the_program import read_what_the_page_runs
+
+        guide.take_in_program(await read_what_the_page_runs(page))
     THE_GUIDE.set(guide)
     if pointer_acts(guide):
         keys, pointer_first = [*keys, "mouse"], False
@@ -166,7 +171,7 @@ async def _one(browser, world, seed, seconds, player, observations="pixels"):
     tally = await page.evaluate(
         "(() => { const w = __world; return {state: w.state, score: w.score, lives: w.lives,"
         " losses: w.losses || 0, games: w.games, ended: w.ended, mine: w.mine, theirs: w.theirs,"
-        " returns: w.returns, caught: w.caught, opened: w.game.opened}; })()"
+        " returns: w.returns, caught: w.caught, opened: w.game.opened, painted: w.painted}; })()"
     )
     if eyes.frames is not None:
         await eyes.frames.close()
@@ -187,6 +192,7 @@ async def main(argv):
     parser.add_argument("--players", nargs="*", default=["her", "random"])
     parser.add_argument("--out", default="")
     parser.add_argument("--observations", choices=["pixels", "drawing"], default="pixels")
+    parser.add_argument("--code", action="store_true", help="her guide holds what the page's code says, as her browser reads it")
     args = parser.parse_args(argv)
     if args.from_the_games:
         worlds = args.worlds or (FROM_THE_GAMES_HELD_OUT if args.held_out else FROM_THE_GAMES)
@@ -200,11 +206,11 @@ async def main(argv):
         for world in worlds:
             for seed in args.seeds:
                 for player in args.players:
-                    result = await _one(browser, world, seed, args.seconds, player, args.observations)
+                    result = await _one(browser, world, seed, args.seconds, player, args.observations, args.code)
                     results.append(result)
                     last = result["stretches"][-1] if result["stretches"] else {}
                     print(json.dumps({
-                        "world": world, "seed": seed, "player": player, "tally": result["tally"],
+                        "world": world, "seed": seed, "player": player, "code": args.code, "tally": result["tally"],
                         "stretches": len(result["stretches"]),
                         "learned": last.get("learned"), "hers": last.get("hers"),
                         "fires": last.get("fires"), "fps": last.get("pictures_a_second"),

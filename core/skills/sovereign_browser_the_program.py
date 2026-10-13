@@ -27,7 +27,20 @@ logger = logging.getLogger("Skills.SovereignBrowser.TheProgram")
 MOST_BYTES = 40 * 1024 * 1024
 MOST_PROGRAMS = 6
 #: Which reading of programs a kept read was made by: one made by an earlier reader is read again.
-READER = 4
+READER = 5
+
+#: The most of a page's own scripts read for its world, in characters, all of them together.
+MOST_SCRIPT_TEXT = 2_000_000
+
+#: The scripts written into the page itself (a game drawn on a canvas often keeps its whole world in one), and the
+#: size of the largest canvas's own drawing, which is the stage its code draws on.
+_ITS_OWN_SCRIPTS = """
+(most) => {
+  const canvases = [...document.querySelectorAll('canvas')].sort((a, b) => b.width * b.height - a.width * a.height);
+  return {scripts: [...document.scripts].filter((s) => !s.src).map((s) => (s.text || '').slice(0, most)),
+          stage: canvases.length ? [canvases[0].width, canvases[0].height] : null};
+}
+"""
 
 #: What a page loaded, from its own record, with the size the browser was given of each.
 _WHAT_IT_LOADED = """
@@ -87,6 +100,7 @@ async def read_what_the_page_runs(page: Any) -> Any:
     except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
         return ProgramRead()
     reads: list[ProgramRead] = []
+    scripts: list[str] = []
     for url in programs_of(list(loaded) if isinstance(loaded, list) else []):
         kept = recall(named("a program read", url))
         # A read kept by an older reader is read again: what it found was less than what is found now.
@@ -100,27 +114,66 @@ async def read_what_the_page_runs(page: Any) -> Any:
         if not got:
             continue
         try:
-            read = read_program(base64.b64decode(got), url)
+            data = base64.b64decode(got)
+            read = read_program(data, url)
         except (ValueError, MemoryError):
             continue
+        if not read.kind.startswith("flash"):
+            scripts.append(data[:MOST_SCRIPT_TEXT].decode("utf-8", "replace"))
         if read:
             logger.info("read the program at %s: %s, keys %s, pointer %s", url[:120], read.kind, read.keys, read.pointer)
             remember(named("a program read", url), {"read": _kept(read), "reader": READER})
             reads.append(read)
-    return merged(reads) if reads else ProgramRead()
+    out = merged(reads) if reads else ProgramRead()
+    out.world = out.world or await _the_world_its_scripts_make(page, scripts)
+    return out
+
+
+async def _the_world_its_scripts_make(page: Any, scripts: list[str]) -> Any:
+    """The world a page's scripts make, its own and those it loaded read together, as one program is
+    (core/perception/reading_a_world_s_code.py); kept by the page's address. None where they make none that is read."""
+    import asyncio
+
+    from core.perception.a_world_as_its_code_makes_it import kept, unkept
+    from core.perception.reading_a_world_s_code import read_a_world_s_code
+    from core.runtime.what_she_learned import named, recall, remember
+
+    address = str(getattr(page, "url", "") or "")
+    held = recall(named("a world read", address)) if address else None
+    if isinstance(held, dict) and held.get("reader") == READER:
+        return unkept(held.get("world"))
+    try:
+        own = await page.evaluate(_ITS_OWN_SCRIPTS, MOST_SCRIPT_TEXT)
+    except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
+        own = {}
+    own = own if isinstance(own, dict) else {}
+    texts = [*scripts, *(str(t) for t in (own.get("scripts") or []) if t)]
+    while sum(len(t) for t in texts) > MOST_SCRIPT_TEXT and len(texts) > 1:
+        texts.pop(0)
+    if not texts:
+        return None
+    stage = own.get("stage")
+    world = await asyncio.to_thread(read_a_world_s_code, texts, tuple(stage) if stage else None)
+    if address:
+        await asyncio.to_thread(remember, named("a world read", address), {"world": kept(world), "reader": READER})
+    if world:
+        logger.info("read the world its scripts make at %s: %s", address[:120], kept(world))
+    return world or None
 
 
 def _kept(read: Any) -> dict[str, Any]:
     """A read as it is kept: what it says of how the thing is worked, and the mechanics' signs, not the program."""
     from core.agency.mechanics_she_knows import mechanics_in
+    from core.perception.a_world_as_its_code_makes_it import kept as world_kept
     from core.perception.how_a_program_plays import kept
 
     return {"kind": read.kind, "words": read.words[:40], "keys": read.keys, "keyed": read.keyed, "pointer": read.pointer,
             "buttons": read.buttons, "mechanics": sorted(mechanics_in(program=read.text)),
-            "plays": kept(getattr(read, "plays", None))}
+            "plays": kept(getattr(read, "plays", None)), "world": world_kept(getattr(read, "world", None))}
 
 
 def _from_kept(held: dict[str, Any]) -> Any:
+    from core.perception.a_world_as_its_code_makes_it import unkept as world_unkept
     from core.perception.how_a_program_plays import unkept
     from core.perception.reading_a_program import ProgramRead
 
@@ -129,4 +182,5 @@ def _from_kept(held: dict[str, Any]) -> Any:
     return ProgramRead(words=list(held.get("words") or []), keys=dict(held.get("keys") or {}),
                        keyed=list(held.get("keyed") or []), pointer=list(held.get("pointer") or []),
                        buttons=list(held.get("buttons") or []), kind=str(held.get("kind") or ""),
-                       text="", mechanics_found=list(held.get("mechanics") or []), plays=unkept(held.get("plays")))
+                       text="", mechanics_found=list(held.get("mechanics") or []), plays=unkept(held.get("plays")),
+                       world=world_unkept(held.get("world")))

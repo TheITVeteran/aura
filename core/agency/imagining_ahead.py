@@ -59,6 +59,11 @@ WAITING = 0.2
 #: where how fast meeting a thing may be is not known yet.
 GENTLE_SHARE = 0.25
 
+#: What a cell of ground still to be gone over is worth, where the place's code names its ground
+#: (core/agency/ground_her_code_names.py): a quarter of a thing worth getting, so that a plan sweeping new ground
+#: outweighs one that stands, and a cell is never worth meeting what costs her.
+A_CELL_GONE_OVER = 0.25
+
 #: The most things imagined: the nearest that matter.
 MOST_THINGS = 16
 #: How much faster and slower than she has measured the world is imagined going, plan by plan: her measure of it is
@@ -92,6 +97,8 @@ class Imagined:
     gets: int = 0
     costs: int = 0
     ends_at: tuple[float, float] = (0.0, 0.0)
+    #: How many cells of ground not yet gone over it goes over.
+    covers: int = 0
     #: Whether the plans imagined differ in what they meet: where none does, imagining has nothing to choose between.
     decides: bool = False
 
@@ -122,6 +129,8 @@ class _Scene:
     arrival_near: tuple[float, float] = (0., 0.)
     arrival_gentle: float = 0.
     delay: float = 0.
+    #: The ground its code names, laid on her picture, with what she has gone over of it.
+    ground: Any = None
 
 
 def plans_to_imagine(choices: Sequence[str], presses: Sequence[str], held: str) -> list[Plan]:
@@ -163,7 +172,7 @@ def best_plan(choosing: Any, held: str, goal: tuple[float | None, float | None],
             plans.append(Plan(arrival))
     imagined = [_run(scene, plan, goal, held, choosing.caution) for plan in plans]
     best = max(imagined, key=lambda one: one.worth)
-    best.decides = bool(arrival) or len({(one.gets, one.costs) for one in imagined}) > 1
+    best.decides = bool(arrival) or len({(one.gets, one.costs, one.covers) for one in imagined}) > 1
     return best
 
 
@@ -188,7 +197,7 @@ def _the_scene(choosing: Any, horizon: float) -> _Scene | None:
     scene = _Scene(times=times, start=start, size=(float(mine.w), float(mine.h)),
                    bounds=(mine.w / 2, mine.h / 2, wide - mine.w / 2, tall - mine.h / 2), ways=ways,
                    rest=tuple(getattr(choosing, "rest", (0.0, 0.0))), paths=paths,
-                   barred=getattr(choosing, "barred", None), delay=response)
+                   barred=getattr(choosing, "barred", None), delay=response, ground=getattr(choosing, "ground", None))
     hers = getattr(choosing, "hers", None)
     if hers is not None and getattr(hers, "carried", False):
         # Carried on by its own going, a key adds to her going rather than setting it.
@@ -336,6 +345,10 @@ def _run(scene: _Scene, plan: Plan, goal: tuple[float | None, float | None], hel
             met, got, lost = _what_it_meets(scene, layer, xs, ys, caution, speeds)
             worth += met / len(PACES)
             gets, costs = (got, lost) if PACES[layer] == 1.0 else (gets, costs)
+    covers = 0
+    if scene.ground is not None:
+        met, covers = _ground_gone_over(scene.ground, xs, ys)
+        worth += met
     gx, gy = goal
     if gx is not None or gy is not None:
         reach = max(1.0, max((math.hypot(*way) for way in scene.ways.values()), default=1.0) * float(times[-1]))
@@ -356,7 +369,18 @@ def _run(scene: _Scene, plan: Plan, goal: tuple[float | None, float | None], hel
         worth -= CHANGING
     if not plan.first and len(plan.held) > 1:
         worth -= WAITING * plan.held[1][0]
-    return Imagined(plan, worth, gets, costs, (float(xs[-1]), float(ys[-1])))
+    return Imagined(plan, worth, gets, costs, (float(xs[-1]), float(ys[-1])), covers)
+
+
+def _ground_gone_over(ground: Any, xs: np.ndarray, ys: np.ndarray) -> tuple[float, int]:
+    """What a path's going over ground not yet gone over is worth, each new cell the sooner the better, and how many."""
+    worth, new = 0.0, set()
+    for index, (x, y) in enumerate(zip(xs, ys, strict=True)):
+        cell = ground.cell_of(*ground.mark_of(float(x), float(y)))
+        if cell is not None and cell not in ground.marked and cell not in new:
+            new.add(cell)
+            worth += A_CELL_GONE_OVER * (SOONER ** index)
+    return worth, len(new)
 
 
 def _what_it_meets(scene: _Scene, layer: int, xs: np.ndarray, ys: np.ndarray, caution: float,

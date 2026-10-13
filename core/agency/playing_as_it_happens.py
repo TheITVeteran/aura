@@ -56,6 +56,7 @@ from core.agency.choosing_where_to_be import (  # noqa: F401 (the existing decis
 from core.agency.controls_ready_for_the_motion_model import has_a_measured_response
 from core.agency.countering_motion_as_it_appears import CounteringMotion
 from core.agency.facing_seen_under_its_input import observe_facing
+from core.agency.ground_her_code_names import mark_the_ground_under_her
 from core.agency.holding_to_charge import Charging
 from core.agency.how_far_her_blow_reaches import BLOW_EVERY_S as BLOW_EVERY_S
 from core.agency.how_far_her_blow_reaches import HerBlows
@@ -322,6 +323,8 @@ class _Run:
     #: Where the rules ask for a place to be gone over: the cells her thing has been over, and their size (set once).
     covered: set = field(default_factory=set)
     cell: float = 0.0
+    #: The ground its code names, laid on her picture with what she has marked of it (core/agency/ground_her_code_names.py).
+    ground: Any = None
     #: How far ahead of a moving thing a click is aimed (core/agency/leading_a_click.py).
     leading: Any = None
     #: Cells she held a way toward and did not go: out of her reach, as far as she knows.
@@ -1249,17 +1252,15 @@ async def _play_as_it_happens(
                 run.barred.clear()
                 run.way_through.new_screen()
                 run.walls_seen_at = -math.inf
-            if hers.thing(moves) is not None:
-                mine = hers.thing(moves)
-                run.cell = run.cell or max(4.0, mine.w, mine.h)
-                run.covered.add((int(mine.x // run.cell), int(mine.y // run.cell)))
+            ground = mark_the_ground_under_her(run, moves, hers.thing(moves), happened)
+            goes_over = goes_over or ground is not None
             choosing = _Choosing(moves, hers, meeting, run.keys, physics,
                                  next_picture_s=statistics.median(run.intervals) if run.intervals else 1 / 30,
                                  response_s=run.control_timing.ahead(at, time.monotonic()) or 0.,
                                  covered=(run.covered | run.barred, run.cell) if goes_over and run.cell else None,
                                  barred=(run.barred, run.cell) if run.cell else None, presses=run.presses,
                                  reach=run.reach)
-            choosing.signs, choosing.at, choosing.situations = run.signs, at, situations
+            choosing.signs, choosing.at, choosing.situations, choosing.ground = run.signs, at, situations, ground
             choosing.watched = keep.get("watched")
             choosing.caution *= caution_of(situations)
             _what_the_place_does(run, choosing, moves, hers, meeting, at)

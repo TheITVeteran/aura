@@ -889,9 +889,14 @@ def _a_quantity_of(new: Poly, old: Poly) -> bool:
                              and term[0].startswith("@"))
 
 
+#: The names of quantities that are sizes and settings, not where things are or how they go: a stage's W and H, a
+#: thing's w and h, a constant written in capitals.
+_A_SIZE = re.compile(r"\.(?:w|h|width|height|size|r|[A-Z][A-Z0-9_]*)$")
+
+
 def _a_quantity(poly: Poly) -> bool:
     """Whether a sum holds a quantity of the world as it stands (its place, its going), not only sizes and numbers."""
-    return any(len(term) == 1 and term[0].startswith("@") and not re.search(r"\.(?:w|h|width|height|size|r)$", term[0])
+    return any(len(term) == 1 and term[0].startswith("@") and not _A_SIZE.search(term[0])
                and abs(value - 1.0) < 1e-9 for term, value in poly.items()) or any(
         any(f.startswith(("cell#", "key:")) for f in term) for term in poly)
 
@@ -1251,14 +1256,18 @@ def _how_it_moves(r: _Reading, element: str, body: str) -> tuple[float | None, s
     return speed, "goes"
 
 
-def read_a_world_s_code(sources: Iterable[str]) -> AWorldAsItsCodeMakesIt:
+def read_a_world_s_code(sources: Iterable[str], stage: tuple[float, float] | None = None) -> AWorldAsItsCodeMakesIt:
     """What a world's scripts say of how it plays (see the module's words); an empty reading where they say nothing
-    this can read, or cannot be parsed."""
+    this can read, or cannot be parsed. ``stage`` is the size of what it draws on where the page says it and the
+    scripts do not (a canvas's own width and height)."""
     texts = [s for s in sources if isinstance(s, str) and s.strip()]
     if not texts:
         return AWorldAsItsCodeMakesIt()
     try:
-        r = _Reader(texts).read()
+        reader = _Reader(texts)
+        if stage and all(stage):
+            reader.r.stage = (float(stage[0]), float(stage[1]))
+        r = reader.read()
     except (ImportError, RecursionError, ValueError, TypeError, AttributeError, KeyError, IndexError) as why:
         logger.info("a world's code could not be read for how it plays: %s", why)
         return AWorldAsItsCodeMakesIt()

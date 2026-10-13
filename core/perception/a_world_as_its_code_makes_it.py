@@ -18,7 +18,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["AKindOfThing", "AWorldAsItsCodeMakesIt", "GroundToCover", "HerBody", "kept", "unkept"]
+__all__ = ["AKindOfThing", "AWorldAsItsCodeMakesIt", "GroundToCover", "HerBody", "from_how_it_plays", "kept", "unkept"]
 
 
 @dataclass(frozen=True)
@@ -130,6 +130,51 @@ class AWorldAsItsCodeMakesIt:
 
     def thing(self, name: str) -> AKindOfThing | None:
         return next((t for t in self.things if t.name == name), None)
+
+
+#: The ways the arrows move a body, where a program's code says only that they move it.
+_ARROWS = {"left": (-1.0, 0.0), "right": (1.0, 0.0), "up": (0.0, -1.0), "down": (0.0, 1.0)}
+
+
+def from_how_it_plays(plays: Any, frames_a_second: float | None = None) -> AWorldAsItsCodeMakesIt | None:
+    """What a Flash program's reading (core/perception/how_a_program_plays.py) says of its world, as a world: its stage,
+    her body kept where its class keeps her, the arrows moving her at its greatest speed (a number given per frame,
+    at the file's frames a second), and ground cut into the cells it marks. A Flash program places a body by its
+    registration point, which the code does not show against what is drawn: where the cells are marked is left to be
+    her middle (``marks_at`` None), and said so. None where it reads nothing of these."""
+    if not plays:
+        return None
+    stage = tuple(getattr(plays, "stage", None) or (0.0, 0.0))
+    covers = dict(getattr(plays, "covers", None) or {})
+    hers_read = dict(getattr(plays, "hers", None) or {})
+    numbers = dict(hers_read.get("numbers") or {})
+    field_ = covers.get("field")
+    most = next((v for k, v in numbers.items() if "max" in k.lower() and "speed" in k.lower()), None)
+    paces = {}
+    if most and frames_a_second:
+        for key, what in getattr(plays, "keys", {}).items():
+            if getattr(what, "does", "") == "moves" and key in _ARROWS:
+                dx, dy = _ARROWS[key]
+                paces[key] = (dx * most * frames_a_second, dy * most * frames_a_second)
+    hers = None
+    if hers_read or paces:
+        hers = HerBody(name=str(hers_read.get("symbol") or hers_read.get("class") or ""), paces=paces,
+                       kept_inside=tuple(field_) if field_ else None)
+    ground = None
+    cell = covers.get("cell")
+    if cell:
+        if field_:
+            cells = (math.ceil(field_[2] / cell[0]), math.ceil(field_[3] / cell[1]))
+        elif stage[0] and stage[1]:
+            cells = (math.ceil(stage[0] / cell[0]), math.ceil(stage[1] / cell[1]))
+        else:
+            cells = None
+        ground = GroundToCover(cell=tuple(cell), cells=cells, counted_by=str(covers.get("counted_by") or ""))
+    world = AWorldAsItsCodeMakesIt(stage=stage, hers=hers, ground=ground,
+                                   keys={k: getattr(a, "does", "") for k, a in getattr(plays, "keys", {}).items()})
+    if covers.get("marked_in"):
+        world.read_at["ground"] = str(covers["marked_in"])
+    return world or None
 
 
 def _tuple(value: Any) -> tuple | None:

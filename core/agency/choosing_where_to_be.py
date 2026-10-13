@@ -174,6 +174,9 @@ class _Choosing:
     allies_here: tuple = ()
     #: What she pushes and where each goes (core/agency/pushing_a_thing.py).
     pushing: Any = None
+    #: The ground its code says is to be gone over, laid on her picture, with what she has marked of it
+    #: (core/agency/ground_her_code_names.py): where it is known, the ground is the code's, not cells of her own size.
+    ground: Any = None
 
     def __init__(self, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes, keys: list[str],
                  physics: HowThingsMoveHere | None = None, *, next_picture_s: float = 1 / 30,
@@ -504,6 +507,8 @@ class _Choosing:
         Where she goes along one ``line`` only, the cells along it at her own.
         """
         mine = self.mine
+        if self.ground is not None and mine is not None:
+            return self._the_code_s_ground_not_yet_covered(line)
         if self.covered is None or mine is None:
             return None
         covered, cell = self.covered
@@ -521,6 +526,27 @@ class _Choosing:
                 rank = far - (0.25 * cell if ahead > 0 else 0.0)
                 if best is None or rank < best[0]:
                     best = (rank, x, y)
+        return (best[1], best[2]) if best is not None else None
+
+    def _the_code_s_ground_not_yet_covered(self, line: int | None = None) -> tuple[float, float] | None:
+        """Where her body is to be for the point of her that marks to be over the nearest cell of the code's ground she
+        has not marked: nearest by where that point is now, ties to the way she is going so that she sweeps; along
+        her own line where she goes along one only. None where every cell she can reach is marked."""
+        ground, mine = self.ground, self.mine
+        mx, my = ground.mark_of(float(mine.x), float(mine.y))
+        heading = (self.hers.last_velocity[0], self.hers.last_velocity[1])
+        size = min(ground.cell)
+        best = None
+        for column, row in ground.left_to_do():
+            x, y = ground.where_to_be_for(column, row)
+            if line is not None and abs((x, y)[line] - (mine.x, mine.y)[line]) > size / 2:
+                continue
+            cx, cy = ground.middle_of(column, row)
+            far = math.hypot(cx - mx, cy - my)
+            ahead = (cx - mx) * heading[0] + (cy - my) * heading[1]
+            rank = far - (0.25 * size if ahead > 0 else 0.0)
+            if best is None or rank < best[0]:
+                best = (rank, x, y)
         return (best[1], best[2]) if best is not None else None
 
     def danger(self, way: tuple[float, float]) -> float:
