@@ -240,6 +240,35 @@ def current_motion_estimate(thing: Any, at: float) -> MotionEstimate | None:
     return None
 
 
+def predicted_box_from_motion(thing: Any, at: float) -> tuple | None:
+    """A measured trajectory can propose correspondence, never prove it.
+
+    Use the last measured box even if a missing picture projected the public
+    box elsewhere. Reject a forecast whose uncertainty exceeds the body size.
+    Existing appearance, support and shape checks must still admit the match.
+    """
+    belief = getattr(thing, 'motion_belief', None)
+    estimate = current_motion_estimate(thing, getattr(thing, 'seen', None))
+    path = getattr(thing, 'path', None)
+    if belief is None or estimate is None or not path:
+        return None
+    if math.hypot(*estimate.velocity) < 1. and math.hypot(*estimate.acceleration) < 1.:
+        return None
+    key = at, estimate, tuple(path[-1]), thing.w, thing.h
+    cached = getattr(thing, 'motion_proposal', None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    future = belief.forecast(at)
+    if future is None or future.position_error > max(thing.w, thing.h):
+        thing.motion_proposal = key, None
+        return None
+    x, y = path[-1][1:]
+    dx, dy = np.subtract(future.position, estimate.position)
+    proposal = float(x + dx), float(y + dy), 3. * future.position_error
+    thing.motion_proposal = key, proposal
+    return proposal
+
+
 @invariant('perception.motion_forecasts_do_not_renew_observations', scope='perception',
            owner='core/perception/motion_kept_between_pictures.py', observational=False)
 def _motion_belief_invariant() -> tuple:
@@ -253,4 +282,24 @@ def _motion_belief_invariant() -> tuple:
     assert predicted.position_error > current.position_error
     assert belief.observe((1, 0.), ('one view',), 1.3, (200., 10.)) is None
     assert belief.observe((1, 1.4), ('one view',), 1.4, (30., 10.)).observations == 1
+    return ()
+
+
+@invariant('perception.motion_proposals_keep_the_last_measured_box', scope='perception',
+           owner='core/perception/motion_kept_between_pictures.py', observational=False)
+def _motion_proposal_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    belief = MotionBetweenPictures(scale=100.)
+    for at in np.arange(1., 2., .1):
+        state = belief.observe((1, 0.), ((100, 100), 'box'), float(at), (40. * at, 10.))
+    thing = SimpleNamespace(number=1, born=0., seen=belief.at, motion_measured_at=belief.at,
+                            motion_evidence='measured', motion_position=None, motion_belief=belief,
+                            motion_estimate=state, path=[(belief.at, *state.position)], w=10., h=12.)
+    before = predicted_box_from_motion(thing, belief.at + .2)
+    thing.x, thing.y = -900., 900.
+    assert predicted_box_from_motion(thing, belief.at + .2) == before
+    assert before[0] > state.position[0] + 7.
+    assert thing.seen == thing.motion_measured_at == belief.at
+    assert predicted_box_from_motion(thing, belief.at + 1.1) is None
     return ()

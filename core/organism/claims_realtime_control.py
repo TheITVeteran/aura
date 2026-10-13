@@ -529,7 +529,10 @@ def _visual_motion_claims() -> tuple:
         _frame_session_invariant,
         _frame_time_invariant,
     )
-    from core.perception.motion_kept_between_pictures import _motion_belief_invariant
+    from core.perception.motion_kept_between_pictures import (
+        _motion_belief_invariant,
+        _motion_proposal_invariant,
+    )
     from core.perception.play_observation_without_holding_the_loop import (
         _owned_play_observation_invariant,
     )
@@ -574,6 +577,9 @@ def _visual_motion_claims() -> tuple:
         ("a_stream_frame_keeps_its_session_owner", "core/perception/frames_as_they_are_drawn.py",
          "tests/test_a_stream_callback_keeps_its_producing_session.py", lambda: _frame_session_invariant() == (),
          "A browser callback, calibration and decoded frame belong to their producing stream generation; an old session cannot publish or acknowledge through its replacement."),
+        ("motion_proposals_keep_the_last_measured_box", "core/perception/motion_kept_between_pictures.py",
+         "tests/test_measured_motion_proposes_visual_correspondence.py", lambda: _motion_proposal_invariant() == (),
+         "Correspondence proposals retain the last measured box and uncertainty without refreshing observation or control identity."),
         ("motion_forecasts_do_not_renew_observations", "core/perception/motion_kept_between_pictures.py",
          "tests/test_motion_is_kept_between_measured_pictures.py", lambda: _motion_belief_invariant() == (),
          "Motion beliefs retain their measured identity and reference; forecasts grow uncertainty without renewing observations."),

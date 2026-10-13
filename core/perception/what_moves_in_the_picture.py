@@ -192,6 +192,7 @@ class Thing:
     point_pose: Any = field(default=None, repr=False, compare=False)
     motion_belief: Any = field(default=None, repr=False, compare=False)
     motion_estimate: Any = field(default=None, repr=False, compare=False)
+    motion_proposal: Any = field(default=None, repr=False, compare=False)
 
     @property
     def size(self) -> float:
@@ -303,25 +304,40 @@ def _without_what_stands_out(still: np.ndarray) -> np.ndarray:
 def _back_in_sight(moves: WhatMoves, thing: Thing, at: float) -> Thing | None:
     """The moving thing of this one's kind that went out of sight lately and was headed for about where this one has
     come into it, the nearest such; None where none was."""
-    best, nearest = None, math.inf
+    from core.perception.motion_kept_between_pictures import predicted_box_from_motion
+
+    contenders = []
     for number, (gone, when) in list(moves.out_of_sight.items()):
         away = at - when
         if away > OUT_OF_SIGHT_S:
             del moves.out_of_sight[number]
             continue
-        if gone.kind != thing.kind or number in moves.things or number in moves.pending:
+        predicted = predicted_box_from_motion(gone, at)
+        if (gone.kind != thing.kind and predicted is None) or number in moves.things or number in moves.pending:
             continue
         # A shared kind is too broad to carry an identity through absence.
         ratio = max(gone.size, thing.size) / max(1., min(gone.size, thing.size))
         aspect = (thing.w / max(1., thing.h)) / (gone.w / max(1., gone.h))
         if ratio > 4. or max(aspect, 1. / max(1e-6, aspect)) > 2.5 or _look_apart(gone.look, thing.look) > SAME_LOOK:
             continue
-        x, y = gone.x + gone.vx * away, gone.y + gone.vy * away
+        if predicted is not None:
+            x, y, error = predicted
+            reach = max(gone.w, gone.h) + error
+        else:
+            x, y = gone.x + gone.vx * away, gone.y + gone.vy * away
+            reach = 2 * max(gone.w, gone.h) + 0.5 * math.hypot(gone.vx, gone.vy) * away
+            error = 1.
         off = math.hypot(thing.x - x, thing.y - y)
         # Its own size twice over, and half of how far it would have gone: a thing hidden longer may have turned.
-        if off <= 2 * max(gone.w, gone.h) + 0.5 * math.hypot(gone.vx, gone.vy) * away and off < nearest:
-            best, nearest = number, off
-    return moves.out_of_sight.pop(best)[0] if best is not None else None
+        if off <= reach:
+            contenders.append((off, number, error))
+    contenders.sort()
+    if not contenders:
+        return None
+    first = contenders[0]
+    if len(contenders) > 1 and contenders[1][0] - first[0] <= first[2] + contenders[1][2]:
+        return None
+    return moves.out_of_sight.pop(first[1])[0]
 
 
 def _settled_size(thing: Thing) -> None:
@@ -734,8 +750,15 @@ class WhatMoves:
             # bounds how far the centre can move without its texture moving.
             reach = 3.0 + .5 * math.hypot(blob["w"] - thing.w, blob["h"] - thing.h)
         else:
-            px, py = px + thing.vx * dt, py + thing.vy * dt
-            reach = 6.0 + 1.5 * math.hypot(thing.vx, thing.vy) * dt + 0.5 * max(thing.w, thing.h)
+            from core.perception.motion_kept_between_pictures import predicted_box_from_motion
+
+            predicted = predicted_box_from_motion(thing, at)
+            if predicted is not None:
+                px, py, error = predicted
+                reach = 6.0 + error + 0.5 * max(thing.w, thing.h)
+            else:
+                px, py = px + thing.vx * dt, py + thing.vy * dt
+                reach = 6.0 + 1.5 * math.hypot(thing.vx, thing.vy) * dt + 0.5 * max(thing.w, thing.h)
         distance = math.hypot(blob["x"] - px, blob["y"] - py) / reach
         if distance > 1.0:
             return math.inf
@@ -775,6 +798,12 @@ class WhatMoves:
             motion = self._point_motion.get(number)
             if motion is not None and motion.before == thing.seen and motion.at == at:
                 reach = max(reach, math.hypot(motion.dx, motion.dy) + 3 + .5 * (largest + math.hypot(thing.w, thing.h)))
+            from core.perception.motion_kept_between_pictures import predicted_box_from_motion
+
+            predicted = predicted_box_from_motion(thing, at)
+            if predicted is not None:
+                px, py, error = predicted
+                reach = max(reach, math.dist((x, y), (px, py)) + 6.0 + error + .5 * max(thing.w, thing.h))
             candidates[number] = places.query_ball_point((x, y), reach)
         pairs = []
         for number, thing in {**self.things, **self.pending}.items():
@@ -813,6 +842,12 @@ class WhatMoves:
         dt = max(1e-3, at - thing.seen)
         px, py = _measured(thing)
         reach = 6.0 + 1.5 * math.hypot(thing.vx, thing.vy) * dt + LEAP_SIZES * max(thing.w, thing.h)
+        from core.perception.motion_kept_between_pictures import predicted_box_from_motion
+
+        predicted = predicted_box_from_motion(thing, at)
+        if predicted is not None:
+            px, py, error = predicted
+            reach = 6.0 + error + LEAP_SIZES * max(thing.w, thing.h)
         distance = math.hypot(blob["x"] - px, blob["y"] - py) / reach
         looks = _look_apart(thing.look, blob["look"])
         aspect = (blob["w"] / max(1.0, blob["h"])) / (thing.w / max(1.0, thing.h))
@@ -953,6 +988,7 @@ class WhatMoves:
             # The same thing, come back into sight where its going was taking it: its number, its path and its way.
             thing.number, thing.path, thing.born, thing.moved = before.number, before.path, before.born, True
             thing.vx, thing.vy, thing.again = before.vx, before.vy, True
+            thing.motion_belief = before.motion_belief
         thing.path.append((at, thing.x, thing.y))
         thing.least = thing.size  # as it first stands out, before it has left anything behind
         thing.announced = not self.view_is_moving

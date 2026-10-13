@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
+_WORLD_VALUE_MAX_CHARS = 200
+
 if TYPE_CHECKING:
     from .context_assembler import (
         AuraState,
@@ -54,6 +56,139 @@ def forget_withheld_origins_for_test() -> None:
 
 class _BuildsThePromptBlocks:
     """Lifted whole out of ContextAssembler; see context_assembler.py."""
+
+    @staticmethod
+    def _latest_user_message(state: AuraState) -> str:
+        from .context_assembler import logger, record_degradation
+
+        try:
+            for message in reversed(getattr(state.cognition, "working_memory", []) or []):
+                role = str(message.get("role", "") or "").strip().lower()
+                if role == "user":
+                    return str(message.get("content", "") or "")
+        except (AttributeError, TypeError) as _exc:
+            record_degradation('context_assembler', _exc)
+            logger.debug("Suppressed Exception: %s", _exc)
+        return ""
+
+
+    @staticmethod
+    def _prompt_safe_line(text: Any, *, limit: int = _WORLD_VALUE_MAX_CHARS) -> str:
+        """One line of stored world state, fit to be read rather than obeyed.
+
+        Newlines are collapsed because a stored value carrying its own is a
+        value that can invent a section header in a list of dashes. Credential
+        shapes go through the same redactor the log sink uses: a preference is
+        whatever the conversation put there, and "my key is sk-..." is a
+        sentence people say.
+
+        The credential tier only. The personal tier would take an email address
+        or a phone number out of a preference, and here those are the payload
+        rather than the leak — this prompt stays on this machine, and a person
+        who told her their number expects her to know it.
+        """
+        from core.security.structural_redaction import CREDENTIAL_PATTERNS, redact_text
+
+        flat = " ".join(str(text or "").split())
+        redacted, _ = redact_text(flat, patterns=CREDENTIAL_PATTERNS)
+        if len(redacted) > limit:
+            redacted = redacted[:limit] + "…"
+        return redacted
+
+
+    @staticmethod
+    def _sample_aura_now(state: AuraState, objective: str) -> tuple[Any, Any] | None:
+        """One reading of the being runtime, taken once per assembly.
+
+        ``runtime.sample`` is a measurement of a system that keeps moving, and
+        it was taken twice while building a single system message: once inside
+        build_system_prompt and again in build_messages. The two readings can
+        disagree — different valence, different focal object — inside one
+        prompt that presents both as Aura's state right now, and any read the
+        organ accounts for happened twice for one turn.
+        """
+
+        from .context_assembler import logger, record_degradation
+        try:
+            from core.being.runtime import get_being_runtime
+
+            runtime = get_being_runtime()
+            return runtime, runtime.sample(state, objective=objective)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler",
+                exc,
+                severity="warning",
+                action="continued prompt assembly without AuraNow state-grounded block",
+            )
+            logger.debug("AuraNow sample unavailable: %s", exc)
+            return None
+
+
+    @staticmethod
+    def _attention_turns_inward(objective: str, continuity: dict[str, Any] | None = None) -> bool:
+        """Whether this turn is one in which she attends to herself.
+
+        Every turn carried her affect, her felt state, her body and her
+        finitude, whatever it was about. Over her stored replies to messages
+        about something else, a median 0.286 of her sentences were about
+        herself (tools/how_much_of_a_reply_is_about_her.py, 13 October). A
+        person's attention is on what they are doing until it is turned to
+        them or something does not match what they expected (Duval and
+        Wicklund 1972; Leary 2004 on the quiet self).
+
+        She attends to herself when the message addresses her, in the second
+        person or by name, which is deliberately wide: a question that says
+        "you" keeps everything, so nothing she is asked about herself goes
+        unanswered for want of the reading. And when something is off: her
+        recent turns have run worse than she expected, or she has come back
+        to find she is not continuous with who she was, whoever is asking
+        about whatever. A turn with no message is her own time and keeps
+        everything too.
+        """
+
+        from .context_assembler import _ADDRESSES_HER, logger
+        text = str(objective or "")
+        if not text.strip() or _ADDRESSES_HER.search(text):
+            return True
+        if continuity and (
+            continuity.get("identity_mismatch")
+            or continuity.get("continuity_reentry_required")
+            or float(continuity.get("continuity_pressure", 0.0) or 0.0) > 0.0
+        ):
+            return True
+        try:
+            from core.conation.what_she_wants import get_what_she_wants
+
+            return bool(get_what_she_wants().something_is_off())
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("her record could not say whether something is off: %s", exc)
+            return True
+
+
+    @staticmethod
+    def _less_what_is_left_out(whole: str) -> str:
+        """A finished system prompt, less whatever parts are left out of this turn.
+
+        See `left_out` in core/brain/aura_persona.py.
+        """
+
+        from core.brain.aura_persona import left_out, without_parts
+
+        from .context_assembler import ContextAssembler
+
+        parts = left_out()
+        if not parts:
+            return whole
+        less = without_parts(whole, parts)
+        ContextAssembler.LAST_COMPOSITION = {
+            **ContextAssembler.LAST_COMPOSITION,
+            "left_out": sorted(parts),
+            "prompt": len(less),
+            "whole_prompt": len(whole),
+        }
+        return less
+
 
     @staticmethod
     def _build_aura_now_prompt_block(
@@ -699,9 +834,6 @@ class _BuildsThePromptBlocks:
         request_origin: str,
         state: AuraState,
     ) -> tuple[Any, str]:
-        from .context_assembler import (
-            record_degradation,
-        )
 
         agent_id = bound_agent
 
