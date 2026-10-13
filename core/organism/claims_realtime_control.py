@@ -397,8 +397,10 @@ def install_realtime_control_claims(suite: Any) -> None:
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
+    from core.agency.controls_that_take_time_to_build import _stored_response_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
     from core.agency.inputs_while_measuring_control import _single_input_interval_invariant
+    from core.agency.room_to_finish_a_required_motion import _preparation_room_invariant
     from core.agency.solving_for_a_required_state import _required_state_invariant
     from core.agency.time_from_picture_to_control import _picture_age_invariant
     from core.agency.what_a_press_does import _settled_trial_invariant, _unchanged_input_invariant
@@ -417,6 +419,12 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("motion_forecasts_keep_released_response", "core/agency/controls_that_take_time_to_build.py",
+         "tests/test_room_to_finish_a_required_motion.py", lambda: _stored_response_invariant() == (),
+         "Known channel equations retain build-up and decay; a fast affine forecast agrees with physical ticks without declaring intermediate contacts safe."),
+        ("arrival_preparation_includes_the_time_to_stop", "core/agency/room_to_finish_a_required_motion.py",
+         "tests/test_room_to_finish_a_required_motion.py", lambda: _preparation_room_invariant() == (),
+         "A constant-rate braking projection retains coupled state changes; preparation includes stopping and a bounded-speed transfer, with unknown rates unavailable."),
         ("known_transition_plans_preserve_failure_boundaries", "core/agency/solving_for_a_required_state.py",
          "tests/test_solving_for_a_required_state.py", lambda: _required_state_invariant() == (),
          "Bounded inverse planning accepts explicit known mechanics and outcomes; a failed intermediate state cannot be repaired into predicted success later in the same path."),
