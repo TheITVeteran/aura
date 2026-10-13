@@ -49,3 +49,18 @@ def test_screens_with_nothing_to_read_do_not_share_what_was_taken():
     here.looked_at(wordless)
     here.tried(_ARROW, None)
     assert not here.leads.taken_here(_ARROW)
+
+
+def test_an_act_is_taken_on_the_screen_it_was_chosen_on_however_often_the_next_was_looked_at():
+    """Offline 2026-10-13 a "next" clicked on one page was kept as taken on the page it led to (looked at twice before
+    the click was judged), and that page's own "next" lost the worth of a first try."""
+    here = WhatWorksHere()
+    welcome = [a_click_on("Welcome to the island"), a_click_on("back"), a_click_on("next")]
+    rules = [a_click_on("How to hold the club"), a_click_on("back"), a_click_on("next")]
+    here.looked_at(welcome, "Welcome to the island back next")
+    here.looked_at(rules, "How to hold the club back next")
+    here.looked_at(rules, "How to hold the club back next")
+    here.tried(a_click_on("next"), True, before={"clickable": welcome, "text": "Welcome to the island back next"})
+    assert not here.leads.taken_here(a_click_on("next"))           # on this page, it is still to be tried
+    here.looked_at(welcome, "Welcome to the island back next")
+    assert here.leads.taken_here(a_click_on("next"))               # on the page it was chosen on, it was

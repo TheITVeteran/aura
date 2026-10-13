@@ -167,11 +167,27 @@ class WhereThingsLead:
         if here is not None and here not in self._been:
             self._been.append(here)
 
-    def took(self, act: str) -> None:
-        """She took ``act`` on the screen before this look, whether or not she could make out what came of it."""
-        if self._before is not None and act:
-            key = f"{self._before}|{act}"
+    def took(self, act: str, words: frozenset[str] | None = None) -> None:
+        """She took ``act`` on the screen it was chosen on (known by its ``words``, where given), whether or not she
+        could make out what came of it. Not the screen before this look: a screen looked at twice since the act is
+        that screen. Offline 2026-10-13 a "next" clicked on one page was kept as taken on the page it led to, and the
+        next page's own "next" lost the worth of a first try."""
+        screen = self._known_as(words) if words is not None else None
+        screen = screen if screen is not None else self._before
+        if screen is not None and act:
+            key = f"{screen}|{act}"
             self._taken[key] = self._taken.get(key, 0) + 1
+
+    def _known_as(self, words: frozenset[str]) -> int | None:
+        """The screen these words are of, as ``which`` would find it, without changing what is kept of any."""
+        if len(words) < FEWEST_WORDS:
+            return WORDLESS
+        best, share = None, 0.0
+        for number, known in enumerate(self.screens):
+            shared = len(words & known) / max(1, len(words | known))
+            if shared > share:
+                best, share = number, shared
+        return best if share >= SAME_SCREEN else None
 
     def taken_here(self, act: str) -> bool:
         """Whether ``act`` has been taken on this screen: this sitting, whatever came of it, or before, by what it did.
@@ -185,11 +201,14 @@ class WhereThingsLead:
         key = f"{self._here}|{act}"
         return bool(self._taken.get(key)) or key in self.went
 
-    def acted(self, act: str, changed: bool) -> None:
-        """The act she took on the screen before this look, and whether anything answered it."""
-        if self._before is None or self._here is None or not act:
+    def acted(self, act: str, changed: bool, words: frozenset[str] | None = None) -> None:
+        """The act she took on the screen it was chosen on (known by its ``words``, where given; else the screen before
+        this look), and whether anything answered it."""
+        chosen_on = self._known_as(words) if words is not None else None
+        before = chosen_on if chosen_on is not None else self._before
+        if before is None or self._here is None or not act:
             return
-        before, after = self._before, self._here
+        after = self._here
         counts = self.went.setdefault(f"{before}|{act}", {})
         if changed and after != before:
             self.to[f"{before}|{act}"] = after
@@ -206,7 +225,8 @@ class WhereThingsLead:
             how = "moved"
             if not str(act).startswith("click "):
                 self.played.add(before)
-        elif after in self.played or self._been.index(after) > self._been.index(before):
+        elif after in self.played or (before in self._been and after in self._been
+                                       and self._been.index(after) > self._been.index(before)):
             # Further in than where she was, by the order she first came to them.
             how = "on"
         else:

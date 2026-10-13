@@ -39,7 +39,7 @@ from core.agency.acts_on_two_places import two_places_of
 from core.agency.putting_things_in_place import PuttingInPlace
 from core.agency.taking_and_using import TakingAndUsing
 from core.agency.things_that_go_together import ThingsThatGoTogether
-from core.agency.where_things_lead import WhereThingsLead
+from core.agency.where_things_lead import WhereThingsLead, screen_words
 
 __all__ = [
     "COMMITS_TO_NOTHING",
@@ -388,8 +388,10 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
         name = name if what_is_clicked(name) is not None or two_places_of(name) else name.lower()
         if not name:
             return
-        # That she took it is so whether or not she could tell what it did.
-        self.leads.took(name)
+        # That she took it is so whether or not she could tell what it did, on the screen she chose it on.
+        chosen_on = (screen_words(list(before.get("clickable") or ()), str(before.get("text") or ""))
+                     if before and (before.get("clickable") or before.get("text")) else None)
+        self.leads.took(name, chosen_on)
         if changed is None:
             return
         if what_is_clicked(name) is not None:
@@ -407,7 +409,7 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
                 self.paused_by = name
         self.paired(name)
         self.carried(name, changed, receipt=transfer)
-        self.leads.acted(name, changed)
+        self.leads.acted(name, changed, chosen_on)
         self.last_tried = name
         if changed and what_is_clicked(name) and _turns(what_is_clicked(name) or ""):
             # The part put down last was turned: where its output ends is looked for again (aiming_what_was_placed).
