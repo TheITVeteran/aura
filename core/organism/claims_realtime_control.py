@@ -560,6 +560,7 @@ def _visual_motion_claims() -> tuple:
     from core.perception.points_before_the_picture_is_reduced import (
         _source_point_geometry_invariant,
     )
+    from core.perception.points_shared_with_changing_regions import _point_capacity_invariant
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.position_from_the_same_points import (
         _point_handoff_invariant,
@@ -626,6 +627,9 @@ def _visual_motion_claims() -> tuple:
         ("refinement_keeps_current_visible_marks", "core/perception/learned_tracking/corrections_while_points_keep_moving.py",
          "tests/test_grouped_points_receive_actual_capture_sequences.py", lambda: _visible_mark_retention_invariant() == (),
          "Refinement preserves continuing marks measured in the current capture, within a bounded point budget; another reference or duplicate location supplies no additional support."),
+        ("changing_regions_receive_point_capacity", "core/perception/points_shared_with_changing_regions.py",
+         "tests/test_changing_regions_receive_point_capacity.py", lambda: _point_capacity_invariant() == (),
+         "Quiet reference marks leave bounded capacity for new changing regions; fresh corner admission supplies no motion until later pixels match."),
         ("an_ending_after_reset_needs_new_activity", "core/skills/a_new_attempt_must_be_seen.py",
          "tests/test_a_retry_restarts_the_page_and_observes_a_new_attempt.py", lambda: _new_attempt_invariant() == (),
          "A new attempt requires current activity after reset; an old capture or another reading of its ending supplies no completed run."),

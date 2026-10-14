@@ -47,6 +47,7 @@ include_rules = [
     "+core.perception.parts_when_things_touch", # Synthetic validation of measured parts at a meeting.
     "+core.perception.points_that_keep_their_motion", # Pure checks of visible point identity and bounded lifetime.
     "+core.perception.points_before_the_picture_is_reduced", # Pure check of source marks mapped into working geometry.
+    "+core.perception.points_shared_with_changing_regions", # Pure check of point capacity shared with changing regions.
     "+core.perception.position_from_the_same_points", # Pure check of original marks supporting a measured path.
     "+core.perception.reading_again_after_loss", # Pure checks of measured loss and bounded request renewal.
     "+core.perception.rigid_motion_from_named_points", # Pure canary for bounded rigid correspondence geometry.

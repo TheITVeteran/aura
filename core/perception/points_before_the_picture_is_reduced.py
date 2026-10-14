@@ -16,7 +16,6 @@ from core.perception.points_that_keep_their_motion import (
     FollowingPoints,
     SeenPoint,
     _follow,
-    _grey,
     _pyramid,
     _sample,
 )
@@ -30,8 +29,7 @@ def _samples(picture: np.ndarray, places: np.ndarray) -> np.ndarray:
 
 
 def _colours(picture: np.ndarray) -> np.ndarray:
-    return np.stack([ndimage.gaussian_filter(picture[..., c].astype(np.float32) / 255., .6)
-                     for c in range(3)], axis=-1)
+    return ndimage.gaussian_filter(picture[..., :3].astype(np.float32) / 255., (.6, .6, 0.))
 
 
 def _refine(before: np.ndarray, after: np.ndarray, points: np.ndarray,
@@ -74,7 +72,8 @@ def _refine(before: np.ndarray, after: np.ndarray, points: np.ndarray,
     return points + shift, error, angles, useful
 
 
-def _new_marks(image: np.ndarray, occupied: list[SeenPoint], limit: int, scale: tuple) -> list[tuple[float, float]]:
+def _new_marks(image: np.ndarray, occupied: list[SeenPoint], limit: int, scale: tuple,
+               activity: np.ndarray | None = None) -> list[tuple[float, float]]:
     """Spread the source corners by working-picture cells within the fixed point budget."""
     gy, gx = np.gradient(image)
     xx, xy, yy = (ndimage.uniform_filter(a * b, 3) for a, b in ((gx, gx), (gx, gy), (gy, gy)))
@@ -89,15 +88,19 @@ def _new_marks(image: np.ndarray, occupied: list[SeenPoint], limit: int, scale: 
     cells: dict[tuple, list] = {}
     for y, x in zip(ys, xs, strict=True):
         cell = int(y * scale[1]) // 24, int(x * scale[0]) // 24
-        cells.setdefault(cell, []).append((float(strength[y, x]), float(x), float(y)))
+        cells.setdefault(cell, []).append((bool(activity[y, x]) if activity is not None else False,
+                                          float(strength[y, x]), float(x), float(y)))
     for values in cells.values():
         values.sort(reverse=True)
     found = []
-    for rank in range(max((len(values) for values in cells.values()), default=0)):
-        for _strength, x, y in sorted((v[rank] for v in cells.values() if len(v) > rank), reverse=True):
-            found.append((x, y))
-            if len(found) >= limit:
-                return found
+    ranks = max((len(values) for values in cells.values()), default=0)
+    for active_first in ((True, False) if activity is not None else (False,)):
+        for rank in range(ranks):
+            layer = (v[rank] for v in cells.values() if len(v) > rank and v[rank][0] == active_first)
+            for _active, _strength, x, y in sorted(layer, reverse=True):
+                found.append((x, y))
+                if len(found) >= limit:
+                    return found
     return found
 
 
@@ -112,10 +115,12 @@ class PointsBeforeReduction(FollowingPoints):
         self._native_points: tuple[SeenPoint, ...] = ()
         self._colours: np.ndarray | None = None
         self._geometry: tuple | None = None
+        self._activity: np.ndarray | None = None
 
     def clear(self) -> None:
         super().clear()
         self._native_points, self._colours, self._geometry = (), None, None
+        self._activity = None
 
     def see_source(self, source: np.ndarray, working: np.ndarray, at: float) -> tuple[SeenPoint, ...]:
         """A source and its reduced view must belong to this one capture and geometry."""
@@ -139,9 +144,15 @@ class PointsBeforeReduction(FollowingPoints):
             self.clear()
         self._geometry = geometry
         scale = working.shape[1] / source.shape[1], working.shape[0] / source.shape[0]
-        image, colours = _pyramid(_grey(source)), _colours(source)
+        colours = _colours(source)
+        image = _pyramid(colours.mean(axis=2))
+        self._activity = None
+        if self._colours is not None and self._colours.shape == colours.shape:
+            changed = np.max(abs(colours - self._colours), axis=2) > 12 / 255.
+            if changed.any() and changed.mean() <= .6:
+                self._activity = ndimage.maximum_filter(changed, 7)
         current = self._continued_source(image, colours, at) if self._image is not None and self._native_points else []
-        for x, y in _new_marks(image[0], current, self.limit, scale):
+        for x, y in _new_marks(image[0], current, self.limit, scale, self._activity):
             current.append(SeenPoint(self._number, x, y, x, y, at, at, at, 0., 1))
             self._number += 1
         self._native_points = self._spread(current, scale)
@@ -151,6 +162,14 @@ class PointsBeforeReduction(FollowingPoints):
         return self.points
 
     def _spread(self, points: list[SeenPoint], scale: tuple) -> tuple[SeenPoint, ...]:
+        if self._activity is not None:
+            from core.perception.points_shared_with_changing_regions import share_point_capacity
+
+            return share_point_capacity(points, self._activity, scale, self.limit)
+        return self._spatial_share(points, scale, self.limit)
+
+    @staticmethod
+    def _spatial_share(points: list[SeenPoint], scale: tuple, limit: int) -> tuple[SeenPoint, ...]:
         cells: dict[tuple, list] = {}
         for point in points:
             cells.setdefault((int(point.y * scale[1]) // 24, int(point.x * scale[0]) // 24), []).append(point)
@@ -159,9 +178,9 @@ class PointsBeforeReduction(FollowingPoints):
         kept = []
         for rank in range(max((len(values) for values in cells.values()), default=0)):
             kept.extend(sorted((v[rank] for v in cells.values() if len(v) > rank), key=lambda p: (-p.pictures, p.error, p.number)))
-            if len(kept) >= self.limit:
+            if len(kept) >= limit:
                 break
-        return tuple(kept[:self.limit])
+        return tuple(kept[:limit])
 
     def _continued_source(self, image: list, colours: np.ndarray, at: float) -> list[SeenPoint]:
         positions = np.asarray([(p.x, p.y) for p in self._native_points], dtype=float)
