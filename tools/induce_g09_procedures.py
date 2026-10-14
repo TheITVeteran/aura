@@ -13,10 +13,13 @@ Development and test problems never mix. For a BBEH task the test problems
 are its 20 in BBEH Mini and the development problems are its other 180; for a
 Natural Plan kind, CRUXEval's output prediction, LiveCodeBench's execution set and PlanBench's plan
 generation, the problems are
-ordered by a hash of their id and the first half is development.
+ordered by a hash of their id and the first half is development. Every
+DeepMind mathematics module (``dm_<module>``) and every BIG-Bench Hard task
+(``bbh_<task>``, its bare question and target) is split the same way, so a
+book can be filled from development halves alone.
 
 Usage:
-    induce_g09_procedures.py --kinds bbeh_hyperbaton,calendar --output DIR
+    induce_g09_procedures.py --kinds bbeh_hyperbaton,calendar --output DIR    (or --kinds all, minus --except)
         [--lines 2] [--rounds 3] [--shots 3] [--batch 8] [--mechanisms] [--no-thinking] [--fake-proposer FILE]
 
 A run started again with the same arguments in the same directory resumes: every proposal already
@@ -55,10 +58,18 @@ def problems(kind: str, part: str) -> list[dict[str, Any]]:
     """The kind's development or test problems as the G09 harness poses them, with their truths."""
     from tools.run_g09_organ import BBEH_SUFFIX
 
+    if kind.startswith("bbh_"):
+        task = kind.removeprefix("bbh_")
+        examples = json.loads((BENCH / f"bbh-src/bbh/{task}.json").read_text(encoding="utf-8"))["examples"]
+        ordered = sorted(range(len(examples)), key=lambda i: hashlib.sha256(f"{kind}:{i}".encode()).hexdigest())
+        chosen = ordered[: len(ordered) // 2] if part == "development" else ordered[len(ordered) // 2:]
+        return [{"key": f"{kind}:{i}", "problem": examples[i]["input"], "truth": examples[i]["target"]}
+                for i in chosen]
     if kind in ("cruxeval", "lcb", "blocksworld", "mystery_blocksworld") or kind.startswith("dm_"):
-        from tools.run_g09_organ import LOADERS
+        from tools.run_g09_organ import LOADERS, _dm_tasks
 
-        tasks = sorted(LOADERS[kind](), key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
+        load = LOADERS.get(kind) or (lambda: _dm_tasks(kind.removeprefix("dm_")))
+        tasks = sorted(load(), key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
         half = tasks[: len(tasks) // 2] if part == "development" else tasks[len(tasks) // 2:]
         if kind in ("blocksworld", "mystery_blocksworld"):
             from tools.planbench_restated import plan_as_text
@@ -92,6 +103,15 @@ def problems(kind: str, part: str) -> list[dict[str, Any]]:
              "answer_text": shown(data[key])} for key in keys]
 
 
+def every_kind() -> list[str]:
+    """Every kind this reads, from the benchmark files on this host."""
+    dm = BENCH / "g09/dm-math/mathematics_dataset-v1.0/interpolate"
+    return sorted([*(f"dm_{p.stem}" for p in dm.glob("*.txt")),
+                   *(f"bbh_{p.stem}" for p in (BENCH / "bbh-src/bbh").glob("*.json")),
+                   *(p.name for p in (BENCH / "g09/bbeh").glob("bbeh_*")),
+                   *NATURAL_PLAN, "cruxeval", "lcb", "blocksworld", "mystery_blocksworld"])
+
+
 def test_ids(domain: str) -> set[str]:
     """The G09 harness's task ids for a domain's test problems."""
     if domain == "bbeh":
@@ -120,6 +140,10 @@ def grader_for(kind: str):
 
     if kind.startswith("bbeh_"):
         return lambda returned, truth: grade_bbeh(f"The answer is: {returned}", truth)[0]
+    if kind.startswith("bbh_"):
+        from tools.run_g09_bbh import matches
+
+        return lambda returned, truth: matches(str(returned), truth)
     if kind in ("blocksworld", "mystery_blocksworld"):
         from tools.planbench_restated import grade as grade_plan
 
@@ -185,7 +209,8 @@ def logged_proposer(output: Path, decode, *, thinking: bool | str):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--kinds", required=True)
+    parser.add_argument("--kinds", required=True, help="comma-separated, or 'all' (every_kind)")
+    parser.add_argument("--except", dest="excluded", default="", help="comma-separated kinds left out of --kinds")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--lines", type=int, default=2)
     parser.add_argument("--rounds", type=int, default=3)
@@ -218,7 +243,8 @@ def main() -> int:
 
     output = args.output.expanduser()
     (output / "requests").mkdir(parents=True, exist_ok=True)
-    kinds = args.kinds.split(",")
+    left_out = {k for k in args.excluded.split(",") if k}
+    kinds = [k for k in (every_kind() if args.kinds == "all" else args.kinds.split(",")) if k not in left_out]
     truths: dict[str, Any] = {}
     families: dict[str, list[SolvedExample]] = {}
     graders = {kind: grader_for(kind) for kind in kinds}
