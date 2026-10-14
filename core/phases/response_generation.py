@@ -425,6 +425,25 @@ def _judge_the_latent_quality(
     return _seam_early_response, final_latent_quality
 
 
+def _states_the_answer(draft: str, answer: str) -> bool:
+    """Whether her reply's closing paragraph states the answer a kept procedure computed.
+
+    A lettered option counts when it is named as one ("(b)", "b)", "option b",
+    "answer is b"); a bare letter would match an article.
+    """
+    paragraphs = [part for part in re.split(r"\n\s*\n", str(draft or "")) if part.strip()]
+    if not paragraphs:
+        return False
+    closing = " ".join(paragraphs[-1].split()).casefold()
+    wanted = " ".join(str(answer or "").split()).casefold()
+    if wanted and wanted in closing:
+        return True
+    lettered = re.fullmatch(r"\(([a-z])\)", wanted)
+    return bool(lettered) and re.search(
+        rf"(?:\(|\boption\s+|\banswer\s+is:?\s+){lettered.group(1)}\b|\b{lettered.group(1)}\)", closing
+    ) is not None
+
+
 def _the_amplifier_stood_down(draft, reason: str):
     """Say which gate declined, and hand the draft back untouched.
 
@@ -926,6 +945,65 @@ class ResponseGenerationPhase(_RunsTheGenerationSteps, _RunsTheRequiredSearch, B
             "source": "recursive_latent_cortex",
         }
 
+    async def _consult_kept_procedures(self, *, state: AuraState, objective: str) -> bool:
+        """Put a kept procedure's answer in front of her before she drafts, as a skill's result is put.
+
+        A procedure she wrote for a kind of problem, kept because it agreed with
+        every answer she knew for that kind, computes the answer in
+        milliseconds (core/learning/procedures_from_solved_examples.py). It goes
+        into her working memory as a stamped skill result, so she drafts her
+        reply in her own words with the computed answer as the fact she builds
+        on; the amplifier step then checks that her reply states it.
+        """
+        from core.utils.injected_blocks import stamp_grounding
+
+        try:
+            from core.brain.reasoning_amplifier_v2 import answer_from_kept_procedures
+        except ImportError as exc:
+            _record_response_generation_degradation(
+                exc, action="drafted without consulting her kept procedures"
+            )
+            return False
+        kept = await asyncio.to_thread(answer_from_kept_procedures, objective)
+        if kept is None:
+            return False
+        operation = dict(kept.receipt.cognitive_operations[0]) if kept.receipt.cognitive_operations else {}
+        known = int(operation.get("agreed_known") or 0)
+        family = str(operation.get("family") or "")
+        payload = {
+            "ok": True,
+            "answer": kept.answer,
+            "summary": (
+                f"computed by the procedure she keeps for problems of the kind {family!r}, "
+                f"which agreed with all {known} answers she knows for that kind"
+            ),
+        }
+        state.response_modifiers["kept_procedure"] = {
+            "answer": kept.answer,
+            "family": family,
+            "agreed_known": known,
+            "confidence": float(kept.confidence),
+            "receipt": kept.receipt.to_dict(),
+            "generation_metadata": dict(kept.generation_metadata),
+        }
+        state.cognition.working_memory.append(
+            stamp_grounding(
+                {
+                    "role": "system",
+                    "content": self._render_skill_result_block(skill_name="kept_procedure", payload=payload),
+                    "metadata": {
+                        "type": "skill_result",
+                        "skill": "kept_procedure",
+                        "ok": True,
+                        "turn_marker": state.response_modifiers.get("evidence_turn_marker"),
+                    },
+                    "timestamp": time.time(),
+                }
+            )
+        )
+        logger.info("🧠 ResponseGeneration: kept procedure for %s answered before the draft.", family)
+        return True
+
     async def _maybe_amplify_response(
         self,
         *,
@@ -951,6 +1029,27 @@ class ResponseGenerationPhase(_RunsTheGenerationSteps, _RunsTheRequiredSearch, B
 
         if not is_user_facing or is_background or proof_or_benchmark or not draft:
             return _the_amplifier_stood_down(draft, "not_a_user_facing_turn")
+        # A kept procedure that answered before the draft (_consult_kept_procedures)
+        # put its answer in front of her. Her reply stands in her own words when it
+        # states that answer; when it does not, the computed answer is served.
+        planted = state.response_modifiers.get("kept_procedure")
+        if isinstance(planted, dict) and planted.get("answer"):
+            stated = _states_the_answer(draft, str(planted["answer"]))
+            receipt = dict(planted.get("receipt") or {})
+            self._last_reasoning_receipt = receipt
+            state.response_modifiers["reasoning_receipt"] = receipt
+            state.response_modifiers["reasoning_amplifier_v2_active_phase"] = {
+                "task_type": "kept_procedure",
+                "verified": False,
+                "confidence": float(planted.get("confidence") or 0.0),
+                "promotion_authority": "kept_procedure",
+                "adopted": not stated,
+                "voice": "her_reply_states_it" if stated else "computed_answer_served",
+            }
+            if stated:
+                return draft
+            return attributed_text(str(planted["answer"]), dict(planted.get("generation_metadata") or {}))
+
         if not reasoning_amplifier_v2_enabled():
             return _the_amplifier_stood_down(draft, "amplifier_switched_off")
         try:
@@ -1514,6 +1613,8 @@ class ResponseGenerationPhase(_RunsTheGenerationSteps, _RunsTheRequiredSearch, B
                         is_user_facing=True,
                     )
                     state.response_modifiers["response_contract"] = contract.to_dict()
+                if await self._consult_kept_procedures(state=state, objective=objective):
+                    messages = _assemble(delivered_history, delivered_note)
             if (
                 contract.reason != "ordinary_dialogue"
                 and messages
