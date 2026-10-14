@@ -10,6 +10,16 @@ the end. The two Blocksworld domains PlanBench uses are plain STRIPS (no
 types, conditional effects or numbers), which is what the simulator reads.
 The restatement is checked against VAL's verdicts on GPT-4's stored replies
 (tests/test_planbench_restated.py).
+
+Logistics, Depots and Obfuscated Deceptive Logistics are read too, each by its
+own PlanBench parser restated (text_to_plan_logistics, _depots, _obfuscated).
+Depots is typed, so a step whose objects are not of its parameters' types
+fails, as VAL fails it. PlanBench's obfuscated parser reads an action's
+number of objects from a key its config does not have and so raises; here it
+is read from that action's own template. No stored replies with VAL's
+verdicts exist for these three domains, so their restatement is checked by
+every gold plan reaching its goal through text and back, and by broken plans
+failing.
 """
 
 from __future__ import annotations
@@ -21,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path("~/.aura/benchmarks/g09/planbench/src/plan-bench").expanduser()
-DOMAINS = ("blocksworld", "mystery_blocksworld")
+DOMAINS = ("blocksworld", "mystery_blocksworld", "logistics", "depots", "obfuscated_deceptive_logistics")
 
 
 def _sexp(text: str) -> list:
@@ -62,17 +72,55 @@ def config(domain: str) -> dict[str, Any]:
     return yaml.safe_load((ROOT / "configs" / f"{domain}.yaml").read_text(encoding="utf-8"))
 
 
+def _typed(tokens: list) -> list[tuple[str, str]]:
+    """A PDDL typed list ("a b - t c") as (name, type) pairs; an untyped name has the type "object"."""
+    out, pending, index = [], [], 0
+    while index < len(tokens):
+        if tokens[index] == "-" and index + 1 < len(tokens):
+            out += [(name, tokens[index + 1]) for name in pending]
+            pending, index = [], index + 2
+        else:
+            pending.append(tokens[index])
+            index += 1
+    return out + [(name, "object") for name in pending]
+
+
+@functools.cache
+def _domain_tree(domain: str) -> list:
+    return _sexp((ROOT / "instances" / config(domain)["domain_file"]).read_text(encoding="utf-8"))
+
+
+@functools.cache
+def _supertypes(domain: str) -> dict[str, str]:
+    """Each declared type's parent, from the domain's :types."""
+    for part in _domain_tree(domain):
+        if isinstance(part, list) and part and part[0] == ":types":
+            return dict(_typed([t for t in part[1:] if isinstance(t, str)]))
+    return {}
+
+
+def _is_a(kind: str, wanted: str, domain: str) -> bool:
+    parents = _supertypes(domain)
+    seen = set()
+    while kind not in seen:
+        if kind == wanted or wanted == "object":
+            return True
+        seen.add(kind)
+        kind = parents.get(kind, "object")
+    return False
+
+
 @functools.cache
 def actions(domain: str) -> dict[str, dict[str, Any]]:
     """Each action of the domain PDDL: its parameters, preconditions, additions and deletions, in file order."""
-    tree = _sexp((ROOT / "instances" / config(domain)["domain_file"]).read_text(encoding="utf-8"))
     out: dict[str, dict[str, Any]] = {}
-    for part in tree:
+    for part in _domain_tree(domain):
         if isinstance(part, list) and part and part[0] == ":action":
             name, fields = part[1], dict(zip(part[2::2], part[3::2], strict=False))
             precondition, _ = _literals(fields.get(":precondition", []))
             additions, deletions = _literals(fields.get(":effect", []))
-            out[name] = {"parameters": [p for p in fields.get(":parameters", []) if p.startswith("?")],
+            typed = _typed(list(fields.get(":parameters", [])))
+            out[name] = {"parameters": [p for p, _t in typed], "types": [t for _p, t in typed],
                          "precondition": precondition, "add": additions, "delete": deletions}
     return out
 
@@ -88,9 +136,96 @@ def instance(domain: str, instance_id: int) -> tuple[frozenset, frozenset]:
     return initial, frozenset(goal)
 
 
+@functools.cache
+def instance_objects(domain: str, instance_id: int) -> dict[str, str]:
+    """The instance's objects and their types."""
+    path = ROOT / "instances" / config(domain)["instance_dir"] / config(domain)["instances_template"].format(instance_id)
+    tree = _sexp(path.read_text(encoding="utf-8"))
+    fields = {part[0]: part[1:] for part in tree if isinstance(part, list) and part}
+    return dict(_typed([t for t in fields.get(":objects", []) if isinstance(t, str)]))
+
+
+def _has_digit(word: str) -> bool:
+    return any(char.isdigit() for char in word)
+
+
+def _logistics_plan(text: str, domain: str) -> list[tuple[str, ...]]:
+    """PlanBench's text_to_plan_logistics, restated."""
+    raw = [name.split("-")[0].lower() for name in config(domain)["actions"]]
+    plan = []
+    for line in (line.strip().lower() for line in text.split("\n")):
+        if not line:
+            continue
+        if "[cost]" in line:
+            break
+        if line[0].isdigit() and len(line) > 1 and line[1] == ".":
+            line = line[2:].replace(".", "")
+        elif line[0].isdigit() and len(line) > 2 and line[1].isdigit() and line[2] == ".":
+            line = line[3:].replace(".", "")
+        words = line.split()
+        if not words or words[0] not in raw:
+            continue
+        objs = [word[0] + "-".join(word.split("_")[1:]) for word in words if _has_digit(word)]
+        action = words[0]
+        checked = objs[1] if action in ("load", "unload") and len(objs) > 1 else (objs[0] if objs else "")
+        if "a" in checked:
+            action += "-airplane"
+        elif "t" in checked:
+            action += "-truck"
+        else:
+            continue
+        if action == "drive-truck" and len(objs) == 3:
+            objs.append("c" + [c for c in objs[1] if c.isdigit()][0])
+        plan.append((action, *objs))
+    return plan
+
+
+def _depots_plan(text: str, domain: str) -> list[tuple[str, ...]]:
+    """PlanBench's text_to_plan_depots, restated: the last action name contained in a line is its action."""
+    raw = [name.lower() for name in config(domain)["actions"]]
+    plan = []
+    for line in (line.strip().lower() for line in text.split("\n")):
+        if not line:
+            continue
+        if "[cost]" in line:
+            break
+        line = line.lstrip("0123456789").replace(".", "")
+        objs = [word for word in line.split() if _has_digit(word)]
+        found = [name for name in raw if name in line]
+        if found:
+            plan.append((found[-1], *objs))
+    return plan
+
+
+def _obfuscated_plan(text: str, domain: str) -> list[tuple[str, ...]]:
+    """PlanBench's text_to_plan_obfuscated, restated, each action's number of objects read from its template."""
+    templates = config(domain)["actions"]
+    plan = []
+    for line in (line.strip() for line in text.split("\n")):
+        if "[COST]" in line:
+            break
+        if not line:
+            continue
+        named = [name for name in templates if name in line.split()]
+        numbers = [piece.strip() for piece in line.split("object_") if piece.strip().isdigit()]
+        if not named or not numbers:
+            continue
+        action = named[0]
+        if len(numbers) != templates[action].count("{}"):
+            continue
+        plan.append((action, *["o" + n for n in numbers]))
+    return plan
+
+
 def text_to_plan(text: str, domain: str) -> list[tuple[str, ...]]:
     """PlanBench's text_to_plan_blocksworld, restated: action phrases replaced by action names, then on each
-    line the first action named and the objects in the order they appear."""
+    line the first action named and the objects in the order they appear. The other domains go to their own."""
+    if domain == "logistics":
+        return _logistics_plan(text, domain)
+    if domain == "depots":
+        return _depots_plan(text, domain)
+    if domain == "obfuscated_deceptive_logistics":
+        return _obfuscated_plan(text, domain)
     settings = config(domain)
     letters = settings["encoded_objects"]
     blocks = {name.lower(): letter for letter, name in letters.items()}
@@ -132,6 +267,11 @@ def plan_reaches_goal(plan: list[tuple[str, ...]], domain: str, instance_id: int
         if action is None or len(objects) != len(action["parameters"]):
             return False
         binding = dict(zip(action["parameters"], objects, strict=True))
+        if any(kind != "object" for kind in action["types"]):
+            declared = instance_objects(domain, instance_id)
+            if any(obj not in declared or not _is_a(declared[obj], kind, domain)
+                   for obj, kind in zip(objects, action["types"], strict=True)):
+                return False
         if not _ground(action["precondition"], binding) <= facts:
             return False
         facts = (facts - _ground(action["delete"], binding)) | _ground(action["add"], binding)
@@ -146,9 +286,24 @@ def grade(text: str, truth: dict[str, Any]) -> tuple[bool, str]:
     return bool(plan) and plan_reaches_goal(plan, truth["domain"], int(truth["instance_id"])), f"{len(plan)} steps"
 
 
+def _spoken_other(obj: str, domain: str) -> str:
+    if domain == "logistics":
+        letter, digits = obj[0], obj[1:].split("-")
+        return config(domain)["encoded_objects"][letter].format(*digits)
+    if domain == "obfuscated_deceptive_logistics":
+        return "object_" + obj[1:]
+    return obj
+
+
 def plan_as_text(pddl_plan: str, domain: str) -> str:
     """A PDDL plan written the way PlanBench's prompts write one, closed with "[PLAN END]"."""
     settings = config(domain)
+    if domain in ("logistics", "depots", "obfuscated_deceptive_logistics"):
+        lines = []
+        for step in re.findall(r"\(([^)]*)\)", pddl_plan):
+            name, *objs = step.split()
+            lines.append(settings["actions"][name.lower()].format(*[_spoken_other(o, domain) for o in objs]))
+        return "\n".join(lines) + "\n[PLAN END]"
     names = list(settings["encoded_objects"].values())
 
     def spoken(obj: str) -> str:

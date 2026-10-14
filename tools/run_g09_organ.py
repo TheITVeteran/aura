@@ -60,8 +60,11 @@ BENCH = Path("~/.aura/benchmarks").expanduser()
 #: own, so the requests of one kind can be drafted and answered by kind.
 DM_ALL = tuple(sorted(p.stem for p in (BENCH / "g09/dm-math/mathematics_dataset-v1.0/interpolate").glob("*.txt")))
 BBH_ALL = tuple(sorted(p.stem for p in (BENCH / "bbh-src/bbh").glob("*.json")))
+#: PlanBench's plan-generation domains (Valmeekam et al. 2023) beyond the two Blocksworlds.
+PLANBENCH_MORE = ("logistics", "depots", "obfuscated_deceptive_logistics")
 DOMAINS = ("math", "code", "planning", "knowledge", "transfer", "bbeh", "trip", "aime", "cruxeval", "meeting", "lcb",
-           "blocksworld", "mystery_blocksworld", *(f"dm_{module}" for module in dict.fromkeys((*DM_MODULES, *DM_ALL))),
+           "blocksworld", "mystery_blocksworld", *PLANBENCH_MORE,
+           *(f"dm_{module}" for module in dict.fromkeys((*DM_MODULES, *DM_ALL))),
            *(f"bbh_{task}" for task in BBH_ALL))
 #: EvalPlus's own request for a chat model.
 CODE_REQUEST = ("Please provide a self-contained Python script that solves the following problem "
@@ -268,6 +271,7 @@ LOADERS = {"math": _math_tasks, "code": _code_tasks, "planning": _planning_tasks
            "meeting": _meeting_tasks, "lcb": _lcb_tasks,
            "blocksworld": lambda: _planbench_tasks("blocksworld"),
            "mystery_blocksworld": lambda: _planbench_tasks("mystery_blocksworld"),
+           **{domain: (lambda domain=domain: _planbench_tasks(domain)) for domain in PLANBENCH_MORE},
            **{f"dm_{module}": (lambda module=module: _dm_tasks(module)) for module in (*DM_MODULES, *DM_ALL)},
            **{f"bbh_{task}": (lambda task=task: [t for t in _transfer_tasks() if t["group"] == task])
               for task in BBH_ALL}}
@@ -625,6 +629,7 @@ GRADERS = {"math": grade_math, "code": grade_code, "planning": grade_planning,
            "meeting": grade_meeting, "lcb": grade_lcb,
            "blocksworld": lambda text, truth: _planbench_grade(text, truth),
            "mystery_blocksworld": lambda text, truth: _planbench_grade(text, truth),
+           **{domain: (lambda text, truth: _planbench_grade(text, truth)) for domain in PLANBENCH_MORE},
            **{f"dm_{module}": grade_dm for module in (*DM_MODULES, *DM_ALL)},
            **{f"bbh_{task}": grade_transfer for task in BBH_ALL}}
 

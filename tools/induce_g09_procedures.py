@@ -43,6 +43,8 @@ if str(ROOT) not in sys.path:
 
 BENCH = Path("~/.aura/benchmarks").expanduser()
 NATURAL_PLAN = {"calendar": "calendar_scheduling", "meeting": "meeting_planning", "trip": "trip_planning"}
+#: PlanBench's plan-generation domains (tools/planbench_restated.py).
+PLANBENCH = ("blocksworld", "mystery_blocksworld", "logistics", "depots", "obfuscated_deceptive_logistics")
 
 
 def _mini_inputs() -> set[str]:
@@ -67,13 +69,13 @@ def problems(kind: str, part: str) -> list[dict[str, Any]]:
                        key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
         half = tasks[: len(tasks) // 2] if part == "development" else tasks[len(tasks) // 2:]
         return [{"key": t["id"], "problem": t["request"], "truth": t["truth"]} for t in half]
-    if kind in ("cruxeval", "lcb", "blocksworld", "mystery_blocksworld") or kind.startswith("dm_"):
+    if kind in ("cruxeval", "lcb", *PLANBENCH) or kind.startswith("dm_"):
         from tools.run_g09_organ import LOADERS, _dm_tasks
 
         loader = LOADERS.get(kind) or (lambda: _dm_tasks(kind.removeprefix("dm_")))
         tasks = sorted(loader(), key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
         half = tasks[: len(tasks) // 2] if part == "development" else tasks[len(tasks) // 2:]
-        if kind in ("blocksworld", "mystery_blocksworld"):
+        if kind in PLANBENCH:
             from tools.planbench_restated import plan_as_text
 
             return [{"key": t["id"], "problem": t["request"], "truth": t["truth"],
@@ -111,7 +113,7 @@ def every_kind() -> list[str]:
     return sorted([*(f"dm_{p.stem}" for p in dm.glob("*.txt")),
                    *(f"bbh_{p.stem}" for p in (BENCH / "bbh-src/bbh").glob("*.json")),
                    *(p.name for p in (BENCH / "g09/bbeh").glob("bbeh_*")),
-                   *NATURAL_PLAN, "cruxeval", "lcb", "blocksworld", "mystery_blocksworld"])
+                   *NATURAL_PLAN, "cruxeval", "lcb", *PLANBENCH])
 
 
 def test_ids(domain: str) -> set[str]:
@@ -122,7 +124,7 @@ def test_ids(domain: str) -> set[str]:
         kinds = ["calendar"]
     elif domain == "trip":
         kinds = ["trip"]
-    elif domain in ("cruxeval", "meeting", "lcb", "blocksworld", "mystery_blocksworld") or domain.startswith(("dm_", "bbh_")):
+    elif domain in ("cruxeval", "meeting", "lcb", *PLANBENCH) or domain.startswith(("dm_", "bbh_")):
         kinds = [domain]
     else:
         raise ValueError(f"no development and test split is defined for {domain}")
@@ -146,7 +148,7 @@ def grader_for(kind: str):
         from tools.run_g09_bbh import matches
 
         return lambda returned, truth: matches(str(returned), truth)
-    if kind in ("blocksworld", "mystery_blocksworld"):
+    if kind in PLANBENCH:
         from tools.planbench_restated import grade as grade_plan
 
         return lambda returned, truth: grade_plan(returned, truth)[0]

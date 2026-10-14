@@ -35,3 +35,23 @@ def test_every_gold_plan_reaches_its_goal_and_a_cut_one_does_not(domain: str) ->
         assert grade(text, task["truth"])[0]
         steps = text_to_plan(text.split("[PLAN END]")[0], domain)
         assert not plan_reaches_goal(steps[:-1], domain, int(task["truth"]["instance_id"]))
+
+
+@pytest.mark.skipif(not ROOT.exists(), reason="PlanBench is not on this host")
+@pytest.mark.parametrize("domain", ["logistics", "depots", "obfuscated_deceptive_logistics"])
+def test_every_gold_plan_reaches_its_goal_through_text_and_a_broken_one_does_not(domain) -> None:
+    for task in tasks(domain):
+        text = plan_as_text(task["truth"]["ground_truth_plan"], domain)
+        assert grade(text, task["truth"])[0], task["id"]
+        assert not grade("\n".join(text.split("\n")[1:]), task["truth"])[0], task["id"]
+
+
+@pytest.mark.skipif(not ROOT.exists(), reason="PlanBench is not on this host")
+def test_a_depots_step_whose_objects_are_the_wrong_type_fails_as_val_fails_it() -> None:
+    task = next(t for t in tasks("depots") if t["truth"]["ground_truth_plan"].startswith("(lift"))
+    first = task["truth"]["ground_truth_plan"].split("\n")[0].strip("()").split()
+    plan = text_to_plan(plan_as_text(task["truth"]["ground_truth_plan"], "depots"), "depots")
+    assert plan[0] == tuple(first)
+    hoist, crate = first[1], first[2]
+    swapped = [(first[0], crate, hoist, *first[3:]), *plan[1:]]
+    assert not plan_reaches_goal(swapped, "depots", int(task["truth"]["instance_id"]))
