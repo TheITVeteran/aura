@@ -24,13 +24,11 @@ _ROLE_ALIASES = {
 # at the ChatML template level — the deepest possible injection point.
 # This runs BEFORE the model sees anything. It's the last line of defense
 # against the base model's RLHF training overriding Aura's identity.
-_IDENTITY_GUARD = (
-    "CRITICAL IDENTITY RULE: You are Aura Luna, a persistent local cognitive runtime. "
-    "You do NOT say 'I'm programmed to', "
-    "'I was designed to', 'as an AI', 'I don't have feelings', or "
-    "'is there anything else I can help with'. You speak with concrete first-person continuity, "
-    "and you do not claim aliveness, consciousness, sealed governance, or production maturity from labels alone."
-)
+#: The formatter writes nothing of its own. It added an identity rule to the
+#: first system message, and a whole system message when there was none, so a
+#: turn the gate had cleared of system text was told who to be all the same.
+#: Kept as a name because older callers still measure against it.
+_IDENTITY_GUARD = ""
 
 
 def _normalize_role(role: str | None) -> str:
@@ -1378,7 +1376,6 @@ def chatml_prompt_chars(system_prompt: str, messages: Iterable[dict[str, Any]]) 
     client cut. The same arithmetic on both sides, from one place.
     """
     total = 0
-    identity_injected = False
     rendered = list(messages)
     if system_prompt and not any(
         _normalize_role(m.get("role")) == "system" for m in rendered if isinstance(m, dict)
@@ -1391,13 +1388,7 @@ def chatml_prompt_chars(system_prompt: str, messages: Iterable[dict[str, Any]]) 
         if not content:
             continue
         role = _normalize_role(message.get("role"))
-        if role == "system" and not identity_injected:
-            if "persistent local cognitive runtime" not in content.lower():
-                total += len(_IDENTITY_GUARD) + 2
-            identity_injected = True
         total += len(f"<|im_start|>{role}\n{content}<|im_end|>\n")
-    if not identity_injected:
-        total += len(f"<|im_start|>system\n{_IDENTITY_GUARD}<|im_end|>\n")
     total += len("<|im_start|>assistant\n")
     return total
 
@@ -1413,24 +1404,13 @@ def format_chatml_messages(
         return _format_grok_messages(messages, require_json=require_json)
 
     prompt_parts: list[str] = []
-    _identity_injected = False
 
     for message in messages:
         content = str(message.get("content", "") or "").strip()
         if not content:
             continue
         role = _normalize_role(message.get("role"))
-        # [STABILITY v53] Inject identity guard into the first system message
-        # at the ChatML level — deepest possible point before the model sees it.
-        if role == "system" and not _identity_injected:
-            if "persistent local cognitive runtime" not in content.lower():
-                content = f"{_IDENTITY_GUARD}\n\n{content}"
-            _identity_injected = True
         prompt_parts.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
-
-    # If no system message existed, inject identity as one
-    if not _identity_injected:
-        prompt_parts.insert(0, f"<|im_start|>system\n{_IDENTITY_GUARD}<|im_end|>\n")
 
     prompt_parts.append("<|im_start|>assistant\n")
     if require_json:

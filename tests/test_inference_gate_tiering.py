@@ -1309,10 +1309,14 @@ async def test_prebuilt_short_output_contract_uses_contract_prompt_profile(monke
     assert result == "yes"
     rendered_messages = cortex.kwargs[0]["messages"]
     assert sum(len(message["content"]) for message in rendered_messages) <= 2_800
-    assert rendered_messages[0]["content"].startswith(
-        "## CONTRACT-BOUNDED LIVE CORTEX TURN"
-    )
-    assert "[LIVE MIND CONTEXT]" in rendered_messages[0]["content"]
+    # The contract text and the identity anchor are not dispatched. Nor is
+    # the snapshot of her live mind: the turn asks for a word and is not
+    # about her (core/brain/what_she_is_given.py).
+    assert all(message["role"] != "system" for message in rendered_messages)
+    sent = " ".join(str(message["content"]) for message in rendered_messages)
+    assert "CONTRACT-BOUNDED LIVE CORTEX TURN" not in sent
+    assert "INTRINSIC IDENTITY ANCHOR" not in sent
+    assert "[LIVE MIND CONTEXT]" not in sent
     assert rendered_messages[-1] == {"role": "user", "content": prompt}
 
 
@@ -2063,8 +2067,11 @@ async def test_user_facing_primary_uses_compact_foreground_context_builders():
     assert result == "I'm with you and tracking the current thread clearly."
     gate._build_compact_system_prompt.assert_called_once()
     gate._build_compact_living_mind_context.assert_awaited_once()
-    assert "compact-system" in cortex.prompts[0]
-    assert "compact-live" in cortex.prompts[0]
+    # Neither is dispatched: her model is given the turn and no system text
+    # (core/brain/what_she_is_given.py).
+    assert "compact-system" not in cortex.prompts[0]
+    assert "compact-live" not in cortex.prompts[0]
+    assert "With me?" in cortex.prompts[0]
 
 
 @pytest.mark.asyncio
@@ -2086,15 +2093,19 @@ async def test_live_context_is_one_turn_local_message_after_the_stable_prefix():
                 )
 
     messages = cortex.kwargs[0]["messages"]
-    assert messages[0]["role"] == "system"
-    assert "stable-identity-policy" in messages[0]["content"]
-    assert "turn-local-living-mind" not in messages[0]["content"]
-    assert "USER-FACING CONVERSATION RELIABILITY CONTRACT" not in messages[0]["content"]
+    # No system message goes to her model. What the runtime read for this
+    # turn is one evidence message just before what was said, and neither the
+    # identity policy, the living-mind text nor the reliability contract is
+    # in it (core/brain/what_she_is_given.py).
+    assert all(message["role"] != "system" for message in messages)
     assert messages[-1] == {"role": "user", "content": "With me?"}
-    assert messages[-2]["role"] == "system"
+    assert messages[-2]["role"] == "runtime_evidence"
     grounding = messages[-2]["content"]
-    assert grounding.count("turn-local-living-mind") == 1
-    assert grounding.count("USER-FACING CONVERSATION RELIABILITY CONTRACT") == 1
+    assert "## PRESENT MOMENT" in grounding
+    sent = " ".join(str(message["content"]) for message in messages)
+    assert "stable-identity-policy" not in sent
+    assert "turn-local-living-mind" not in sent
+    assert "USER-FACING CONVERSATION RELIABILITY CONTRACT" not in sent
 
 
 @pytest.mark.asyncio
@@ -2232,8 +2243,10 @@ async def test_user_facing_secondary_uses_compact_foreground_context_builders(mo
         assert result == solver_reply
         gate._build_compact_system_prompt.assert_called_once()
         gate._build_compact_living_mind_context.assert_awaited_once()
-        assert "compact-system" in solver.prompts[0]
-        assert "compact-live" in solver.prompts[0]
+        # Not dispatched: the solver is given the turn and no system text.
+        assert "compact-system" not in solver.prompts[0]
+        assert "compact-live" not in solver.prompts[0]
+        assert "async deadlock" in solver.prompts[0]
     finally:
         os.environ.pop("AURA_ENABLE_LOCAL_DEEP_SOLVER", None)
 
@@ -2583,8 +2596,9 @@ async def test_user_facing_primary_preserves_prebuilt_messages_for_local_mlx():
 
     assert result == "32B lane online."
     assert "32B lane online" in cortex.prompts[0]
-    assert "Aura" in cortex.prompts[0]
-    assert "compact-live" in cortex.prompts[0]
+    # The prebuilt system line and the living context are not dispatched.
+    assert "You are Aura." not in cortex.prompts[0]
+    assert "compact-live" not in cortex.prompts[0]
     assert "conversation history" not in cortex.prompts[0].lower()
     gate._build_compact_living_mind_context.assert_awaited_once()
 

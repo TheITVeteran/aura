@@ -31,7 +31,7 @@ A_REVIEW = (
 @pytest.fixture
 def has_talked(tmp_path):
     record = what_she_wants.reset_for_test(tmp_path / "wants.json", engine=ConationEngine())
-    record.remember_talk(
+    record.talk.remember_talk(
         [
             ("What do you make of the plan, and has the time come to look at it?",
              "I think the plan is fine. There is a piece of it I would change, and I will say which."),
@@ -54,6 +54,6 @@ def test_a_review_of_a_story_nobody_mentioned_is_still_caught(has_talked):
 
 
 def test_asking_what_it_is_about_does_not_count_the_exchange(has_talked):
-    before = has_talked._exchanges
-    assert "limpet" in has_talked.subjects_of(ASKED, ANSWERED)
-    assert has_talked._exchanges == before
+    before = has_talked.talk._exchanges
+    assert "limpet" in has_talked.talk.subjects_of(ASKED, ANSWERED)
+    assert has_talked.talk._exchanges == before

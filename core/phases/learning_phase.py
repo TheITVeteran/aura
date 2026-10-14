@@ -123,7 +123,7 @@ def _recall_her_talk() -> int:
         elif heard and content:
             exchanges.append((heard, content))
             heard = ""
-    return get_what_she_wants().remember_talk(exchanges)
+    return get_what_she_wants().talk.remember_talk(exchanges)
 
 
 def _said_this_turn(state: AuraState) -> list[str]:
@@ -207,7 +207,7 @@ async def read_what_the_turn_was_worth(state: AuraState, *, person: str = "", se
             from core.conation.what_she_wants import get_what_she_wants
             from core.conation.what_she_wants import read_turn as met_this_turn
 
-            if not get_what_she_wants().talked_before():
+            if not get_what_she_wants().talk.talked_before():
                 await asyncio.to_thread(_recall_her_talk)
             markers = getattr(getattr(state, "affect", None), "markers", None) or {}
             about = _with_the_person(

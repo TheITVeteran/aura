@@ -188,10 +188,6 @@
    "characters": 332,
    "strings": 2
   },
-  "core/brain/llm/chat_format.py": {
-   "characters": 376,
-   "strings": 1
-  },
   "core/brain/llm/code_generator.py": {
    "characters": 951,
    "strings": 2
@@ -310,10 +306,6 @@
   },
   "core/brain/predictive_engine.py": {
    "characters": 153,
-   "strings": 1
-  },
-  "core/brain/present_moment.py": {
-   "characters": 194,
    "strings": 1
   },
   "core/brain/react_loop.py": {
@@ -713,8 +705,8 @@
    "strings": 2
   },
   "core/phases/response_generation_unitary.py": {
-   "characters": 9875,
-   "strings": 40
+   "characters": 9206,
+   "strings": 35
   },
   "core/phases/response_generation_unitary_proof_turns.py": {
    "characters": 147,
@@ -969,5 +961,5 @@
    "strings": 1
   }
  },
- "total_characters": 170148
+ "total_characters": 168909
 }
