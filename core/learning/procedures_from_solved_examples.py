@@ -343,6 +343,60 @@ def _shown_for(pool: Sequence[SolvedExample], line: int, attempt: int, shots: in
     return ordered[:shots]
 
 
+def request_for(family: Family, line: int, previous: Candidate | None, attempt: int, *, shots: int,
+                mechanisms: str | None = None, steps: KeptSteps | None = None
+                ) -> tuple[str, list[SolvedExample]]:
+    """The next request on one line of a family, and the examples it shows.
+
+    After a failure on the pool the request shows the function and up to
+    ``shots`` pool problems it got wrong; otherwise it is a fresh proposal
+    from this line's draw for ``attempt``.
+    """
+    listing = steps.listing if steps is not None else None
+    shown = _shown_for(family.pool, line, attempt, shots)
+    by_key = {e.key: e for e in family.pool}
+    failures = [(by_key[o.key], o) for o in previous.pool if not o.agreed][:shots] if previous is not None else []
+    if previous is not None and failures:
+        return repair_request(previous.code, shown, failures, mechanisms, listing), shown
+    return proposal_request(shown, mechanisms, listing), shown
+
+
+def judge(family: Family, line: int, round_index: int, shown: Sequence[SolvedExample], text: str, *, shots: int,
+          agree: Agree = agrees_with_shown_answer, workers: int = 1, steps: KeptSteps | None = None
+          ) -> Candidate | None:
+    """Run the function in ``text`` on the family's known examples; None when the reply has no function.
+
+    The shown pool runs first and stops after ``shots`` disagreements (the
+    counterexamples a repair can use); the sealed half runs only when every
+    pool answer agreed, and stops at its first disagreement.
+    """
+    code = extract_program(text)
+    if code is None:
+        return None
+    candidate = Candidate(family=family.name, line=line, round=round_index, code=code,
+                          sha256=hashlib.sha256(code.encode()).hexdigest(), shown_keys=[e.key for e in shown],
+                          pool_total=len(family.pool), sealed_total=len(family.sealed))
+    candidate.pool = check_program(code, family.pool, agree, workers=workers, stop_after_failures=shots,
+                                   steps=steps)
+    if candidate.pool_agreed == len(family.pool):
+        candidate.sealed = check_program(code, family.sealed, agree, workers=workers, stop_after_failures=1,
+                                         steps=steps)
+    return candidate
+
+
+def next_on_line(candidate: Candidate | None, attempt: int) -> tuple[Candidate | None, int]:
+    """What a line carries into its next request: the function to repair, or none and a fresh draw.
+
+    A failure on the shown pool is repaired from its counterexamples. A
+    function that agreed on every pool answer and failed on the sealed half
+    is not repaired, because the sealed problems are never shown: the line
+    starts again from new examples, as it does when a reply has no function.
+    """
+    if candidate is None or candidate.sealed:
+        return None, attempt + 1
+    return candidate, attempt
+
+
 def induce(
     families: dict[str, Sequence[SolvedExample]],
     propose: Propose,
@@ -358,16 +412,12 @@ def induce(
 ) -> dict[str, Family]:
     """Write, check and revise procedures for every family, all families' requests batched per round.
 
-    Each family runs ``lines`` independent lines. A line starts from its own
-    draw of ``shots`` shown examples; after a failure on the pool its next
-    request shows the function and up to ``shots`` of the pool problems it got
-    wrong; after a failure confined to the sealed half (or no code at all) it
-    starts again from a fresh draw. A line stops once a function is admitted.
+    Each family runs ``lines`` independent lines (``request_for``,
+    ``judge``, ``next_on_line``). A line stops once a function is admitted.
     ``mechanisms`` is the reference text of core/reasoning/mechanisms.py when
     her model is told it may import them, and ``steps`` the kinds already
     kept, which a procedure may call for a step and is checked calling.
     """
-    listing = steps.listing if steps is not None else None
     state: dict[str, Family] = {}
     for name, examples in families.items():
         pool, sealed = split_examples(examples)
@@ -382,45 +432,25 @@ def induce(
             break
         requests, shown_sets = [], []
         for name, line in active:
-            family = state[name]
             previous, attempt = lineage[(name, line)]
-            shown = _shown_for(family.pool, line, attempt, shots)
-            by_key = {e.key: e for e in family.pool}
-            failures = [(by_key[o.key], o) for o in previous.pool if not o.agreed][:shots] \
-                if previous is not None else []
-            if previous is not None and failures:
-                requests.append(repair_request(previous.code, shown, failures, mechanisms, listing))
-            else:
-                requests.append(proposal_request(shown, mechanisms, listing))
+            request, shown = request_for(state[name], line, previous, attempt, shots=shots,
+                                         mechanisms=mechanisms, steps=steps)
+            requests.append(request)
             shown_sets.append(shown)
         texts = propose(requests)
         for (name, line), shown, text in zip(active, shown_sets, texts, strict=True):
             family = state[name]
             _previous, attempt = lineage[(name, line)]
-            code = extract_program(text)
-            if code is None:
-                lineage[(name, line)] = (None, attempt + 1)
-                continue
-            candidate = Candidate(family=name, line=line, round=round_index, code=code,
-                                  sha256=hashlib.sha256(code.encode()).hexdigest(),
-                                  shown_keys=[e.key for e in shown],
-                                  pool_total=len(family.pool), sealed_total=len(family.sealed))
-            candidate.pool = check_program(code, family.pool, agree, workers=workers, stop_after_failures=shots,
-                                           steps=steps)
-            if candidate.pool_agreed == len(family.pool):
-                candidate.sealed = check_program(code, family.sealed, agree, workers=workers,
-                                                 stop_after_failures=1, steps=steps)
-            family.candidates.append(candidate)
-            if on_candidate is not None:
-                on_candidate(candidate)
-            if candidate.admitted:
-                finished.add((name, line))
-            elif candidate.sealed:
-                # Every shown-pool answer agreed and a sealed one did not: the
-                # sealed problems are never shown, so start again from new examples.
-                lineage[(name, line)] = (None, attempt + 1)
-            else:
-                lineage[(name, line)] = (candidate, attempt)
+            candidate = judge(family, line, round_index, shown, text, shots=shots, agree=agree, workers=workers,
+                              steps=steps)
+            if candidate is not None:
+                family.candidates.append(candidate)
+                if on_candidate is not None:
+                    on_candidate(candidate)
+                if candidate.admitted:
+                    finished.add((name, line))
+                    continue
+            lineage[(name, line)] = next_on_line(candidate, attempt)
     return state
 
 

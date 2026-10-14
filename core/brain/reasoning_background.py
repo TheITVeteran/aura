@@ -7,6 +7,9 @@ Two bounded, internal, governed loops complete the flywheel:
   solved-cache for instant re-use.
 * ``reasoning_self_improve`` — when enough verifier-clean traces accumulate, feeds
   them to the existing governed/validated fine-tune pipe (STaR bootstrap).
+* ``learn_kinds_she_meets`` — one step of learning a kind of problem from the
+  solved examples she met (core/learning/examples_she_meets.py), in a task of
+  its own so a proposal her model takes minutes over holds no other job.
 
 Wiring (one line, where the conductor's defaults are registered)::
 
@@ -34,6 +37,11 @@ _SELF_IMPROVE_INTERVAL_S = 3600.0
 _NONPARAM_INGEST_INTERVAL_S = 1800.0
 
 _registered: set[int] = set()
+#: Tokens a live proposal may take: the longest private channel (18,369) plus the
+#: longest reply (3,492) of the G09 proposals that wrote a function
+#: (docs/evidence/G09_PROCEDURES_PREREGISTRATION_2_2026-10-12.md).
+_PROPOSAL_TOKENS = 18_369 + 3_492
+_LEARNING: dict[str, Any] = {}
 def _flag_on(name: str, default: str = "0") -> bool:
     return str(os.getenv(name, default)).strip().lower() in {"1", "true", "on", "yes", "enabled"}
 
@@ -107,6 +115,80 @@ async def _job_nonparametric_ingest() -> dict[str, Any]:
         return {"status": "error", "error": f"{type(exc).__name__}"}
 
 
+def _her_embedder() -> tuple[Any, Any]:
+    """Her embedder's document and query sides, only from an engine the runtime already holds."""
+    import numpy as np
+
+    from core.learning.kinds_by_meaning import TASK
+    from core.memory.embedding_runtime import (
+        acquire_shared_embedding_engine,
+        shared_embedding_runtime_snapshot,
+    )
+
+    if not shared_embedding_runtime_snapshot().get("engine_live"):
+        return None, None
+    engine = _LEARNING.get("embedder")
+    if engine is None:
+        engine = _LEARNING["embedder"] = acquire_shared_embedding_engine("learn_kinds_she_meets")
+
+    def documents(texts: list[str]) -> Any:
+        return np.asarray(engine.embed_batch(texts), dtype=np.float32)
+
+    def queries(texts: list[str]) -> Any:
+        return np.asarray([engine.embed_query(text, task=TASK) for text in texts], dtype=np.float32)
+
+    return documents, queries
+
+
+async def _learn_one_step() -> dict[str, Any]:
+    from core.container import ServiceContainer
+    from core.learning.examples_she_meets import learn_one_step
+
+    router = ServiceContainer.get("llm_router", default=None)
+    if router is None:
+        return {"status": "no_router"}
+
+    async def propose_one(request: str) -> str:
+        out = await router.think(
+            messages=[{"role": "user", "content": request}],
+            origin="learn_kinds_she_meets",
+            purpose="procedure_induction",
+            prefer_tier="primary",
+            is_background=True,
+            foreground_request=False,
+            allow_cloud_fallback=False,
+            skip_runtime_payload=True,
+            # Induction runs decode greedily (tools/g12_batched.py); so does this.
+            temperature=0.0,
+            max_tokens=_PROPOSAL_TOKENS,
+        )
+        return str((out.get("content") or out.get("response") or "") if isinstance(out, dict) else (out or ""))
+
+    try:
+        documents, queries = _her_embedder()
+        result = await learn_one_step(propose_one, documents=documents, queries=queries)
+    except (ImportError, OSError, RuntimeError, AttributeError, KeyError, TypeError, ValueError) as exc:
+        record_degradation("reasoning_background_learn_in_use", exc, severity="warning",
+                           action="left the examples she met for the next idle step")
+        return {"status": "error", "error": type(exc).__name__}
+    logger.info("🧠 Learning in use: %s", result)
+    return result
+
+
+async def _job_learn_kinds_she_meets() -> dict[str, Any]:
+    """Start one step of learning kinds from the examples she met, unless the last is still running."""
+    if not _flag_on("AURA_LEARN_KINDS_IN_USE", "1"):
+        return {"status": "disabled"}
+    running = _LEARNING.get("task")
+    if running is not None and not running.done():
+        return {"status": "step_running"}
+    from core.runtime.task_ownership import create_tracked_task
+
+    _LEARNING["task"] = create_tracked_task(_learn_one_step(), name="learn_kinds_she_meets",
+                                            owner="reasoning_background")
+    return {"status": "step_started"}
+
+
 def register_reasoning_jobs(conductor: Any) -> bool:
     """Register the bounded reasoning background loops on an autonomy conductor.
 
@@ -131,6 +213,14 @@ def register_reasoning_jobs(conductor: Any) -> bool:
             "reasoning_self_improve",
             _SELF_IMPROVE_INTERVAL_S,
             _job_self_improve,
+            run_immediately=False,
+            policy="research",
+        )
+        register(
+            "learn_kinds_she_meets",
+            # Checked as often as idle pre-compute; the research policy decides when she is idle enough.
+            _PRECOMPUTE_INTERVAL_S,
+            _job_learn_kinds_she_meets,
             run_immediately=False,
             policy="research",
         )

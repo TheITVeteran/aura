@@ -259,6 +259,25 @@ class AmplifiedAnswer:
         }
 
 
+async def _note_what_independent_programs_agreed(objective: str, answer: Any, context: Any) -> None:
+    """A problem whose answer independent programs printed and her verifier passed is a solved example she met.
+
+    It goes to core/learning/examples_she_meets.py, which learns kinds of
+    problem from such examples while she is idle. Only a one-line answer
+    outside a response contract is noted, the form a kept procedure returns.
+    """
+    text = str(answer or "").strip()
+    if not text or "\n" in text or str((context or {}).get("response_contract") or "").strip():
+        return
+    try:
+        from core.learning.examples_she_meets import note_met_async
+
+        await note_met_async(str(objective or ""), text, "independent_programs_agreed")
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("amplifier_v2_examples_she_meets", exc, severity="warning",
+                           action="the solved example was not noted for learning in use")
+
+
 def answer_from_kept_procedures(objective: str, book: Any = None, *, own_book: bool = True) -> AmplifiedAnswer | None:
     """A kept procedure's answer to this request, when one applies; None otherwise.
 
@@ -1269,6 +1288,8 @@ class ReasoningAmplifierV2:
                 request.context.get("_cognitive_operation_receipts") or []
             ),
         )
+        if promotion_authority == "independent_executable_consensus" and delivered_pass:
+            await _note_what_independent_programs_agreed(problem.objective, calibrated_answer, request.context)
         logger.info(
             "🧠 [AmplifyV2] mode=%s task=%s cands=%d verifier=%s conf=%.2f status=%s",
             mode.value,

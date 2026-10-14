@@ -360,6 +360,17 @@
     "mlx_lm"
    ],
    "ownership_mode": "standalone_process",
+   "path": "tools/evaluate_semantic_grounded_native.py",
+   "purpose": "evaluation"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
    "path": "tools/evaluate_semantic_native_checkpoint.py",
    "purpose": "evaluation"
   },
@@ -457,6 +468,17 @@
    ],
    "ownership_mode": "standalone_process",
    "path": "tools/heldout_eval.py"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
+   "path": "tools/induce_g09_procedures.py",
+   "purpose": "evaluation"
   },
   {
    "expected_load_references": 1,
@@ -648,6 +670,17 @@
     "mlx_lm"
    ],
    "ownership_mode": "standalone_process",
+   "path": "tools/qualify_g10_reader.py",
+   "purpose": "evaluation"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
    "path": "tools/recurrence_native_train.py"
   },
   {
@@ -749,6 +782,72 @@
    ],
    "ownership_mode": "standalone_process",
    "path": "tools/run_falsification_matrix.py",
+   "purpose": "evaluation"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
+   "path": "tools/run_g05_public_answers.py",
+   "purpose": "evaluation"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
+   "path": "tools/run_g09_bbh.py",
+   "purpose": "evaluation"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
+   "path": "tools/run_g09_organ.py",
+   "purpose": "evaluation"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
+   "path": "tools/run_g12_bbeh.py",
+   "purpose": "evaluation"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
+   "path": "tools/run_g12_ifbench.py",
+   "purpose": "evaluation"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
+   "path": "tools/run_g12_math500.py",
    "purpose": "evaluation"
   },
   {
@@ -986,6 +1085,17 @@
    ],
    "ownership_mode": "standalone_process",
    "path": "tools/semantic_feature_standalone.py"
+  },
+  {
+   "expected_load_references": 1,
+   "guard_symbol": "standalone_model_lane",
+   "min_guard_sites": 1,
+   "modules": [
+    "mlx_lm"
+   ],
+   "ownership_mode": "standalone_process",
+   "path": "tools/semantic_grounded_native_fit.py",
+   "purpose": "evaluation"
   },
   {
    "expected_load_references": 1,
