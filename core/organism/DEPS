@@ -33,6 +33,7 @@ include_rules = [
     "+core.perception.a_picture_examined_without_holding_the_loop", # Pure check of detached picture-probe inputs.
     "+core.perception.learned_tracking.contracts", # Pure check of capture geometry and occluded predictions.
     "+core.perception.learned_tracking.points_for_the_motion_eyes", # Pure check of learned points retaining capture custody.
+    "+core.perception.learned_tracking.corrections_while_points_keep_moving", # Pure check of late corrections transported through observed pixels.
     "+core.perception.foreground_appearance", # Synthetic validation of bounded appearance masks.
     "+core.perception.boundary_support_for_translation", # Pure check of exterior support for plain-patch translation.
     "+core.perception.activity_in_the_picture", # Pure check of visible activity and covered quiet intervals.
