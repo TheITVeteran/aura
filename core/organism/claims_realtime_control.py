@@ -483,12 +483,27 @@ def _bounded_pixel_claims() -> tuple:
 
 
 def _control_discovery_claims() -> tuple:
+    from core.agency.body_trials_keep_the_world import _control_source_invariant
+    from core.agency.how_a_game_works import _motion_and_emission_trials_invariant
     from core.agency.inputs_while_measuring_control import (
         _body_probe_phase_invariant,
         _body_trial_rest_invariant,
     )
+    from core.perception.a_world_as_its_code_makes_it import _saved_world_effects_invariant
 
     return (
+        ("saved_world_readings_preserve_action_effects", "core/perception/a_world_as_its_code_makes_it.py",
+         "tests/test_body_motion_trials_keep_emission_controls_separate.py",
+         lambda: _saved_world_effects_invariant() == (),
+         "Saving and loading a program reading preserves its source-bound emissions and effects at an edge."),
+        ("current_controls_keep_their_sources", "core/agency/body_trials_keep_the_world.py",
+         "tests/test_body_motion_trials_keep_emission_controls_separate.py",
+         lambda: _control_source_invariant() == (),
+         "Current local control bindings take precedence over remembered names and controls parsed from unqualified prose."),
+        ("body_motion_trials_keep_emission_controls_separate", "core/agency/how_a_game_works.py",
+         "tests/test_body_motion_trials_keep_emission_controls_separate.py",
+         lambda: _motion_and_emission_trials_invariant() == (),
+         "Source-bound emissions retain their action channel while body trials measure movement; combined effects and unknown controls remain eligible."),
         ("control_discovery_keeps_its_finite_observation_phase", "core/agency/inputs_while_measuring_control.py",
          "tests/test_control_discovery_has_its_own_finite_phase.py", lambda: _body_probe_phase_invariant() == (),
          "Control discovery reserves two isolated press and rest cycles and each delivered trial's finite observation interval before ordinary favored actions."),

@@ -10,7 +10,7 @@
 # Everything else below is the closed-world list the generator wrote: what
 # this package imports today, and nothing else.
 
-description = "core.organism: measured claims may exercise named observation custody, bounded picture probes, lattice phase geometry, drawing-clock correlation, rigid point geometry, appearance parts and joined-foreground retention, construction readiness, picked-outcome and spatial-relation canaries; other imports remain closed."
+description = "core.organism: measured claims may exercise named observation custody, bounded picture probes, lattice phase geometry, drawing-clock correlation, rigid point geometry, appearance parts and joined-foreground retention, saved program effects, construction readiness, picked-outcome and spatial-relation canaries; other imports remain closed."
 
 include_rules = [
     # The registered knowledge-revision canary exercises the canonical store.
@@ -21,6 +21,7 @@ include_rules = [
     "+core.reasoning.arithmetic_on_the_floor",
     # The registered scene claim measures only the observation contract.
     "+core.perception.the_drawing_as_objects",
+    "+core.perception.a_world_as_its_code_makes_it", # Pure check that a saved program reading keeps its effects.
     # Pure offline canaries for capture, geometry and observed transfer evidence.
     "+core.perception.eyes_of_their_own",
     "+core.perception.observed_transfer",

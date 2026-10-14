@@ -1161,7 +1161,9 @@ class PlayingAsItHappens:
         # only this screen's: LIVE 2026-10-04 a run begun from the end screen
         # ("Press SPACE to play again") was played with space alone, and the
         # arrows the title screen had named were never pressed.
-        keys = list(dict.fromkeys([*(self.keep.get("named_keys") or []), *named]))
+        from core.agency.body_trials_keep_the_world import keys_with_current_sources
+        keys = keys_with_current_sources(guide, self.keep.get("named_keys") or [], named,
+                                         _keys_of_play(guide, read) if guide is not None else [])
         # A thing whose words name the mouse and no key is played with the mouse: LIVE 2026-10-09 a putt game, "click the
         # ball, hold down the mouse while you aim", was played with the arrows a game is usually played with.
         if not keys and not (pointer_first or self.keep.get("pointer_named")):

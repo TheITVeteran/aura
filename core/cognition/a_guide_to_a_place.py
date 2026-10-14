@@ -311,7 +311,9 @@ class Guide:
 
     def keys_for_play(self) -> list[str]:
         """The keys play is worked by: those words name; a program's only where no word names a key."""
+        local_controls = any(c.source in (CODE, SCREEN, TOLD, PAGE) for c in self.controls.values())
         worded = [c.key for c in self.controls.values() if c.source != PROGRAM and c.key != "the pointer"
+                  and (not local_controls or c.source != COUNSEL)
                   and not self._not_for_play_act(c.act)]
         if worded or any(c.source != PROGRAM for c in self.controls.values()):
             # Words that name only what keys do ("space to attack") say nothing of how she moves: the keys its

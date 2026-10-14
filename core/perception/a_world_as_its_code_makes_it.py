@@ -18,6 +18,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.verify import invariant
+
 __all__ = ["AKindOfThing", "AWorldAsItsCodeMakesIt", "GroundToCover", "HerBody", "from_how_it_plays", "kept", "unkept"]
 
 
@@ -216,8 +218,10 @@ def kept(world: AWorldAsItsCodeMakesIt | None) -> dict[str, Any]:
             "marks_at": ground.marks_at and list(ground.marks_at), "wins_at": ground.wins_at,
             "kept_in": ground.kept_in, "counted_by": ground.counted_by, "drawn_in": ground.drawn_in},
         "things": [{"name": t.name, "touching": t.touching, "moves": t.moves, "speed": t.speed,
-                    "size": t.size and list(t.size), "looks": [list(look) for look in t.looks]} for t in world.things],
-        "clock_s": world.clock_s, "lives": world.lives, "keys": dict(world.keys), "read_at": dict(world.read_at)}
+                    "size": t.size and list(t.size), "looks": [list(look) for look in t.looks],
+                    "past_an_edge": t.past_an_edge} for t in world.things],
+        "clock_s": world.clock_s, "lives": world.lives, "keys": dict(world.keys),
+        "sends": dict(world.sends), "read_at": dict(world.read_at)}
 
 
 def unkept(held: Any) -> AWorldAsItsCodeMakesIt | None:
@@ -239,10 +243,26 @@ def unkept(held: Any) -> AWorldAsItsCodeMakesIt | None:
             counted_by=str(g.get("counted_by") or ""), drawn_in=str(g.get("drawn_in") or ""))
         things = [AKindOfThing(str(t.get("name") or ""), str(t.get("touching") or ""), str(t.get("moves") or ""),
                                t.get("speed"), _tuple(t.get("size")),
-                               tuple(tuple(look) for look in t.get("looks") or [])) for t in held.get("things") or []]
+                               tuple(tuple(look) for look in t.get("looks") or []),
+                               str(t.get("past_an_edge") or "")) for t in held.get("things") or []]
         world = AWorldAsItsCodeMakesIt(stage=tuple(held.get("stage") or (0.0, 0.0)), hers=hers, ground=ground,
                                        things=things, clock_s=held.get("clock_s"), lives=held.get("lives"),
-                                       keys=dict(held.get("keys") or {}), read_at=dict(held.get("read_at") or {}))
+                                       keys=dict(held.get("keys") or {}), sends=dict(held.get("sends") or {}),
+                                       read_at=dict(held.get("read_at") or {}))
     except (KeyError, TypeError, ValueError):
         return None
     return world or None
+
+
+@invariant('perception.saved_world_readings_preserve_action_effects', scope='perception',
+           owner='core/perception/a_world_as_its_code_makes_it.py', observational=False)
+def _saved_world_effects_invariant() -> tuple:
+    import json
+
+    world = AWorldAsItsCodeMakesIt(stage=(120., 80.), hers=HerBody(name='body', paces={'a': (30., 0.)}),
+                                   things=[AKindOfThing('markers', moves='rises', speed=100.),
+                                           AKindOfThing('obstacles', past_an_edge='costs a life')],
+                                   sends={'j': 'markers'}, keys={'a': 'moves', 'j': 'acts'},
+                                   read_at={'body': 'update', 'sends': 'emit'})
+    assert unkept(json.loads(json.dumps(kept(world)))) == world
+    return ()

@@ -125,6 +125,8 @@ class HowItWorks:
     inputs: dict[str, str] = field(default_factory=dict)
     #: Current source bindings qualify experiments; they do not identify a visible body.
     body_keys_from_code: tuple[str, ...] = ()
+    #: Emission experiments have their own receipts and need no body-motion response.
+    emission_keys_from_code: tuple[str, ...] = ()
     #: Which optional geometric checks agree with the described activity; absent entries remain unresolved.
     picture_checks: dict[str, Answer] = field(default_factory=dict)
 
@@ -158,6 +160,8 @@ class HowItWorks:
         from core.agency.body_trials_keep_the_world import keys_for_body_trials
 
         candidates = list(dict.fromkeys([*keys, *self.body_keys_from_code]))
+        candidates = [key for key in candidates if key not in self.emission_keys_from_code
+                      or key in self.body_keys_from_code]
         return keys_for_body_trials(candidates, self.inputs,
                                     body_known=self.has_a_body() is True or bool(self.body_keys_from_code))
 
@@ -248,6 +252,9 @@ def understood(guide: Any, also: str = "") -> HowItWorks:
     for axis, answer in (getattr(guide, "how_seen", None) or {}).items():
         getattr(how, axis).held_to(answer.value, answer.sure, answer.why[0] if answer.why else "")
     how.body_keys_from_code = _body_controls_from_code(guide)
+    world = getattr(guide, 'world_its_code_makes', None)
+    how.emission_keys_from_code = tuple(key for key in (getattr(world, 'sends', None) or {})
+                                        if key in controls and getattr(world, 'hers', None) is not None)
     return how
 
 
@@ -255,13 +262,16 @@ def _body_controls_from_code(guide: Any) -> tuple[str, ...]:
     """Current parsed methods name body experiments even when another reading omitted their keys."""
     from core.cognition.what_its_code_says import CODE
 
+    controls = getattr(guide, 'controls', None) or {}
+    world = getattr(guide, 'world_its_code_makes', None)
+    physical = getattr(world, 'hers', None)
+    found = list(dict.fromkeys(key for field in ('paces', 'pushes', 'lifts', 'turns', 'drives')
+                              for key in (getattr(physical, field, None) or {}) if key and key in controls))
     plays = getattr(guide, 'code_says', None)
     details = getattr(plays, 'hers', None)
     body = details.get('class', '') if isinstance(details, dict) else ''
     if not isinstance(body, str) or not re.fullmatch(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*', body):
-        return ()
-    controls = getattr(guide, 'controls', None) or {}
-    found = []
+        return tuple(found)
     for key, what in (getattr(plays, 'keys', None) or {}).items():
         if (getattr(what, 'does', '') not in ('moves', 'jumps', 'ducks', 'acts')
                 or getattr(controls.get(key), 'source', '') != CODE):
@@ -269,8 +279,18 @@ def _body_controls_from_code(guide: Any) -> tuple[str, ...]:
         by, where = str(getattr(what, 'by', '')), str(getattr(what, 'where', ''))
         receiver = re.match(r'([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.', by)
         if receiver is not None and (receiver[1] == body or receiver[1] in ('this', 'self') and where.rsplit('.', 1)[0] == body):
-            found.append(key)
+            if key not in found:
+                found.append(key)
     return tuple(found)
+
+
+@invariant('agency.body_motion_trials_keep_emission_controls_separate', scope='agency',
+           owner='core/agency/how_a_game_works.py', observational=False)
+def _motion_and_emission_trials_invariant() -> tuple:
+    how = HowItWorks(body_keys_from_code=('a', 'b'), emission_keys_from_code=('b', 'c'))
+    assert how.keys_for_body_trials(['a', 'b', 'c', 'unknown']) == ['a', 'b', 'unknown']
+    assert how.emission_keys_from_code == ('b', 'c')
+    return ()
 
 
 def seen_going_on_by_itself(guide: Any, going: bool) -> None:

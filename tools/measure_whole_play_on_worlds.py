@@ -55,6 +55,7 @@ async def _one(world: str, seed: int, minutes: float, goal: str, trace: Path | N
 
     pursuit._tell = tell
     drawing.PLAY_UNTIL_WON_S = minutes * 60.0
+    drawing.LEAST_SHARE_S = min(drawing.LEAST_SHARE_S, minutes * 60.0)
     name, _, extra = world.partition("&")
     address = f"file://{WORLDS / (name + '.html')}?seed={seed}" + (f"&{extra}" if extra else "")
     # Everything she decided and why, world by world, and the screen she ended on.
