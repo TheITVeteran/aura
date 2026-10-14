@@ -50,9 +50,26 @@ def attempt_activity_was_seen(reflexes: Any) -> bool | None:
         records = getattr(reflexes, 'stretches', ())
         return True if any((r.get('pictures') or 0) > 0 or (r.get('turns') or 0) > 0 for r in records) else None
     return receipt.activity_at is not None or any(
-        (record.get('observations') or 0) > 0 and (record.get('responsive_pictures') or 0) > 0
+        _how_many(record.get('observations')) > 0 and _how_many(record.get('responsive_pictures')) > 0
         for record in getattr(reflexes, 'stretches', ())
     )
+
+
+def a_game_was_played(reflexes: Any) -> bool:
+    """Whether any of this hand-over was played as it happened: a world that moved by itself was seen, picture after
+    picture. An ending with no new activity of hers after such play is a game that ended before she had hold of it, to
+    be tried again; with none, it is an old ending still on the screen. Offline 2026-10-13, a ball set going by PLAY
+    fell three times in the 4.2 s before she had found which thing was hers, and the game was left after one round."""
+    return any(_how_many(record.get('pictures')) > 0 for record in getattr(reflexes, 'stretches', ()))
+
+
+def _how_many(counted: Any) -> float:
+    """A count, or the sum of counts kept by where they came from: a stretch keeps its pictures by their source
+    ({"pixels": 40, "canvas-paint-v1": 12}). Offline 2026-10-13 a count kept so ended every run of a game from its
+    title screen in a TypeError, the moment its first stretch of play was over."""
+    if isinstance(counted, dict):
+        return float(sum(v for v in counted.values() if isinstance(v, (int, float)) and not isinstance(v, bool)))
+    return float(counted) if isinstance(counted, (int, float)) and not isinstance(counted, bool) else 0.0
 
 
 @invariant('agency.an_ending_after_reset_needs_new_activity', scope='agency',
@@ -67,4 +84,7 @@ def _new_attempt_invariant() -> tuple:
         assert not attempt_activity_was_seen(reflexes)
     receipt.observe(10.3, now=10.5, active=True, ended=False)
     assert attempt_activity_was_seen(reflexes) and receipt.activity_at == 10.3
+    kept_by_source = SimpleNamespace(keep={'attempt_observation': AttemptObservation(10.)},
+                                     stretches=[{'observations': {'pixels': 30, 'canvas-paint-v1': 0}, 'responsive_pictures': 4}])
+    assert attempt_activity_was_seen(kept_by_source)
     return ()

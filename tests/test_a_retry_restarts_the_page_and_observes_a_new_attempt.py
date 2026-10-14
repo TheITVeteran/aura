@@ -139,3 +139,53 @@ async def test_the_outer_loop_cannot_count_an_old_ending_after_a_physical_reload
     assert len(calls) == 2 and reloads == ['reload']
     assert result['completed_runs'] == 1 and not result['completed'] and not result['won']
     assert result['stopped_because'] == 'an ending was shown without new activity being observed'
+
+
+def test_a_stretch_that_keeps_its_pictures_by_their_source_is_activity_seen():
+    """A stretch of play keeps how many pictures came from each source; offline 2026-10-13 that ended every run of a
+    game from its title screen in a TypeError once its first stretch was over."""
+    from types import SimpleNamespace
+
+    from core.skills.a_new_attempt_must_be_seen import AttemptObservation, attempt_activity_was_seen
+
+    def seen(observations, responsive):
+        return attempt_activity_was_seen(SimpleNamespace(
+            keep={"attempt_observation": AttemptObservation(10.0)},
+            stretches=[{"observations": observations, "responsive_pictures": responsive}]))
+
+    assert seen({"pixels": 30, "canvas-paint-v1": 2}, 4) and seen(12, 1)
+    assert not seen({"pixels": 0}, 4) and not seen({"pixels": 30}, 0)
+
+
+@pytest.mark.asyncio
+async def test_a_game_that_ended_before_she_had_hold_of_it_is_tried_again(monkeypatch):
+    """Offline 2026-10-13 a ball set going by PLAY fell three times in the 4.2 s before she had found which thing was
+    hers: the game had been played as it happened, only not yet by her, and it was left after one round."""
+    calls, reloads = [], []
+
+    async def one_run(page, band, goal, _url, deadline, keep):
+        calls.append(len(calls))
+        reflexes = PlayingAsItHappens(page, band, goal, deadline, keep=keep)
+        reflexes.stretches.append({"pictures": 22, "observations": {"pixels": 22}, "responsive_pictures": 0})
+        reflexes.read({'text': 'GAME OVER Score 0', 'capture_at': time.time(), 'on_her_page': True})
+        reflexes.over_because = 'a way to start again appeared'
+        reflexes.ending_words = 'GAME OVER Score 0'
+        reflexes.ending_parts = [reflexes.ending_words]
+        return {'moves': [], 'last_seen': reflexes.ending_words}, reflexes
+
+    async def restart(_page, band):
+        reloads.append('reload')
+        return band
+
+    async def stock(_goal, _page):
+        return None
+
+    monkeypatch.setattr(drawing, '_one_run', one_run)
+    monkeypatch.setattr(drawing, '_from_the_top', restart)
+    monkeypatch.setattr(drawing, '_a_stocktaking', stock)
+    monkeypatch.setattr(drawing, '_tell', lambda _line: None)
+    monkeypatch.setattr(drawing, '_the_share_ends', lambda *_args: time.monotonic() + 1.)
+    result = await drawing._played(SimpleNamespace(url='https://example.test/world'), (0., 0., 1., 1.),
+                                   'Play this game and win.', 'https://example.test/world', {})
+    assert len(calls) >= 2
+    assert result.get('stopped_because') != 'an ending was shown without new activity being observed'

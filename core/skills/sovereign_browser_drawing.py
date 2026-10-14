@@ -352,7 +352,11 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     from core.agency.a_page_gone_blank import GONE_BLANK
     from core.language.how_a_game_ended import asks_to_win, requested_attempts
     from core.language.what_counts_as_done import MADE, MEASURE, terms_asked, without_conditions
-    from core.skills.a_new_attempt_must_be_seen import AttemptObservation, attempt_activity_was_seen
+    from core.skills.a_new_attempt_must_be_seen import (
+        AttemptObservation,
+        a_game_was_played,
+        attempt_activity_was_seen,
+    )
     from core.skills.screen_pursuit_as_it_happens import (
         MADE_NOT_WON,
         MAKING_STALLED,
@@ -405,7 +409,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         # The counsel she played this round by, so that a round much worse than her best can go back to it.
         run["counsel"] = str(keep.get("counsel") or "")
         runs.append(run)
-        if unobserved_ending:
+        if unobserved_ending and not a_game_was_played(reflexes):
             result['stopped_because'] = 'an ending was shown without new activity being observed'
             break
         violations = [v for s in reflexes.stretches for v in (s.get("runtime_checks") or {}).get("violations", [])]
