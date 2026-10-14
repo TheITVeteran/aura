@@ -500,6 +500,7 @@ def _control_discovery_claims() -> tuple:
 
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
+    from core.agency.a_body_still_expected_when_it_is_unseen import _expected_control_invariant
     from core.agency.a_model_for_steering import (
         _slow_motion_invariant,
         _velocity_uncertainty_invariant,
@@ -540,6 +541,7 @@ def _visual_motion_claims() -> tuple:
         _frame_session_invariant,
         _frame_time_invariant,
     )
+    from core.perception.learned_tracking.contracts import _tracking_visibility_invariant
     from core.perception.motion_kept_between_pictures import (
         _motion_belief_invariant,
         _motion_proposal_invariant,
@@ -598,6 +600,12 @@ def _visual_motion_claims() -> tuple:
         ("picture_probes_own_detached_inputs", "core/perception/a_picture_examined_without_holding_the_loop.py",
          "tests/test_optional_picture_probes_keep_the_loop_free.py", lambda: _picture_probe_inputs_invariant() == (),
          "Optional picture workers use copied arguments and detached answers; timeouts remain unmeasured and preserve ownership until actual completion."),
+        ("missing_body_observations_keep_the_control_role", "core/agency/a_body_still_expected_when_it_is_unseen.py",
+         "tests/test_missing_body_observations_keep_the_control_role.py", lambda: _expected_control_invariant() == (),
+         "Missing visual identity preserves established body control; timing roles and measured payoffs retain their own evidence."),
+        ("occluded_tracking_is_not_a_visible_measurement", "core/perception/learned_tracking/contracts.py",
+         "tests/test_learned_tracking_capture_contract.py", lambda: _tracking_visibility_invariant() == (),
+         "Tracking results keep capture identity and geometry; hidden coordinates and seeded masks cannot supply visible observations."),
         ("an_ending_after_reset_needs_new_activity", "core/skills/a_new_attempt_must_be_seen.py",
          "tests/test_a_retry_restarts_the_page_and_observes_a_new_attempt.py", lambda: _new_attempt_invariant() == (),
          "A new attempt requires current activity after reset; an old capture or another reading of its ending supplies no completed run."),

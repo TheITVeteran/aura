@@ -31,6 +31,7 @@ include_rules = [
     "+core.perception.visual_probe_cache", # Synthetic validation of scoped visual rejections.
     "+core.perception.a_board_seen", # Pure check of grouped lattice phases against observed teeth.
     "+core.perception.a_picture_examined_without_holding_the_loop", # Pure check of detached picture-probe inputs.
+    "+core.perception.learned_tracking.contracts", # Pure check of capture geometry and occluded predictions.
     "+core.perception.foreground_appearance", # Synthetic validation of bounded appearance masks.
     "+core.perception.boundary_support_for_translation", # Pure check of exterior support for plain-patch translation.
     "+core.perception.activity_in_the_picture", # Pure check of visible activity and covered quiet intervals.
