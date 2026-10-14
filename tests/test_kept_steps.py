@@ -41,7 +41,8 @@ def _book_file(tmp_path, procedures: dict[str, list[str]]):
 
 def test_a_procedure_answers_through_another_kept_kind(tmp_path) -> None:
     steps = kept_steps_from(_book_file(tmp_path, {"percent": [PERCENT]}))
-    assert steps is not None and "'percent'" in steps.listing and "Calculate 0.2*50." in steps.listing
+    listing = steps.listing_for("A coat costs 80 dollars with 25 percent off.") if steps is not None else ""
+    assert "'percent'" in listing and "Calculate 0.2*50." in listing
     assert run_procedure(DISCOUNT, "A coat costs 80 dollars with 25 percent off.", steps=steps) == ("60", "")
     returned, error = run_procedure(DISCOUNT, "A coat costs 80 dollars with 25 percent off.")
     assert returned is None and "kept_answer" in error
@@ -108,3 +109,20 @@ def test_a_book_with_no_procedure_offers_no_steps(tmp_path) -> None:
     path = tmp_path / "empty.json"
     path.write_text(json.dumps(ProcedureBook({}, {}).to_json()), encoding="utf-8")
     assert kept_steps_from(path) is None
+
+
+def test_a_request_is_shown_only_the_kept_kinds_its_words_single_out(tmp_path) -> None:
+    from core.learning.procedures_from_solved_examples import singled_out
+
+    words = ("percent", "dates", "sorting", "units", "primes", "brackets", "routes", "tables", "clocks", "shapes",
+             "letters", "orders")
+    many = ProcedureBook({w: Signature({w: 1.0, "problem": 0.5}, 0.5) for w in words}, {w: [PERCENT] for w in words})
+    assert singled_out(many, "a primes problem: is 91 one of the primes") == ["primes"]
+    assert singled_out(many, "tell me about your day") == []
+    few = ProcedureBook({w: Signature({w: 1.0}, 0.5) for w in words[:4]}, {w: [PERCENT] for w in words[:4]})
+    assert singled_out(few, "tell me about your day") == sorted(words[:4])
+    path = tmp_path / "many.json"
+    path.write_text(dumps(many.to_json()), encoding="utf-8")
+    steps = kept_steps_from(path)
+    assert "'primes'" in steps.listing_for("is 91 one of the primes") and "'percent'" not in \
+        steps.listing_for("is 91 one of the primes")

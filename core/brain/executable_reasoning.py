@@ -494,7 +494,7 @@ async def derive_executable_candidate(
     KeptSteps) lists her kept kinds to her model, and a program that calls
     ``kept_answer`` runs with the prelude that defines it.
     """
-    steps_listing = str(getattr(kept_steps, "listing", "") or "")
+    steps_listing = kept_steps.listing_for(str(objective or "")) if kept_steps is not None else ""
 
     started = time.monotonic()
     if type(max_generation_attempts) is not int or not 1 <= max_generation_attempts <= 2:

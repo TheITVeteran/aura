@@ -71,11 +71,12 @@ def nearest_kind(query: np.ndarray, meanings: Mapping[str, KindMeaning]) -> tupl
     The nearest kind must pass its own bar and be meant clearly: it stands out
     from all the kinds' scores (STANDS_OUT deviations above their mean) and
     from the next (CLEAR_OF deviations ahead), the rule of
-    core/intent/capability_by_meaning.py.
+    core/intent/capability_by_meaning.py. Among n kinds none can stand further
+    out than sqrt(n - 1) deviations, so fewer than nine never choose one.
     """
     from core.intent.capability_by_meaning import CLEAR_OF, STANDS_OUT
 
-    if len(meanings) < 3:
+    if len(meanings) < 2 or float(np.sqrt(len(meanings) - 1)) < STANDS_OUT:
         return None, 0.0, "too_few_kinds_to_tell_meaning_apart"
     names = list(meanings)
     vector = _unit(np.asarray(query, dtype=np.float32))[0]

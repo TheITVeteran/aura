@@ -228,18 +228,54 @@ def _mechanisms_prelude() -> str:
     return f"import sys as _aura_sys\n_aura_sys.path.insert(0, {_mechanisms_directory()!r})\n"
 
 
+def singled_out(book: ProcedureBook, text: str) -> list[str]:
+    """The kept kinds whose problems ``text`` shares words with by more than the rest do.
+
+    A kind is named when its score stands STANDS_OUT deviations above the mean
+    of every kept kind's score, the rule her capabilities are chosen by
+    (core/intent/capability_by_meaning.py). Among n scores none can stand
+    further out than sqrt(n - 1) deviations, so while a book keeps too few
+    kinds for the rule to name one (fewer than nine), every kind is named;
+    there are few.
+    """
+    import numpy as np
+
+    from core.intent.capability_by_meaning import STANDS_OUT
+
+    kept = sorted(k for k, codes in book.procedures.items() if codes and k in book.signatures)
+    if math.sqrt(max(0, len(kept) - 1)) < STANDS_OUT:
+        return kept
+    scores = np.array([book.signatures[k].similarity(text) for k in kept])
+    spread = float(scores.std())
+    if spread == 0.0:
+        return []
+    return [k for k, score in zip(kept, scores, strict=True) if (score - scores.mean()) / spread >= STANDS_OUT]
+
+
 @dataclass(frozen=True)
 class KeptSteps:
     """What a sandboxed program needs to call a book's kept kinds as steps (core/learning/kept_steps.py).
 
-    ``listing`` is what her model reads, ``prelude`` the lines put before the
-    program, and ``read_paths`` what the child may read: the mechanisms, the
-    helper, and the book itself.
+    ``prelude`` is the lines put before the program and ``read_paths`` what the
+    child may read: the mechanisms, the helper, and the book itself.
+    ``listing_for`` is what her model reads for one request: only the kinds
+    its words single out, so a book of a hundred kinds does not become a
+    hundred examples in every request.
     """
 
-    listing: str
     prelude: str
     read_paths: tuple[str, ...]
+    book: ProcedureBook = field(compare=False, repr=False)
+
+    def listing_for(self, text: str) -> str:
+        """The kept kinds ``text`` singles out, each with one of its problems and answer; empty when none is."""
+        from core.learning import kept_steps
+
+        kinds = singled_out(self.book, text)
+        if not kinds:
+            return ""
+        return kept_steps.reference({"procedures": {k: self.book.procedures[k] for k in kinds},
+                                     "examples": self.book.examples})
 
 
 def kept_steps_from(book_path: str | Path, book: ProcedureBook | None = None) -> KeptSteps | None:
@@ -251,9 +287,8 @@ def kept_steps_from(book_path: str | Path, book: ProcedureBook | None = None) ->
     if not book.procedures:
         return None
     helper = str(Path(kept_steps.__file__).resolve().parent)
-    return KeptSteps(listing=kept_steps.reference({"procedures": book.procedures, "examples": book.examples}),
-                     prelude=_mechanisms_prelude() + kept_steps.prelude(helper, str(path)),
-                     read_paths=(_mechanisms_directory(), helper, str(path)))
+    return KeptSteps(prelude=_mechanisms_prelude() + kept_steps.prelude(helper, str(path)),
+                     read_paths=(_mechanisms_directory(), helper, str(path)), book=book)
 
 
 _FRAME = re.compile(r'File "[^"]*candidate\.py", line (\d+), in (\S+)\n\s*(.*)')
@@ -352,8 +387,8 @@ def request_for(family: Family, line: int, previous: Candidate | None, attempt: 
     ``shots`` pool problems it got wrong; otherwise it is a fresh proposal
     from this line's draw for ``attempt``.
     """
-    listing = steps.listing if steps is not None else None
     shown = _shown_for(family.pool, line, attempt, shots)
+    listing = steps.listing_for(" ".join(e.problem for e in shown)) if steps is not None else None
     by_key = {e.key: e for e in family.pool}
     failures = [(by_key[o.key], o) for o in previous.pool if not o.agreed][:shots] if previous is not None else []
     if previous is not None and failures:
