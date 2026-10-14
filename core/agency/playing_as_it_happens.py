@@ -527,8 +527,11 @@ FACING_TRIALS = 10
 
 
 async def _a_facing_trial(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing, at: float) -> bool:
+    from core.agency.a_source_motion_model_checked_in_view import source_motion_checked
     from core.agency.giving_a_trial_time import try_a_facing_control
 
+    if source_motion_checked(run, hers, choosing, at):
+        return False
     return await try_a_facing_control(hands, run, hers, choosing, at, hold=_hold,
                                      seconds=TRY_A_KEY_S, limit=FACING_TRIALS)
 
@@ -821,7 +824,10 @@ def _still_trying_keys(run: _Run, hers: WhichIsHers, choosing: Any, trying_the_p
     and no more than so many turns at each, known or not: a key held into a floor tells nothing however often it is
     pressed. Offline 2026-10-12 a brawler on the ground was tried with "down" every half second for the rest of the
     round, and never once punched the robots walking up to her."""
-    return bool(not trying_the_pointer and run.keys and not hers.follows_pointer
+    from core.agency.a_source_motion_model_checked_in_view import source_motion_checked
+
+    return bool(not source_motion_checked(run, hers, choosing, at)
+                and not trying_the_pointer and run.keys and not hers.follows_pointer
                 and (choosing.mine is None or hers.kind is not None)
                 and body_probe_is_active(run, hers, pointer_steps=2 * len(_POINTER_TRIAL), at=at))
 

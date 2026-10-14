@@ -483,6 +483,7 @@ def _bounded_pixel_claims() -> tuple:
 
 
 def _control_discovery_claims() -> tuple:
+    from core.agency.a_source_motion_model_checked_in_view import _source_motion_agreement_invariant
     from core.agency.body_trials_keep_the_world import _control_source_invariant
     from core.agency.how_a_game_works import _motion_and_emission_trials_invariant
     from core.agency.inputs_while_measuring_control import (
@@ -492,6 +493,10 @@ def _control_discovery_claims() -> tuple:
     from core.perception.a_world_as_its_code_makes_it import _saved_world_effects_invariant
 
     return (
+        ("source_motion_needs_current_observed_agreement", "core/agency/a_source_motion_model_checked_in_view.py",
+         "tests/test_a_source_motion_model_is_checked_in_current_view.py",
+         lambda: _source_motion_agreement_invariant() == (),
+         "Complete source-bound direct motion can guide actions after current observed response agrees; missing, contradictory, carried and active-trial states retain discovery."),
         ("saved_world_readings_preserve_action_effects", "core/perception/a_world_as_its_code_makes_it.py",
          "tests/test_body_motion_trials_keep_emission_controls_separate.py",
          lambda: _saved_world_effects_invariant() == (),
