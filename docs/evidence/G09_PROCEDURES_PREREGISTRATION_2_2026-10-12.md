@@ -84,3 +84,7 @@ this time only round 0 of the development run is known (six of its eight
 proposals wrote a function, none agreed with its shown pool, and two ran to
 the cap). Fixing the rounds before the rest is seen leaves the development
 run nothing to choose, so the held-out run can start the moment it ends.
+
+Correction: the amendment above was committed at 00:24 (2b61482be), not
+00:40 as its heading says. Round 1 of the development run had one of its
+eight proposals decoded at that time and none checked.
