@@ -1,0 +1,75 @@
+{
+ "domains": {
+  "transfer": {
+   "answered_by_a_kept_procedure": 40,
+   "by_group": {
+    "bbeh_dyck_languages": {
+     "answered_by_a_kept_procedure": 20,
+     "draft_correct": 14,
+     "draft_interval": [
+      0.481,
+      0.8545
+     ],
+     "gained": 6,
+     "kept_correct": 20,
+     "kept_interval": [
+      0.8389,
+      1.0
+     ],
+     "lost": 0,
+     "requests": 20,
+     "two_sided_p": 0.03125
+    },
+    "bbeh_shuffled_objects": {
+     "answered_by_a_kept_procedure": 20,
+     "draft_correct": 19,
+     "draft_interval": [
+      0.7639,
+      0.9911
+     ],
+     "gained": 1,
+     "kept_correct": 20,
+     "kept_interval": [
+      0.8389,
+      1.0
+     ],
+     "lost": 0,
+     "requests": 20,
+     "two_sided_p": 1.0
+    }
+   },
+   "draft_correct": 33,
+   "draft_interval": [
+    0.6805,
+    0.9125
+   ],
+   "gained": 7,
+   "kept_correct": 40,
+   "kept_interval": [
+    0.9124,
+    1.0
+   ],
+   "lost": 0,
+   "requests": 40,
+   "two_sided_p": 0.015625
+  }
+ },
+ "dropped": {},
+ "pooled": {
+  "answered_by_a_kept_procedure": 40,
+  "draft_correct": 33,
+  "draft_interval": [
+   0.6805,
+   0.9125
+  ],
+  "gained": 7,
+  "kept_correct": 40,
+  "kept_interval": [
+   0.9124,
+   1.0
+  ],
+  "lost": 0,
+  "requests": 40,
+  "two_sided_p": 0.015625
+ }
+}
