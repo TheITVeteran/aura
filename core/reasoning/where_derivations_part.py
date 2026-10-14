@@ -11,6 +11,9 @@ The crux is then settled by the strongest check that applies:
 
 * a quantity, by a program in the sandbox computing the settling question
   (core/brain/executable_reasoning.py), matched to the side whose number it is;
+* a search told as a story, by the whole question written as constraints and
+  solved by her engine (core/reasoning/written_as_constraints.py): a unique
+  solution that is one derivation's answer settles the point for that side;
 * anything else, first by her corpus (core/knowledge/local_corpus.py): the
   passages found for the settling question are read for which side they
   support;
@@ -165,15 +168,22 @@ Ask = Callable[[str], Awaitable[str]]
 Compute = Callable[[str], Awaitable[str | None]]
 Lookup = Callable[[str], Awaitable[list[str]]]
 Same = Callable[[str, str], bool]
+Formalize = Callable[[str], Awaitable[str | None]]
+
+
+async def _no_formalization(question: str) -> str | None:
+    return None
 
 
 async def settle(question: str, *, derive: Derive, ask: Ask, compute: Compute, lookup: Lookup,
-                 same: Same) -> Settled:
+                 same: Same, formalize: Formalize = _no_formalization) -> Settled:
     """One question, one stage at a time: derive twice; on disagreement name the crux, settle it, derive again.
 
     ``derive(question, evidence, sampled)`` is her derivation; ``ask`` a short
     closed-channel request; ``compute`` the sandbox's value for a question;
-    ``lookup`` her corpus's passages; ``same`` whether two answers agree.
+    ``lookup`` her corpus's passages; ``same`` whether two answers agree;
+    ``formalize`` the engine's unique answer to the whole question written as
+    constraints, in the derivations' answer form, or None.
     """
     greedy = await derive(question, "", False)
     sampled = await derive(question, "", True)
@@ -192,6 +202,13 @@ async def settle(question: str, *, derive: Derive, ask: Ask, compute: Compute, l
         side = side_of_value(value or "", crux)
         if side:
             crux.settled, crux.how, crux.detail = side, "computed in the sandbox", f"The computed value: {value}"
+    if not crux.settled:
+        solved = await formalize(question)
+        side = ("first" if solved and same(solved, greedy.answer)
+                else "second" if solved and same(solved, sampled.answer) else None)
+        if side:
+            crux.settled, crux.how = side, "solved as constraints by her engine"
+            crux.detail = f"Written as constraints, the problem has exactly one solution, whose answer is {solved}."
     if not crux.settled:
         passages = await lookup(crux.question)
         if passages:

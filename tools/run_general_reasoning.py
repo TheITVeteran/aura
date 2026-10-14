@@ -17,14 +17,18 @@ is decoded for every question that reaches it, in fixed groups
 4. program: for each crux whose sides state different numbers, her program
    for the settling question (core/brain/executable_reasoning.py's request),
    run in the symbolic sandbox, its printed value matched to a side.
-5. reading: for each crux still open, the passages her live lookup finds for
+5. formal: for each crux still open, the whole question written as constraints
+   for her engine (core/reasoning/written_as_constraints.py), run in the
+   sandbox, with one repair round; a unique solution that is one
+   derivation's answer settles the point for that side.
+6. reading: for each crux still open, the passages her live lookup finds for
    the settling question (core/knowledge/corpus_grounding.py), read for the
    side they support.
-6. alone: for each crux still open, the settling question derived greedy and
+7. alone: for each crux still open, the settling question derived greedy and
    sampled on its own; each reply read for its side; both must agree.
-7. final: the whole question again, greedy, with the settled claim given to
+8. final: the whole question again, greedy, with the settled claim given to
    her as a skill-result block, the way her runtime gives evidence.
-8. consistency: further sampled derivations until the run's decoded tokens
+9. consistency: further sampled derivations until the run's decoded tokens
    per question match mechanism A's; the most common answer wins, ties to
    the greedy answer.
 
@@ -57,7 +61,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 GR = Path("~/.aura/benchmarks/gr").expanduser()
-STAGES = ("greedy", "sampled", "crux", "program", "reading", "alone", "final", "consistency")
+STAGES = ("greedy", "sampled", "crux", "program", "formal", "reading", "alone", "final", "consistency")
 #: The BBEH tasks no kept procedure answers and none was written for (G09 attempts 1 and 2).
 BBEH_SOFT = ("bbeh_boardgame_qa", "bbeh_causal_understanding", "bbeh_disambiguation_qa", "bbeh_hyperbaton",
              "bbeh_linguini", "bbeh_movie_recommendation", "bbeh_nycc", "bbeh_sarc_triples", "bbeh_spatial_reasoning",
@@ -130,6 +134,18 @@ def answer_of(benchmark: str, text: str) -> str:
     from tools.run_g09_organ import _bbeh_answer
 
     return " ".join(_bbeh_answer(text).split()).casefold()
+
+
+def answer_line_of(benchmark: str, line: str) -> str:
+    """The answer an engine's ANSWER line gives, in the benchmark's answer form."""
+    line = str(line or "").strip()
+    if benchmark == "mmlu_pro":
+        found = re.findall(r"\(?\b([A-J])\b\)?", line)
+        return found[0] if len(found) == 1 else ""
+    if benchmark == "musr":
+        number = re.search(r"\d+", line)
+        return number.group(0) if number else ""
+    return " ".join(line.split()).casefold()
 
 
 def correct(benchmark: str, text: str, truth: str) -> bool:
@@ -331,6 +347,58 @@ def main() -> int:  # noqa: C901 - one stage after another, each short
                     crux = cruxes[key]
                     crux.settled, crux.how, crux.detail = side, "computed in the sandbox", f"The computed value: {value}"
 
+        if last >= STAGES.index("formal"):
+            from core.learning.procedures_from_solved_examples import _mechanisms_directory, _mechanisms_prelude
+            from core.reasoning.written_as_constraints import (
+                Outcome,
+                formalization_request,
+                parse_outcome,
+                repair_request,
+            )
+
+            def executed(stage: str, key: str) -> dict[str, Any]:
+                record = rows.get(stage, key)
+                if record is not None and "outcome" not in record:
+                    blocks = extract_code_blocks(record["public_text"])
+                    if len(blocks) == 1:
+                        ran = asyncio.run(sandbox.run(blocks[0], prelude=_mechanisms_prelude(),
+                                                      extra_read_paths=(_mechanisms_directory(),)))
+                        outcome = parse_outcome(record["public_text"], ran.stdout,
+                                                "" if ran.ok else (ran.stderr or ran.traceback or "the run failed"))
+                    else:
+                        # A declining reply is read as declining before any error is.
+                        outcome = parse_outcome(record["public_text"], "", f"the reply has {len(blocks)} code blocks")
+                    record["outcome"] = outcome.__dict__
+                    record["program"] = blocks[0] if len(blocks) == 1 else ""
+                    rows.put(stage, key, record)
+                return record or {}
+
+            open_keys = [k for k, c in cruxes.items() if not c.settled]
+            run("formal", [(k, user(formalization_request(by_id[k]["request"]))) for k in open_keys])
+            again = []
+            for key in open_keys:
+                first = executed("formal", key)
+                outcome = first.get("outcome") or {}
+                if not outcome.get("declined") and not (outcome.get("solutions") == 1 and outcome.get("answer")):
+                    again.append((key, user(repair_request(by_id[key]["request"], first.get("program", ""),
+                                                           Outcome(**outcome)))))
+            run("formal_repair", again)
+            for key in open_keys:
+                last_record = executed("formal_repair", key) if rows.get("formal_repair", key) else \
+                    executed("formal", key)
+                outcome = last_record.get("outcome") or {}
+                if outcome.get("solutions") != 1 or not outcome.get("answer"):
+                    continue
+                solved = answer_line_of(args.benchmark, outcome["answer"])
+                first, second = replies(key)
+                side = ("first" if solved and _same(solved, answer_of(args.benchmark, first)) else
+                        "second" if solved and _same(solved, answer_of(args.benchmark, second)) else None)
+                if side:
+                    crux = cruxes[key]
+                    crux.settled, crux.how = side, "solved as constraints by her engine"
+                    crux.detail = (f"Written as constraints, the problem has exactly one solution, whose answer is "
+                                   f"{outcome['answer']}.")
+
         if last >= STAGES.index("reading"):
             from core.knowledge.corpus_grounding import corpus_grounding_for
 
@@ -376,8 +444,8 @@ def main() -> int:  # noqa: C901 - one stage after another, each short
                 key = task["id"]
                 greedy, sampled_record = rows.get("greedy", key), rows.get("sampled", key)
                 spent = greedy["generated_tokens"] + sampled_record["generated_tokens"]
-                for stage in ("crux", "program", "reading", "alone_greedy", "alone_sampled", "alone_greedy_reading",
-                              "alone_sampled_reading", "final"):
+                for stage in ("crux", "program", "formal", "formal_repair", "reading", "alone_greedy", "alone_sampled",
+                              "alone_greedy_reading", "alone_sampled_reading", "final"):
                     spent += (rows.get(stage, key) or {}).get("generated_tokens", 0)
                 final = rows.get("final", key) if key in settled else None
                 text = final["public_text"] if final and answer_of(args.benchmark, final["public_text"]) \

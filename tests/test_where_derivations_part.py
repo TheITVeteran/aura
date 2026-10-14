@@ -116,3 +116,19 @@ def test_the_crux_and_readings_parse_only_when_they_say_what_is_needed() -> None
     assert parse_reading("FIRST or SECOND") is None
     assert side_of_value("150", crux) == "second" and side_of_value("130", crux) is None
     assert side_of_value("120 or 150", crux) is None
+
+
+@pytest.mark.asyncio
+async def test_a_search_told_as_a_story_is_settled_by_its_unique_solution() -> None:
+    crux = "FIRST: Ann sits left of Bo\nSECOND: Bo sits left of Ann\nQUESTION: Who sits on the left?"
+    q = "Who is leftmost? (A) Ann (B) Bo"
+    answers = {(q, False, False): Derivation("A", "Ann", 300), (q, False, True): Derivation("B", "Bo", 300),
+               (q, True, False): Derivation("B", "Bo, as solved", 200)}
+    calls, kw = engines(answers=answers, crux=crux, passages=["irrelevant"], readings=["FIRST"])
+
+    async def formalize(question):
+        return "B"
+
+    out = await settle(q, formalize=formalize, **kw)
+    assert out.crux.settled == "second" and out.crux.how.startswith("solved as constraints") and out.answer == "B"
+    assert not calls["lookup"] and "exactly one solution" in calls["derive"][-1][1]
