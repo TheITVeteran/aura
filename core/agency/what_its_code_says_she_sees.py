@@ -215,6 +215,13 @@ def what_its_code_says_she_sees(run: Any, moves: Any, hers: Any, meeting: Any, a
         hers_seen = [t for t in getattr(moves, "things", {}).values() if int(t.kind) == mine[0]]
         if len(hers_seen) == 1:
             hers.seen_to_be_her(hers_seen[0], at, f"its code draws me in {world.hers.drawn_in}")
+            follows = tuple(bool(axis) for axis in (getattr(world.hers, "follows_pointer", None) or (False, False)))
+            if any(follows):
+                # Its code puts her where the pointer is: she is played with the pointer from the first picture, and her
+                # play goes on testing that it follows (core/agency/what_follows_the_pointer.py). Offline 2026-10-13 a
+                # ball fell three times while a paddle its code puts under the mouse was being tried with the mouse.
+                hers.follows_pointer, hers.follows_along = True, follows
             if tell is not None:
-                tell("Its code says which one is me; I'll check it answers my keys.", "code says me")
+                tell("Its code says which one is me, and that it goes where the mouse goes." if any(follows) else
+                     "Its code says which one is me; I'll check it answers my keys.", "code says me")
     return matched

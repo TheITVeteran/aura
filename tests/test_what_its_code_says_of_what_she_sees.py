@@ -111,3 +111,27 @@ def test_a_key_her_play_took_for_a_lift_is_a_way_to_go_where_its_code_paces_her_
         assert choosing.lifts == ["up"] and "down" not in choosing.ways
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_a_body_its_code_puts_under_the_pointer_is_played_with_the_pointer_from_the_first_picture():
+    """Offline 2026-10-13 on Bounce a ball fell three times while a paddle its code puts under the mouse was being
+    tried with the mouse."""
+    from core.agency.which_one_answers_to_her import WhichIsHers
+
+    bounce = _read("bounce")
+    assert bounce.hers.follows_pointer == (True, False)
+    guide = SimpleNamespace(world_its_code_makes=bounce, stage_in_her_picture=None)
+    paddle = SimpleNamespace(number=3, kind=1, x=100.0, y=145.0)
+    moves = SimpleNamespace(shape=(160, 240), kinds=[_kind(0, (255, 255, 255)), _kind(1, (245, 166, 35))],
+                            things={3: paddle})
+    hers, said = WhichIsHers(), []
+    what_its_code_says_she_sees(None, moves, hers, WhatMeetingDoes(), 1.0, lambda line, once: said.append(line), guide)
+    assert hers.number == 3 and hers.follows_pointer and hers.follows_along == (True, False)
+    assert "goes where the mouse goes" in said[-1]
+    # Where its code steers her body by keys, nothing is said of the pointer.
+    paint, hers = _read("paint"), WhichIsHers()
+    me = SimpleNamespace(number=7, kind=1, x=120.0, y=90.0)
+    what_its_code_says_she_sees(None, SimpleNamespace(shape=(160, 240), kinds=[_kind(1, (242, 242, 242))], things={7: me}),
+                                hers, WhatMeetingDoes(), 1.0, None, SimpleNamespace(world_its_code_makes=paint,
+                                                                                    stage_in_her_picture=None))
+    assert hers.number == 7 and not hers.follows_pointer
