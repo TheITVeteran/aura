@@ -297,6 +297,9 @@ class InteriorityService:
         self._census_every = 25
         self._last: Arbitrated | None = None
         self._last_frame: AppraisalFrame | None = None
+        #: Her last read of whoever a turn was with, for what reads how
+        #: they are faring (core/phases/learning_phase.py).
+        self.last_other: OtherEstimate | None = None
         self._last_activations: tuple[Activation, ...] = ()
         self._ticks = 0
         self._applied = 0
@@ -395,6 +398,7 @@ class InteriorityService:
             self._ticks += 1
             self._last = state
             self._last_frame = frame
+            self.last_other = other
             self._last_activations = tuple(activations)
 
         # Leave an eligibility trace for every faculty that fired, so an

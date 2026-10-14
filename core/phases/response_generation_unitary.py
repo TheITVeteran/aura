@@ -1226,9 +1226,6 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
         rolling_summary = " ".join(
             str(getattr(state.cognition, "rolling_summary", "") or "").split()
         )[:260]
-        current_objective = " ".join(
-            str(getattr(state.cognition, "current_objective", "") or "").split()
-        )[:160]
         continuity = dict(state.cognition.modifiers.get("continuity_obligations", {}) or {})
         contract = state.response_modifiers.get("response_contract", {}) or {}
         requires_search = bool(self._response_contract_attr(contract, "requires_search", False))
@@ -1261,15 +1258,6 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
             or requires_biographical_grounding
             or requires_reasoned_defense
         )
-        last_skill = self._resolve_skill_name(state.response_modifiers.get("last_skill_run", ""))
-        skill_line = ""
-        if last_skill and self._current_turn_targets_skill(
-            state,
-            current_objective,
-            last_skill,
-            contract=contract,
-        ):
-            skill_line = f"Last active skill: {last_skill}. Narrate it naturally if relevant."
         # Nothing here says who she is, how to talk, or what she feels. That
         # is in her weights and on her residual stream, and a system text is
         # not dispatched on her turns (core/brain/what_she_is_given.py). What
@@ -1303,18 +1291,12 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
             parts.append(
                 "Priority recalled context:\n"
                 + "\n".join(f"  - {item}" for item in recalled_context)
-                + "\nUse recalled context directly when the user asks what you remember, what they said before, or how continuity persists."
             )
         if needs_continuity_context and user_model and "balanced" not in user_model.lower():
             parts.append(f"User context: {user_model}")
         stance_directive = self._stance_directive(state)
         if stance_directive:
             parts.append(stance_directive)
-        if requires_reasoned_defense:
-            parts.append(
-                "When the user asks why or how I know, I should expose the basis of the thought: "
-                "memory, evidence, live state, values, active focus, or relationship context."
-            )
         try:
             from core.runtime.conversation_support import build_conversational_context_blocks
 
@@ -1333,8 +1315,6 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
                 severity="error",
             )
             logger.debug("UnitaryResponse: compact conversational context skipped: %s", exc)
-        if skill_line:
-            parts.append(skill_line)
         # A turn that measures what these lines do leaves some of them out.
         # See core/brain/aura_persona.py.
         from core.brain.aura_persona import compact_lines_kept

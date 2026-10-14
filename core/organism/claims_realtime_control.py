@@ -542,6 +542,9 @@ def _visual_motion_claims() -> tuple:
         _frame_time_invariant,
     )
     from core.perception.learned_tracking.contracts import _tracking_visibility_invariant
+    from core.perception.learned_tracking.corrections_while_points_keep_moving import (
+        _visible_correction_invariant,
+    )
     from core.perception.learned_tracking.points_for_the_motion_eyes import (
         _learned_point_capture_invariant,
     )
@@ -612,6 +615,9 @@ def _visual_motion_claims() -> tuple:
         ("learned_points_keep_their_capture", "core/perception/learned_tracking/points_for_the_motion_eyes.py",
          "tests/test_learned_points_reach_the_motion_eyes.py", lambda: _learned_point_capture_invariant() == (),
          "Learned point measurements reach actual motion support in working coordinates; other captures and hidden predictions cannot extend a visible path."),
+        ("late_points_need_visible_transport", "core/perception/learned_tracking/corrections_while_points_keep_moving.py",
+         "tests/test_learned_corrections_do_not_hold_up_visible_tracking.py", lambda: _visible_correction_invariant() == (),
+         "Late learned positions reach the current view only through retained actual captures and fresh correspondence; expired or reset history supplies no correction."),
         ("an_ending_after_reset_needs_new_activity", "core/skills/a_new_attempt_must_be_seen.py",
          "tests/test_a_retry_restarts_the_page_and_observes_a_new_attempt.py", lambda: _new_attempt_invariant() == (),
          "A new attempt requires current activity after reset; an old capture or another reading of its ending supplies no completed run."),

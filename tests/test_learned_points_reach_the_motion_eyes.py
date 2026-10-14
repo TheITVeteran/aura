@@ -112,6 +112,7 @@ def test_the_actual_factory_keeps_the_model_on_its_worker_and_out_of_the_public_
     monkeypatch.setenv('AURA_PLAY_POINT_BACKEND', 'online_tapir')
     monkeypatch.setenv('AURA_PLAY_POINT_WEIGHTS', '/invented-verified-weights')
     monkeypatch.setenv('AURA_PLAY_POINT_DEVICE', 'cpu')
+    monkeypatch.setenv('AURA_PLAY_POINT_MODE', 'direct')
     loaded = []
 
     def load(name, weights, *, device):

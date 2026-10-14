@@ -941,7 +941,14 @@ def _live_mind_generation_controls(
 
     temperature = 0.58
     top_p = 0.88
-    steering_alpha = 0.0
+    # Her state reaches the forward pass on a person's turn at the strength the
+    # loaded checkpoint has earned (core/consciousness/fusion_certificate.py),
+    # which is zero until the worker has reported a certificate that holds. The
+    # hook stands down by itself when she is at neutral, so asking for all of
+    # what is earned steers only a turn in which she feels something.
+    from core.consciousness.fusion_certificate import earned_on_the_worker
+
+    steering_alpha = earned_on_the_worker()
     recurrent_loops = 1
 
     if curiosity >= 0.45:
@@ -964,9 +971,8 @@ def _live_mind_generation_controls(
         temperature -= 0.02
 
     if _turn_needs_undistorted_computation(user_message):
-        # Determinate computation also uses one clean forward pass. Residual
-        # steering is already neutral for every user-facing decode until it
-        # earns model-specific no-regression authority.
+        # Determinate computation uses one clean forward pass with no residual
+        # steering: what is being worked out does not depend on how she feels.
         return {
             "temperature": round(min(temperature, 0.30), 4),
             "top_p": round(min(top_p, 0.90), 4),

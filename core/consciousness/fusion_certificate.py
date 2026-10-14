@@ -74,6 +74,8 @@ __all__ = [
     "load_certificates",
     "write_certificate",
     "steering_basis_sha256",
+    "earned_on_the_worker",
+    "worker_reported",
 ]
 
 #: New records bind model and vector basis. Unbound historical records remain
@@ -370,6 +372,35 @@ def certified_alpha(model_identity: str, *, basis_sha256: str = "", root: Path |
         )
         return 0.0
     return max(0.0, min(1.0, float(certificate.alpha)))
+
+
+#: What the worker last said its loaded checkpoint and attached vector basis
+#: have earned. The certificate is looked up where the hooks are, in the worker;
+#: her mind decides what to ask for in this process, and a request has to be the
+#: amount the worker will apply, because two receipts compare them exactly.
+_EARNED_ON_THE_WORKER: float = 0.0
+
+
+def worker_reported(alpha: Any) -> float:
+    """Keep what the worker reported it has earned. Anything unreadable is zero."""
+    global _EARNED_ON_THE_WORKER
+    try:
+        earned = float(alpha)
+    except (TypeError, ValueError):
+        earned = 0.0
+    if isinstance(alpha, bool) or not math.isfinite(earned):
+        earned = 0.0
+    earned = max(0.0, min(1.0, earned))
+    if earned != _EARNED_ON_THE_WORKER:
+        logger.info("🎚️ The worker reports %.3f of steering earned for a person's turn (was %.3f).",
+                    earned, _EARNED_ON_THE_WORKER)
+    _EARNED_ON_THE_WORKER = earned
+    return _EARNED_ON_THE_WORKER
+
+
+def earned_on_the_worker() -> float:
+    """How much steering a person's turn may ask for. Zero until a worker has said."""
+    return _EARNED_ON_THE_WORKER
 
 
 def symmetric_kl(left: Any, right: Any, *, floor: float = 1e-12) -> float:

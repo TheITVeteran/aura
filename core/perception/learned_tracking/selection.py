@@ -15,6 +15,9 @@ _WEIGHTS = declare('AURA_PLAY_POINT_WEIGHTS', kind=FlagKind.STRING, default='',
 _DEVICE = declare('AURA_PLAY_POINT_DEVICE', kind=FlagKind.STRING, default='cpu',
     description='Explicit compute device for the selected numerical point tracker',
     owner='core/perception/learned_tracking/selection.py')
+_MODE = declare('AURA_PLAY_POINT_MODE', kind=FlagKind.STRING, default='correcting',
+    description='Use learned background corrections or direct learned point observation',
+    owner='core/perception/learned_tracking/selection.py')
 
 
 def selected_motion_eyes(kinds: list[Any] | None = None) -> Any:
@@ -29,8 +32,20 @@ def selected_motion_eyes(kinds: list[Any] | None = None) -> Any:
     from core.perception.learned_tracking.models import load_backend
     from core.perception.learned_tracking.points_for_the_motion_eyes import PointsForMotionEyes
 
-    backend = load_backend(name, Path(_WEIGHTS.value()), device=_DEVICE.value())
-    return WhatMoves(kinds=kinds, points=PointsForMotionEyes(backend))
+    weights, device = Path(_WEIGHTS.value()), _DEVICE.value()
+
+    def teacher() -> Any:
+        return PointsForMotionEyes(load_backend(name, weights, device=device))
+
+    if _MODE.value() == 'direct':
+        return WhatMoves(kinds=kinds, points=teacher())
+    if _MODE.value() != 'correcting':
+        raise ValueError('point observation needs a supported scheduling mode')
+    from core.perception.learned_tracking.corrections_while_points_keep_moving import (
+        CorrectionsWhilePointsMove,
+    )
+
+    return WhatMoves(kinds=kinds, points=CorrectionsWhilePointsMove(teacher))
 
 
 def learned_points_requested() -> bool:

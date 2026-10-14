@@ -286,7 +286,31 @@ def _harvest_regard(store: Any, ledger: RelationalLedger) -> int:
                 if name:
                     regards[name] = _number(liking)
     ledger.notes.note_regards(regards)
-    return len(regards)
+    return len(regards) + _harvest_care(_field(store, "care", default=None), ledger)
+
+
+def _harvest_care(care: Any, ledger: RelationalLedger) -> int:
+    """What she cares about becomes what is at stake, and how it fared what it did to that.
+
+    Each thing is noted under its key and under the name a turn would use
+    for it. A thing whose fate she has learned carries that as what the last
+    news did for it, so an event about it is appraised as going with or
+    against something she holds.
+    """
+    read = getattr(care, "stakes", None)
+    if not callable(read):
+        return 0
+    cares: dict[str, float] = {}
+    for key, stake in dict(read()).items():
+        key = _text(key, 160)
+        names = [key, key.split(":", 1)[1]] if ":" in key else [key]
+        fate = care.fate(key) if callable(getattr(care, "fate", None)) else None
+        for name in filter(None, names):
+            cares[name] = _number(stake)
+            if fate is not None:
+                ledger.notes.note_goal_delta(name, _number(fate))
+    ledger.notes.note_cares(cares)
+    return len(cares)
 
 
 SOURCES: tuple[tuple[tuple[str, ...], Callable[[Any, RelationalLedger], int], str], ...] = (
