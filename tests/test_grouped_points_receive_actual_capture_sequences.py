@@ -173,7 +173,7 @@ class WindowTracker:
 def test_window_queries_admit_new_texture_and_protect_continuing_moving_marks(monkeypatch, moving):
     from core.perception.learned_tracking import points_for_the_motion_eyes as bridge
 
-    monkeypatch.setattr(bridge, '_new_points', lambda *_args: [(20., 20.), (30., 20.), (20., 30.), (30., 30.)])
+    monkeypatch.setattr(bridge, '_new_marks', lambda *_args: [(20., 20.), (30., 20.), (20., 30.), (30., 30.)])
     pixels = np.random.default_rng(45).integers(30, 230, (64, 80, 3), dtype=np.uint8)
     tracker = WindowTracker(moving=moving)
     points = PointsForMotionEyes(tracker, limit=4)

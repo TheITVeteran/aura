@@ -475,9 +475,16 @@ def _travel_turn_claims() -> tuple:
 def _bounded_pixel_claims() -> tuple:
     from core.perception.boundary_support_for_translation import _bounded_edge_samples_invariant
     from core.perception.learned_tracking.continuity_backend import _continuity_invariant
+    from core.perception.learned_tracking.points_for_the_motion_eyes import (
+        _query_lifetime_invariant,
+    )
     from core.runtime.optional_compute import _optional_headroom_invariant
 
     return (
+        ('queries_keep_their_first_observation_and_live_budget',
+         'core/perception/learned_tracking/points_for_the_motion_eyes.py',
+         'tests/test_original_continuity_points.py', lambda: _query_lifetime_invariant() == (),
+         'Point queries receive a first observation before replacement; replenishment uses the actual live query count.'),
         ('continuity_points_need_fresh_unique_pixels', 'core/perception/learned_tracking/continuity_backend.py',
          'tests/test_original_continuity_points.py', lambda: _continuity_invariant() == (),
          'Original point tracking retains bounded appearance memory; absent or competing current patches supply no visible motion.'),

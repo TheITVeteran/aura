@@ -86,3 +86,63 @@ appears. The dated record above is retained with this correction.
 After that correction, 19 resource tests passed in 3.32 seconds. Governance
 lint returned to its 116 existing regressions; `optional_compute.py` is absent
 from the offender list. Log: `/private/tmp/codex-steer/optional-permit-gov-1014.log`.
+
+### Recorded Flash pixels and query allocation, October 14
+
+The first committed replacement at `48c35d520` failed an owned original-game
+9 pixel replay. At 192 queries it supplied player pose in zero of 96 frames;
+the existing source tracker supplied 59. Median whole-observer times were
+142.986 and 52.706 ms respectively. The generated 64-point translation
+result did not carry to that scene. The default stayed classical.
+
+The replacement now retains Aura's original RGB subpixel correspondence
+checks for uninterrupted motion and uses anchor matching for recovery.
+A common coarser scale covers sampling blur with the same forward/reverse
+checks. Continuing visible identity can survive a duplicate elsewhere;
+reacquisition after absence still rejects competing current matches.
+
+The point bridge allocated corners in source cells while object support
+was measured in working cells. Query allocation now uses the working
+geometry for every numerical backend. A seeded or warming query set gets
+its first observation before replacement. Replenishment uses one eighth
+of the actual query count, rather than one eighth of the configured ceiling.
+That distinction matters when a 192-query request finds a small patch's
+small query set. It has real pixel and lifecycle regression tests.
+
+Recovery starts further patch searches only within a 12 ms allowance and
+rotates pending queries between frames. One admitted operation may finish
+after the allowance; its actual elapsed time is still returned. This is
+bounded admission, not a hard real-time guarantee. The source observer
+and actual play-control deadlines remain separate.
+
+With the corrected working geometry, the same replay supplied spread player
+point support in 94 of 96 frames, against 73 for the existing tracker, and
+matched its 59 pose-supported frames. The final budgeted repeat retained
+those counts. At 192 points its median whole-observer cost was 91.846 ms
+against 63.667 ms for the existing path. The additional continuity path
+is therefore optional while its cost is improved. The original unweighted
+selection uses 192 slots; learned backends retain their measured 64-slot
+setting and now share the same coordinate allocation rules.
+
+These are recorded JPEG frames with a diagnostic source/human colour label
+used only after observation. No tracker received that label. This replay
+measures support and cost; it tests no decisions, physical inputs or wins.
+The reference cadence is subsampled. Other model work was present on the
+host, so these measurements do not establish an idle-host timing limit.
+
+The final focused suites passed 196 tests in 24.25 seconds. A registered
+canary covers first observation and the actual live-query replacement
+budget. Neither this replay nor that canary closes presentation readiness.
+
+- Initial replacement: `/private/tmp/codex-steer/original-continuity-pixel-comparison-1014/summary.json`
+- Subpixel-only attempt: `/private/tmp/codex-steer/named-subpixel-pixel-comparison-1014/summary.json`
+- Working geometry: `/private/tmp/codex-steer/working-basis-point-pixel-comparison-1014/summary.json`
+- Query lifecycle: `/private/tmp/codex-steer/query-lifecycle-pixel-comparison-1014/summary.json`
+- Bounded recovery: `/private/tmp/codex-steer/budgeted-recovery-pixel-comparison-1014/summary.json`
+
+Final query checkpoint gates: Ruff passed after import formatting. Smoke
+passed 165 tests with one skip in 48.08 seconds, and the focused query
+fixtures passed 23 tests in 4.39 seconds. Writing, changed-method size,
+layering, dependency graph, compile and lint passed. The unchanged global
+size-ratchet debt remains open. Gate log:
+`/private/tmp/codex-steer/named-query-final-gates-1014.log`.

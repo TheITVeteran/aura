@@ -44,10 +44,11 @@ def selected_motion_eyes(kinds: list[Any] | None = None) -> Any:
         if name == 'continuity_points':
             from core.perception.learned_tracking.continuity_backend import ContinuityBackend
 
-            backend = ContinuityBackend()
+            backend = ContinuityBackend(max_points=192)
         else:
             backend = load_backend(name, weights, device=device)
-        return PointsForMotionEyes(backend, pixel_budget=pixels, fallback_when_busy=fallback)
+        return PointsForMotionEyes(backend, limit=192 if name == 'continuity_points' else 64,
+                                  pixel_budget=pixels, fallback_when_busy=fallback)
 
     mode = _MODE.value()
     if mode not in ('direct', 'correcting'):

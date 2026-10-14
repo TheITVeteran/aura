@@ -35,7 +35,7 @@ class InventedTracker:
 
 @pytest.fixture
 def images(monkeypatch):
-    monkeypatch.setattr(bridging, '_new_points', lambda *_args: [(32., 32.), (48., 32.), (32., 48.), (48., 48.)])
+    monkeypatch.setattr(bridging, '_new_marks', lambda *_args: [(32., 32.), (48., 32.), (32., 48.), (48., 48.)])
     source = np.random.default_rng(44).integers(30, 230, (96, 128, 3), dtype=np.uint8)
     return source, np.zeros((48, 64, 3), np.uint8)
 

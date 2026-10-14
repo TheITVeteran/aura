@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.perception.learned_tracking.continuing_named_pixels import ContinuingNamedPixels
 from core.perception.learned_tracking.contracts import (
     PointResult,
     PointSeed,
@@ -47,17 +48,21 @@ class ContinuityBackend:
     name = 'continuity_points'
 
     def __init__(self, *, max_points: int = 64, patch_radius: int = 4, search_radius: int = 16,
-                 hidden_frames: int = 12, longest_gap: float = 1.) -> None:
+                 hidden_frames: int = 12, longest_gap: float = 1., recovery_budget_s: float = .012) -> None:
         if (any(type(v) is not int for v in (max_points, patch_radius, search_radius, hidden_frames))
                 or not 1 <= max_points <= 384 or not 2 <= patch_radius <= 8
                 or not 2 <= search_radius <= 64 or not 1 <= hidden_frames <= 32
-                or isinstance(longest_gap, bool) or not math.isfinite(longest_gap) or not 0. < longest_gap <= 2.):
+                or any(not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v)
+                       for v in (longest_gap, recovery_budget_s))
+                or not 0. < longest_gap <= 2. or not 0. < recovery_budget_s <= .1):
             raise ValueError('continuity points require bounded memory and search')
         self.max_points, self.radius, self.search = max_points, patch_radius, search_radius
         self._anchor_radius = math.ceil(patch_radius * math.sqrt(2.)) + 1
         self.hidden_frames, self.longest_gap = hidden_frames, longest_gap
         self._previous: TrackingFrame | None = None
         self._memory: list[_Memory] = []
+        self._flow = ContinuingNamedPixels(max_points, longest_gap)
+        self._recovery_budget_s, self._recovery_cursor = recovery_budget_s, 0
 
     def _seed(self, frame: TrackingFrame, seed: PointSeed) -> _Memory:
         anchor = patch(frame.pixels, seed.x, seed.y, self._anchor_radius)
@@ -70,6 +75,7 @@ class ContinuityBackend:
             raise ValueError('continuity queries exceed their point budget')
         self._memory = [self._seed(frame, seed) for seed in seeds]
         self._previous = frame
+        self._flow.start(frame)
         return self._result(frame, {}, began, status='seeded')
 
     def _replace_queries(self, frame: TrackingFrame, replacements: dict[int, PointSeed]) -> None:
@@ -86,7 +92,7 @@ class ContinuityBackend:
             return None
         if float(np.max(memory.anchor.std(axis=(0, 1)))) < 5.:
             return None
-        templates = ((memory.anchor,) if memory.missing or np.array_equal(memory.anchor, memory.recent)
+        templates = ((memory.anchor,) if memory.missing or memory.recent is None or np.array_equal(memory.anchor, memory.recent)
                      else (memory.anchor, memory.recent))
         result = locate(frame.pixels, templates, predicted, search or self.search, radius=self.radius)
         if result is None:
@@ -139,16 +145,30 @@ class ContinuityBackend:
         if replacements:
             self._replace_queries(frame, replacements)
         old = tuple(m.place for m in self._memory)
-        measured = {}
-        for index, memory in enumerate(self._memory):
+        queries = {i: m.place for i, m in enumerate(self._memory)
+                   if (not replacements or i not in replacements) and not m.missing
+                   and m.seen_at == self._previous.at and m.anchor is not None
+                   and float(np.max(m.anchor.std(axis=(0, 1)))) >= 5.}
+        measured = self._flow.measure(frame, queries)
+        until = time.monotonic() + self._recovery_budget_s
+        order = tuple((self._recovery_cursor+i) % len(self._memory) for i in range(len(self._memory)))
+        for index in order:
+            memory = self._memory[index]
             if replacements and index in replacements:
                 continue
+            if index in measured:
+                continue
+            if time.monotonic() >= until:
+                break
+            self._recovery_cursor = (index+1) % len(self._memory)
             dt = frame.at-memory.seen_at
             predicted = tuple(p+v*dt for p, v in zip(memory.place, memory.velocity, strict=True))
             match = self._match(frame, memory, predicted)
             if match is not None:
                 measured[index] = match
         for index, predicted in self._group_searches(frame, measured, old).items():
+            if time.monotonic() >= until:
+                break
             match = self._match(frame, self._memory[index], predicted, search=4)
             if match is not None:
                 measured[index] = match
@@ -180,6 +200,7 @@ class ContinuityBackend:
 
     def close(self) -> None:
         self._previous, self._memory = None, []
+        self._flow.close()
 
 
 @invariant('perception.continuity_points_need_fresh_unique_pixels', scope='perception',

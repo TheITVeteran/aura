@@ -14,12 +14,11 @@ from scipy import ndimage
 
 from core.perception.learned_tracking.contracts import PointSeed, TrackingFrame
 from core.perception.picture_arithmetic import shrink
-from core.perception.points_before_the_picture_is_reduced import PointsBeforeReduction
+from core.perception.points_before_the_picture_is_reduced import PointsBeforeReduction, _new_marks
 from core.perception.points_that_keep_their_motion import (
     FollowingPoints,
     SeenPoint,
     _grey,
-    _new_points,
     _sample,
 )
 from core.runtime.optional_compute import OptionalComputeBusy
@@ -100,7 +99,7 @@ class PointsForMotionEyes(FollowingPoints):
         try:
             fresh = self._new_window_queries(source, grey)
             if not self._slots or fresh:
-                seeds = fresh or _new_points(grey, [], self.limit)
+                seeds = fresh or self._corner_queries(grey, [], self.limit)
                 if len(seeds) < 3:
                     self.points, self.status = (), 'insufficient visible texture'
                     self._at, self._previous_pixels = at, source.copy()
@@ -158,7 +157,8 @@ class PointsForMotionEyes(FollowingPoints):
         if not changed.any() or changed.mean() > .6:
             return []
         exposed = ndimage.maximum_filter(changed, 7)
-        corners = _new_points(grey, moving, min(1536, max(3 * self.limit, source.shape[0] * source.shape[1] // 64)))
+        corners = self._corner_queries(grey, moving,
+            min(1536, max(3 * self.limit, source.shape[0] * source.shape[1] // 64)), exposed)
         fresh = [(x, y) for x, y in corners if exposed[int(round(y)), int(round(x))]][:self.limit]
         return fresh if len(fresh) >= 3 else []
 
@@ -166,12 +166,15 @@ class PointsForMotionEyes(FollowingPoints):
         """Replace hidden or resting slots with currently exposed changing corners."""
         if self._previous_pixels is None or not callable(getattr(self._backend, '_replace_queries', None)):
             return {}
+        if not self._native_visible and self.status in ('seeded', 'warming'):
+            return {}
         changed = np.max(abs(source.astype(np.int16) - self._previous_pixels.astype(np.int16)), axis=2) > 12
         if not changed.any() or changed.mean() > .6:
             return {}
         exposed = ndimage.maximum_filter(changed, 7)
         continuing_motion = [p for p in self._native_visible.values() if math.hypot(p.x - p.old_x, p.y - p.old_y) >= .5]
-        candidates = _new_points(grey, continuing_motion, min(1536, max(3 * self.limit, source.shape[0] * source.shape[1] // 64)))
+        candidates = self._corner_queries(grey, continuing_motion,
+            min(1536, max(3 * self.limit, source.shape[0] * source.shape[1] // 64)), exposed)
         candidates = [(x, y) for x, y in candidates if exposed[int(round(y)), int(round(x))]]
         if not candidates:
             return {}
@@ -182,8 +185,15 @@ class PointsForMotionEyes(FollowingPoints):
                                 and math.hypot(point.x - point.old_x, point.y - point.old_y) < .5):
                 slots.append((point is not None, self._births[seed.number], index))
         slots.sort()
-        count = min(len(slots), len(candidates), max(1, self.limit // 8))
+        count = min(len(slots), len(candidates), max(1, len(self._slots) // 8))
         return {slot[2]: self._new_seed(*place, at) for slot, place in zip(slots[:count], candidates[:count], strict=True)}
+
+    def _corner_queries(self, grey: np.ndarray, occupied: list, budget: int,
+                        activity: np.ndarray | None = None) -> list[tuple[float, float]]:
+        """A query budget is shared in the geometry that measures object support."""
+        native, working = self._geometry[1:]
+        scale = working[1] / native[1], working[0] / native[0]
+        return _new_marks(ndimage.gaussian_filter(grey, .6), occupied, budget, scale, activity)
 
     def _publish(self, result: Any, grey: np.ndarray, shape: tuple[int, int], at: float) -> None:
         current: dict[int, SeenPoint] = {}
@@ -227,4 +237,25 @@ def _learned_point_capture_invariant() -> tuple:
     for changed in (replace(result, epoch=3), replace(result, frame_number=4),
                     replace(result, at=1.1), replace(result, shape=(21, 30))):
         assert not _same_capture(changed, frame)
+    return ()
+
+
+@invariant('perception.queries_keep_their_first_observation_and_live_budget', scope='perception',
+           owner='core/perception/learned_tracking/points_for_the_motion_eyes.py', observational=False)
+def _query_lifetime_invariant() -> tuple:
+    from core.perception.learned_tracking.continuity_backend import ContinuityBackend
+
+    pixels = np.full((64, 80, 3), 25, np.uint8)
+    texture = np.random.default_rng(942).integers(30, 230, (24, 24, 3), dtype=np.uint8)
+    pixels[20:44, 20:44] = texture
+    points = PointsForMotionEyes(ContinuityBackend(max_points=192), limit=192)
+    assert not points.see_source(pixels, pixels, 1.)
+    names = {s.number for s in points._slots}
+    moved = np.full_like(pixels, 25)
+    moved[20:44, 23:47] = texture
+    assert points.see_source(moved, moved, 1.1)
+    assert {s.number for s in points._slots} == names
+    replacements = points._new_texture_queries(pixels, _grey(pixels), 1.8)
+    assert len(replacements) <= max(1, len(points._slots)//8)
+    points.close()
     return ()
