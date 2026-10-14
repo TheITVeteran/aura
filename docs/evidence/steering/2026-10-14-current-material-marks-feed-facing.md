@@ -94,3 +94,42 @@ not changed here. Governance lint reports 123 existing regressions; its
 offender list contains none of this checkpoint's changed modules. No
 baseline was widened. Governance log:
 `/private/tmp/codex-steer/qualified-angle-governance-1014.log`.
+
+## Browser measurements at checkpoint 3283da356
+
+Two separate assigned-game 9 runs used the normal browser play entry with
+the default classical point observer. The frozen proof worktree was clean
+at `3283da356517d2e99833036870096df9f007df9f`. The first run took 136.385
+seconds and ended unread without a win. All 614 captured facing-binding
+decisions had no controlled body, so none used the new angular connection.
+Their median picture age was 0.19223 seconds.
+
+A longer diagnostic run took 193.598 seconds and reported one loss followed
+by an unread run. All 1,045 captured decisions still had no controlled
+body. Median picture age was 0.19224 seconds. Its observed pieces supplied
+3,159 angular phases across the pictures, but those measurements established
+no control identity. It produced visual identity numbers through 4,292;
+this count is evidence of proposal turnover, not a count of physical objects.
+
+No resident language-model route was configured. Optional visual helpers
+attempted admission and were refused by the existing exclusive G09 owner.
+No owner or runtime was stopped, and no model gate was bypassed. These runs
+are diagnostics, not the required ordinary desktop prompt demonstration.
+Native UI observation witnessed the intro and active game without adding
+inputs. Instrumentation recorded decisions and observed candidates; no
+game-private state supplied an action.
+
+Earlier red-car replay figures describe support for a diagnostically
+labelled red car. Its controlled-player role was not independently proven
+by that label. Those figures cannot establish player tracking or control.
+The program's visible instructions ask for bumping other cars into their
+matching spots; causal attribution remains necessary to identify the actor.
+
+During runner-source inspection, its static table of game URLs appeared.
+No held-out game was run or had its program, frames or mechanics inspected.
+Catalog-name blindness was therefore not preserved by that inspection;
+these results remain assigned-game diagnostics.
+
+- First browser run: `/private/tmp/codex-steer/current-heading-original9-classical-1014/results.json`
+- Detailed browser run: `/private/tmp/codex-steer/candidates-original9-classical-1014/results.json`
+- Detailed candidate measurements: `/private/tmp/codex-steer/candidates-original9-classical-1014/candidate-measurements.jsonl`

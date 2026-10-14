@@ -435,9 +435,15 @@ def _travel_turn_claims() -> tuple:
         _travel_turns_invariant,
     )
     from core.perception.orientation_from_continuing_marks import _angular_phase_invariant
+    from core.perception.texture_that_continues_when_outlines_join import (
+        _rotating_texture_invariant,
+    )
     from core.runtime.task_ownership import _unstarted_task_cleanup_invariant
 
     return (
+        ("rotating_texture_requires_measured_rigid_pose", "core/perception/texture_that_continues_when_outlines_join.py",
+         "tests/test_a_rotating_texture_keeps_its_visible_support.py", lambda: _rotating_texture_invariant() == (),
+         "A rotated texture proposal uses a current rigid pose, continuing owned marks and matching current pixels; translation alone cannot supply an unmeasured rotation."),
         ("angular_phase_requires_current_material_marks", "core/perception/orientation_from_continuing_marks.py",
          "tests/test_direction_can_follow_current_material_marks.py", lambda: _angular_phase_invariant() == (),
          "A current angular phase requires spread proper-rigid correspondence on the same visible point pose; stale, replaced or reflected geometry remains unknown."),

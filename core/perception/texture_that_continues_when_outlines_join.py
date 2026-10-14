@@ -19,9 +19,9 @@ from core.verify import invariant
 def parts_from_continuing_texture(picture: np.ndarray, inside: np.ndarray, *, left: int, top: int,
                                   things: list[Any], motions: dict, at: float, difference: float,
                                   proposals: int = 16) -> list[np.ndarray]:
-    """Keep bounded translated texture proposals with current spread-out owned marks.
+    """Keep bounded transformed texture proposals with current spread-out owned marks.
 
-    Translation and a one-pixel sampling neighbourhood must explain the
+    Measured motion and a one-pixel sampling neighbourhood must explain the
     actual colours. Three current named marks must belong to the resulting
     support. This observes a visible part, without certifying the full
     extent of an occluded or deformed body.
@@ -52,6 +52,8 @@ def could_continue(thing: Any, motions: dict, at: float) -> bool:
     every part of it, it changes nothing that is found (offline 2026-10-13: four thousand times a picture, a busy
     scene's things against its parts)."""
     motion = motions.get(thing.number)
+    if getattr(motion, 'rigid', None) is not None and not motion.has_rigid_pose():
+        return False
     born = getattr(thing, "born", None)
     if (born is None or not math.isfinite(born) or motion is None or born > motion.before
             or motion.before != thing.seen or motion.at != at
@@ -68,6 +70,8 @@ def could_continue(thing: Any, motions: dict, at: float) -> bool:
 def _supported_part(picture: np.ndarray, inside: np.ndarray, thing: Any, motion: Any,
                     left: int, top: int, at: float, difference: float) -> np.ndarray | None:
     born = getattr(thing, "born", None)
+    if getattr(motion, 'rigid', None) is not None and not motion.has_rigid_pose():
+        return None
     if (born is None or not math.isfinite(born) or motion is None or born > motion.before
             or motion.before != thing.seen or motion.at != at
             or not 0 < at - thing.seen <= .25 or motion.support < 3
@@ -86,12 +90,25 @@ def _supported_part(picture: np.ndarray, inside: np.ndarray, thing: Any, motion:
     if (round(right - ox), round(bottom - oy)) != (old.shape[1], old.shape[0]):
         return None
     h, w = inside.shape
-    x0, y0 = max(0, math.floor(ox + motion.dx - left - 1)), max(0, math.floor(oy + motion.dy - top - 1))
-    x1, y1 = min(w, math.ceil(right + motion.dx - left + 1)), min(h, math.ceil(bottom + motion.dy - top + 1))
+    if getattr(motion, 'rigid', None) is not None:
+        corners = motion.rigid.apply(np.asarray(((ox, oy), (right, oy), (ox, bottom), (right, bottom))))
+        low, high = corners.min(axis=0), corners.max(axis=0)
+    else:
+        low, high = np.asarray((ox, oy))+(motion.dx, motion.dy), np.asarray((right, bottom))+(motion.dx, motion.dy)
+    x0, y0 = max(0, math.floor(low[0]-left-1)), max(0, math.floor(low[1]-top-1))
+    x1, y1 = min(w, math.ceil(high[0]-left+1)), min(h, math.ceil(high[1]-top+1))
     if x0 >= x1 or y0 >= y1:
         return None
     rows, cols = np.indices((y1 - y0, x1 - x0))
-    sx, sy = cols + x0 + left - ox - motion.dx, rows + y0 + top - oy - motion.dy
+    locations = np.stack((cols+x0+left, rows+y0+top), axis=-1)
+    if getattr(motion, 'rigid', None) is not None:
+        source = motion.rigid.inverse(locations)-(ox, oy)
+    else:
+        source = locations-(ox+motion.dx, oy+motion.dy)
+    # Exact grid rotations acquire tiny floating-point offsets at image edges.
+    nearest = np.rint(source)
+    source = np.where(abs(source-nearest) < 1e-9, nearest, source)
+    sx, sy = source[..., 0], source[..., 1]
     own = _matching_texture(picture[y0:y1, x0:x1], inside[y0:y1, x0:x1], old, support, sx, sy, difference)
     if int(own.sum()) < .6 * int(support.sum()):
         return None
@@ -149,4 +166,33 @@ def _continuing_texture_invariant() -> tuple:
     unknown = parts_from_continuing_texture(picture, inside, left=0, top=0, things=[body], motions={},
                                            at=1.1, difference=40.)
     assert len(unknown) == 1 and unknown[0] is inside
+    return ()
+
+
+@invariant('perception.a_rotating_texture_needs_its_measured_rigid_pose', scope='perception',
+           owner='core/perception/texture_that_continues_when_outlines_join.py', observational=False)
+def _rotating_texture_invariant() -> tuple:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from core.perception.points_that_keep_their_motion import PointMotion
+    from core.perception.rigid_motion_from_named_points import RigidMotion
+
+    old = np.full((8, 12, 3), 240, np.uint8)
+    old[2:7, 1:4] = (20, 170, 230)
+    picture = np.full((30, 40, 3), 80, np.uint8)
+    picture[8:20, 12:20] = np.rot90(old, -1)
+    body = SimpleNamespace(number=1, size=96, born=0., seen=1., box=lambda: (10., 10., 22., 18.),
+                           patch=old, support=np.ones((8, 12), bool))
+    fit = RigidMotion(math.pi/2., (29., -2.), (0, 1, 2, 3), 0.)
+    starts = ((12., 12.), (19., 12.), (12., 16.), (19., 16.))
+    motion = PointMotion(-1., 0., .01, 4, 1., 1.1, (1, 2, 3, 4), tuple(map(tuple, fit.apply(starts))), fit)
+    inside = np.ones((30, 40), bool)
+    def observe(value):
+        return parts_from_continuing_texture(picture, inside, left=0, top=0, things=[body],
+                                             motions={1: value}, at=1.1, difference=40.)
+    found = observe(motion)
+    assert len(found) == 2 and found[0].sum() >= .95*96
+    assert np.array_equal(np.sum(found, axis=0), inside)
+    assert len(observe(replace(motion, rigid=None))) == 1
     return ()
