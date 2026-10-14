@@ -13,6 +13,11 @@ time it is needed, on a thread of its own so the event loop never waits on
 it, and only when the host has room: free memory of at least twice the
 weights, once for the weights and once for the pass. `AURA_EAR=off` leaves it
 unloaded, and then nothing is read.
+
+It does not load in the desktop's parent process, which keeps MLX on the CPU
+and leaves model work to the worker that owns the lane. So on the live
+desktop nothing is read by this yet: the same pass has to become a job of the
+cortex worker. A tool or a test in a process of its own runs it as written.
 """
 from __future__ import annotations
 
@@ -75,6 +80,16 @@ class ExpectsNext:
             path = self._where()
             if not self._has_room(path):
                 self._refused = "the host has no room for it"
+                logger.info("👂 Her fast model is not loaded for scoring: %s.", self._refused)
+                return False
+            import mlx.core as mx
+
+            if mx.default_device() != mx.gpu:
+                # The desktop's parent process keeps MLX on the CPU, and model
+                # work there belongs to the worker that owns the lane
+                # (core/runtime/desktop_boot_safety.py). Live, 13 October, this
+                # loaded there anyway and ground one core for minutes.
+                self._refused = "this process keeps MLX off the GPU"
                 logger.info("👂 Her fast model is not loaded for scoring: %s.", self._refused)
                 return False
             from mlx_lm import load

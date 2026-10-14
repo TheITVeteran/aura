@@ -518,3 +518,20 @@ def test_a_reading_still_under_way_is_waited_for(record, monkeypatch):
 
         if taking.of_this_turn in what_she_is_given.OF_THIS_TURN:
             what_she_is_given.OF_THIS_TURN.remove(taking.of_this_turn)
+
+
+def test_the_scorer_does_not_load_a_model_where_mlx_is_kept_off_the_gpu(monkeypatch):
+    """Live, 13 October: it loaded in the desktop's parent and ground one core on the CPU."""
+    import mlx.core as mx
+
+    from core.brain.llm.what_she_expects_next import ExpectsNext
+
+    if not HER_FAST_MODEL.exists():
+        pytest.skip("her fast model is not on this host")
+    monkeypatch.setattr(mx, "default_device", lambda: mx.cpu)
+    ear = ExpectsNext(HER_FAST_MODEL)
+    assert ear.score("Do you want to watch this with me?", ["I'd love to."]) == []
+    assert ear.status() == {"loaded": False, "refused": "this process keeps MLX off the GPU", "model": HER_FAST_MODEL.name}
+    # And with nothing scored, nothing is read and nothing is waited on twice.
+    reader = WhatItAsksOfHer(ear.score)
+    assert reader.heard("Do you want to watch this with me?").kind == ""
