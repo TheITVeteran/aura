@@ -97,6 +97,51 @@ def moving_inputs_in_trials(evidence: Any, *, least_speed: float) -> set[str]:
     return {key for key, count in repeated.items() if count >= 2}
 
 
+def response_by_travel_speed(evidence: Any) -> tuple[float, float]:
+    """Measure travel before averaging directions that may cancel each other.
+
+    The norm of an averaged velocity can describe a complete circle as
+    stationary. Separate repeated presses compare their median measured
+    speed, including repeated neutral motion. They supply no direction.
+    """
+    from core.agency.which_one_answers_to_her import _contingency
+
+    groups: dict[str, list] = defaultdict(list)
+    for press, samples in getattr(evidence, 'timed', {}).items():
+        key, began = press
+        if (not isinstance(key, str) or len(samples) < 2
+                or not isinstance(began, (int, float)) or isinstance(began, bool) or not math.isfinite(began)
+                or press in getattr(evidence, 'interrupted', ())
+                or any(len(sample) != 3 for sample in samples)
+                or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+                           for sample in samples for v in sample)
+                or samples[0][0] <= began
+                or any(b[0] <= a[0] for a, b in zip(samples, samples[1:], strict=False))):
+            continue
+        groups[key].append((statistics.median(math.hypot(vx, vy) for _at, vx, vy in samples), 0.))
+    repeated = {key: values for key, values in groups.items() if len(values) >= 2}
+    return _contingency(repeated) if '' in repeated and len(repeated) >= 2 else (0., 0.)
+
+
+@invariant('agency.travel_keeps_its_speed_when_it_changes_direction', scope='agency',
+           owner='core/agency/an_input_answers_relative_to_motion.py', observational=False)
+def _travel_speed_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    evidence = SimpleNamespace(timed={})
+    for index, key in enumerate(('opaque', '', 'opaque', '')):
+        began = 1. + index
+        speed = 80. if key else 0.
+        evidence.timed[key, began] = [(began + .25 + step * .05,
+            speed * math.cos(index + step * math.pi / 4), speed * math.sin(index + step * math.pi / 4))
+            for step in range(8)]
+    statistic, effect = response_by_travel_speed(evidence)
+    assert statistic > 20. and effect > 20.
+    evidence.timed.pop(('', 2.))
+    assert response_by_travel_speed(evidence) == (0., 0.)
+    return ()
+
+
 @invariant('agency.rotated_control_trials_keep_their_own_motion', scope='agency',
            owner='core/agency/an_input_answers_relative_to_motion.py', observational=False)
 def _motion_coordinates_invariant() -> tuple:

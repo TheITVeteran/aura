@@ -505,7 +505,10 @@ def _visual_motion_claims() -> tuple:
         _velocity_uncertainty_invariant,
     )
     from core.agency.acting_on_a_prepared_motion import _prepared_input_set_invariant
-    from core.agency.an_input_answers_relative_to_motion import _motion_coordinates_invariant
+    from core.agency.an_input_answers_relative_to_motion import (
+        _motion_coordinates_invariant,
+        _travel_speed_invariant,
+    )
     from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.controls_that_take_time_to_build import _stored_response_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
@@ -579,6 +582,9 @@ def _visual_motion_claims() -> tuple:
         ("rotated_control_trials_keep_their_own_motion", "core/agency/an_input_answers_relative_to_motion.py",
          "tests/test_an_input_answers_relative_to_the_bodys_motion.py", lambda: _motion_coordinates_invariant() == (),
          "Repeated isolated inputs distinguish speed change and signed curvature across headings; autonomous motion or absent neutral trials cannot supply the witness."),
+        ("travel_keeps_its_speed_when_it_changes_direction", "core/agency/an_input_answers_relative_to_motion.py",
+         "tests/test_travel_speed_can_answer_without_one_direction.py", lambda: _travel_speed_invariant() == (),
+         "Repeated active and neutral trials compare measured travel speed before averaging directions; a closed curve does not become stationary."),
         ("an_ending_after_reset_needs_new_activity", "core/skills/a_new_attempt_must_be_seen.py",
          "tests/test_a_retry_restarts_the_page_and_observes_a_new_attempt.py", lambda: _new_attempt_invariant() == (),
          "A new attempt requires current activity after reset; an old capture or another reading of its ending supplies no completed run."),

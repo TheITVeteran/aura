@@ -56,6 +56,41 @@ def test_the_actual_reader_marks_observed_activity_after_reset(monkeypatch):
     assert attempt_activity_was_seen(reflexes)
 
 
+@pytest.mark.parametrize('observations', [{'pixels': 13}, {'canvas-paint-v1': 13}, 13])
+def test_the_actual_capture_source_counts_work_before_a_body_has_been_identified(observations):
+    reflexes = SimpleNamespace(keep={'attempt_observation': AttemptObservation(10.)}, stretches=[
+        {'pictures': 13, 'observations': observations, 'responsive_pictures': 0, 'input_key_downs': {'opaque': 2}}])
+    assert attempt_activity_was_seen(reflexes)
+
+
+@pytest.mark.parametrize('departure', ['capture', 'input', 'one-picture', 'boolean', 'unknown', 'nested', 'nonfinite',
+                                      'picture-map', 'picture-word', 'picture-boolean'])
+def test_a_capture_or_delivered_input_alone_cannot_establish_participation(departure):
+    record = {'pictures': 13, 'observations': {'pixels': 13}, 'responsive_pictures': 0, 'input_key_downs': {'opaque': 2}}
+    if departure == 'capture':
+        record['observations'] = {'pixels': 0}
+    elif departure == 'input':
+        record['input_key_downs'] = {}
+    elif departure == 'one-picture':
+        record['pictures'] = 1
+    elif departure == 'boolean':
+        record['observations'] = {'pixels': True}
+    elif departure == 'nested':
+        record['observations'] = {'pixels': {'count': 13}}
+    elif departure == 'nonfinite':
+        record['pictures'] = math.inf
+    elif departure == 'picture-map':
+        record['pictures'] = {'pixels': 13}
+    elif departure == 'picture-word':
+        record['pictures'] = '13'
+    elif departure == 'picture-boolean':
+        record['pictures'] = True
+    else:
+        record['observations'] = {'pixels': None}
+    reflexes = SimpleNamespace(keep={'attempt_observation': AttemptObservation(10.)}, stretches=[record])
+    assert not attempt_activity_was_seen(reflexes)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('fails', [False, True])
 async def test_memory_changes_only_after_the_physical_page_restart(monkeypatch, fails):
