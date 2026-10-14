@@ -216,7 +216,7 @@ async def release_after_play(hands: Any, run: Any, hers: Any) -> None:
 
     await _end_prepared_motion(hands, run, hers)
     cancel_trial_deadline(run)
-    for field in ('_steering_input_deadline', 'reading'):
+    for field in ('_steering_input_deadline', '_reflex_input_deadline', 'reading'):
         task = getattr(run, field, None)
         if task is not None:
             task.cancel()

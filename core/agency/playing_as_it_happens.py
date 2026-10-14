@@ -93,6 +93,7 @@ from core.agency.reading_while_playing import (  # noqa: F401  (re-exported: the
     _what_is_writing,
     rules_as_told_since,
 )
+from core.agency.responding_before_slower_planning import reflex_record, respond_before_planning
 from core.agency.signs_that_come_along import told_to_follow_signs
 from core.agency.the_controls_a_game_names import controls_named_in
 from core.agency.time_from_picture_to_control import ControlTiming, allow_for_picture_age
@@ -1295,20 +1296,23 @@ async def _play_as_it_happens(
             measured_in_play(run, moves, hers, meeting, at)
             if getattr(picture, "drawing_scene", None) is None:
                 _counters_without_reading(run, moves, hers, meeting, at)
-            await _keep_reading(run, meeting, hers, moves, picture, at, read_words, say=say)
-            rules = rules_as_told_since(run, rules)
-            run.shown.look(picture, at)
-            run.coming.see(moves, picture, at)
             violations = motion_checks.see(moves, happened, at, hers.number)
             if violations:
                 ended = "runtime contract violated"
                 _say(run, say, "This still behaves incorrectly: " + violations[0]["finding"] + ". I need to check the repair.", at, once="runtime_fault")
                 break
             context.check()
-            await _act(hands, run, moves, hers, meeting, choosing, at, say=say, rules=rules)
+            run.shown.look(picture, at)
+            run.coming.see(moves, picture, at)
+            reflexive = await respond_before_planning(hands, run, hers, choosing, at)
+            if not reflexive:
+                await _keep_reading(run, meeting, hers, moves, picture, at, read_words, say=say)
+                rules = rules_as_told_since(run, rules)
+                await _act(hands, run, moves, hers, meeting, choosing, at, say=say, rules=rules)
             context.check()
-            await use_controls_on_things(hands, run, moves, hers, happened, at,
-                                         lambda line, once, at=at: _say(run, say, line, at, once=once), picture)
+            if not reflexive:
+                await use_controls_on_things(hands, run, moves, hers, happened, at,
+                                             lambda line, once, at=at: _say(run, say, line, at, once=once), picture)
             for line in _out_of_her_reach(run, choosing, at):
                 _say(run, say, line, at, once=line)
             if goes_over:
@@ -1334,6 +1338,7 @@ async def _play_as_it_happens(
                  "sounds_heard": run.sounds, "allies": run.allies,
                  "supply": run.supply, "pushing": run.pushing, "harm_lands": getattr(run, "harm_lands", None)})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
+    result['reflexes'] = reflex_record(run)
     after_the_stretch(run.settings, run.gains, run.losses)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
                                 "provenance": motion_checks.provenance, "violations": motion_checks.violations,

@@ -491,9 +491,13 @@ def _control_discovery_claims() -> tuple:
         _body_probe_phase_invariant,
         _body_trial_rest_invariant,
     )
+    from core.agency.reflexes_from_measured_consequences import _reflex_consequence_invariant
     from core.perception.a_world_as_its_code_makes_it import _saved_world_effects_invariant
 
     return (
+        ("fresh_consequences_can_interrupt_slower_planning", "core/agency/reflexes_from_measured_consequences.py",
+         "tests/test_reflexes_act_before_slower_planning.py", lambda: _reflex_consequence_invariant() == (),
+         "Short responses require fresh improving consequence estimates, acknowledged inputs and later observed outcomes; absent observations remain unknown."),
         ("nonlocal_cost_keeps_a_known_countermeasure_available", "core/agency/an_effect_contact_cannot_avoid.py",
          "tests/test_an_unavoidable_cost_is_not_hidden_by_an_appearance.py",
          lambda: _nonlocal_countermeasure_invariant() == (),
