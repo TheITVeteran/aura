@@ -103,15 +103,17 @@ class ExpectsNext:
         longest = max(len(row) for row in rows)
         # Padded on the right: attention runs left to right, so what follows a
         # candidate cannot reach back into it.
-        batch = mx.array([prefix + row + [row[-1]] * (longest - len(row)) for row in rows])
-        logits = self._model(batch)
-        logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
-        mx.eval(logprobs)
+        padded = [row + [row[-1]] * (longest - len(row)) for row in rows]
+        logits = self._model(mx.array([prefix + row for row in padded]))
+        # Only the positions that predict a candidate's tokens are read, and
+        # the whole answer comes back as one small array: one evaluation a
+        # pass, where reading it a number at a time was a hundred.
         start = len(prefix) - 1
-        return [
-            float(sum(float(logprobs[index, start + step, token]) for step, token in enumerate(row)))
-            for index, row in enumerate(rows)
-        ]
+        at = logits[:, start:start + longest, :]
+        logprobs = at - mx.logsumexp(at, axis=-1, keepdims=True)
+        chosen = mx.take_along_axis(logprobs, mx.array(padded)[..., None], axis=-1)[..., 0]
+        real = mx.array([[1.0] * len(row) + [0.0] * (longest - len(row)) for row in rows])
+        return [float(total) for total in mx.sum(chosen * real, axis=-1).tolist()]
 
     def score(self, said: str, candidates: Sequence[str]) -> list[float]:
         """The log-likelihood of each candidate as her next turn after `said`, in nats.

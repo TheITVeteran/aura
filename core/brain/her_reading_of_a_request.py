@@ -62,6 +62,13 @@ async def her_reading(text: str, required: list[str], ceiling: str, scopes: Any,
         return required, ceiling, scopes
     if not worth_reading(text):
         return required, ceiling, scopes
+    # A capability is for something she was asked to do. Live, 13 October,
+    # "There is a wren nesting in the old boot by my back door" spent ten
+    # seconds of her large model on which capability it needed.
+    from core.together.taking_it_up import asked_to_do_something
+
+    if not await asked_to_do_something(text):
+        return required, ceiling, scopes
     import asyncio
 
     from core.brain.requests_by_meaning import meant_capability

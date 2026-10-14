@@ -456,3 +456,65 @@ def test_the_reading_started_from_a_turn_reaches_the_with_and_her_model(record, 
     finally:
         if taking.of_this_turn in what_she_is_given.OF_THIS_TURN:
             what_she_is_given.OF_THIS_TURN.remove(taking.of_this_turn)
+
+
+# ── kept, and used to spare her large model ─────────────────────────
+
+
+def test_what_the_answers_usually_score_is_learned_once_and_kept(tmp_path, monkeypatch, record):
+    from core.runtime.atomic_writer import flush_writes_behind
+    from core.together import taking_it_up
+
+    monkeypatch.setattr(taking_it_up, "_file", lambda: tmp_path / "what_it_asks_of_her.json")
+    assert taking_it_up._stored() == {}
+    taking = TakingItUp(_reader(heard_before=12), record=record, together=Together())
+    taking._keeps = True
+    taking._seeded = True
+    taking.read("Do you want to watch this video with me?", who=INES, at=1.0)
+    flush_writes_behind()
+    kept = taking_it_up._stored()
+    assert kept["heard"] == 13 and len(kept["usual"]) == sum(len(SECONDS[kind]) for kind in KINDS)
+    again = WhatItAsksOfHer(_a_model_that_expects(SAID), kept)
+    assert again.heard("Watch this video for ten minutes and comment on it.").kind == "do"
+
+
+def test_a_telling_or_an_invitation_is_not_looked_up_in_what_she_can_do(record, monkeypatch):
+    import asyncio
+
+    from core.together import taking_it_up
+
+    taking, _withs = _taking(record)
+    monkeypatch.setattr(taking_it_up, "_TAKING", taking)
+    for said, asked in (
+        ("The wrens left the boot this morning.", False),
+        ("Do you want to watch this video with me?", False),
+        ("Good morning.", False),
+        ("Watch this video for ten minutes and comment on it.", True),
+        ("Why does a river wind?", True),
+    ):
+        taking.read(said, who=INES, at=1.0)
+        assert asyncio.run(taking_it_up.asked_to_do_something(said)) is asked, said
+    # What was never read may be a request.
+    assert asyncio.run(taking_it_up.asked_to_do_something("something nobody read")) is True
+
+
+def test_a_reading_still_under_way_is_waited_for(record, monkeypatch):
+    import asyncio
+
+    from core.together import taking_it_up
+
+    taking, _withs = _taking(record)
+    monkeypatch.setattr(taking_it_up, "_TAKING", taking)
+    said = "The wrens left the boot this morning."
+
+    async def a_turn():
+        taking_it_up.hear_in_the_background(said, person="ines", sent_from="desk")
+        return await taking_it_up.asked_to_do_something(said)
+
+    try:
+        assert asyncio.run(a_turn()) is False
+    finally:
+        from core.brain import what_she_is_given
+
+        if taking.of_this_turn in what_she_is_given.OF_THIS_TURN:
+            what_she_is_given.OF_THIS_TURN.remove(taking.of_this_turn)

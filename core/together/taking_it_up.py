@@ -16,12 +16,16 @@ role, and she says it her way.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 import time
+from pathlib import Path
 from typing import Any
 
+from core.runtime.atomic_writer import atomic_write_text_behind
 from core.runtime.errors import record_degradation
+from core.runtime.state_ownership import state_root
 from core.together.a_with import HER, THEM, Together, get_together
 from core.together.her_answer import Answer, her_answer
 from core.together.what_was_proposed import Proposal, WhatItAsksOfHer
@@ -51,8 +55,23 @@ class TakingItUp:
         if self._reader is None:
             from core.brain.llm.what_she_expects_next import get_expects_next
 
-            self._reader = WhatItAsksOfHer(get_expects_next().score)
+            self._reader = WhatItAsksOfHer(get_expects_next().score, _stored())
+            self._keeps = True
         return self._reader
+
+    def _keep(self) -> None:
+        """What the answers usually score is learned once and kept, not relearned at every start."""
+        if not getattr(self, "_keeps", False) or self._reader is None:
+            return
+        try:
+            path = _file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text_behind(path, json.dumps(self._reader.held()), encoding="utf-8")
+        except (OSError, TypeError, ValueError) as exc:
+            record_degradation(
+                "together", exc, severity="warning",
+                action="what the answers usually score is held in memory only",
+            )
 
     def _her_record(self) -> Any:
         if self._record is None:
@@ -88,6 +107,7 @@ class TakingItUp:
         said = [str(turn.get("content", "") or "") for turn in stored if str(turn.get("role", "")).lower() == "user"]
         folded = sum(1 for text in dict.fromkeys(said) if reader.remember(text))
         self._seeded = True
+        self._keep()
         logger.info("👂 What an utterance asks of her is set against %d things people have said to her.", folded)
 
     # ── an utterance of theirs ────────────────────────────────────────
@@ -103,6 +123,7 @@ class TakingItUp:
             return {}
         self._seed()
         proposal: Proposal = self._reads().heard(said)
+        self._keep()
         record = self._her_record()
         about = [f"topic:{term}" for term in record.talk.subjects_of(said)]
         withs = self._withs()
@@ -200,6 +221,24 @@ class TakingItUp:
         return {"this_turn": dict(self._this), "withs": self._withs().status()}
 
 
+def _file() -> Path:
+    return state_root() / "data" / "together" / "what_it_asks_of_her.json"
+
+
+def _stored() -> dict[str, Any]:
+    try:
+        held = json.loads(_file().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        record_degradation(
+            "together", exc, severity="warning",
+            action="what the answers usually score is learned again from her stored messages",
+        )
+        return {}
+    return held if isinstance(held, dict) else {}
+
+
 def who_it_is(person: str, sent_from: str) -> str:
     """The key her record keeps a person under: by name, or by where they write from."""
     return f"person:{str(person or '').strip() or 'someone at ' + str(sent_from or '').strip()}"
@@ -239,6 +278,25 @@ def hear_in_the_background(said: str, *, person: str = "", sent_from: str = "") 
         return
     _HEARING.add(task)
     task.add_done_callback(_HEARING.discard)
+
+
+async def asked_to_do_something(said: str) -> bool:
+    """Whether what was said may ask her to do something, so that a capability could be what it needs.
+
+    False only when it was read and read as a telling, a greeting or an
+    invitation: none of those is carried out with a tool. A reading still
+    under way is waited for, since it is under a second and what it saves is
+    a ten-second pass of her large model over the catalogue of what she can
+    do. Anything unread counts as possibly a request.
+    """
+    wanted = " ".join(str(said or "").split())
+    taking = get_taking_it_up()
+    if taking._this.get("said") != wanted and _HEARING:
+        await asyncio.gather(*list(_HEARING), return_exceptions=True)
+    read = taking._this
+    if read.get("said") != wanted:
+        return True
+    return (read.get("proposal") or {}).get("kind") not in {"tell", "greet", "join"}
 
 
 _TAKING: TakingItUp | None = None

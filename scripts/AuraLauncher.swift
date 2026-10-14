@@ -2086,6 +2086,9 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     private var bubblePanel: NSPanel?
     private var bubbleWebView: WKWebView?
     private var bubbleFrameObserver: Any?
+    /// The desktop window has been opened and not yet closed. Minimised to
+    /// the Dock or hidden with the app, it is still open.
+    private var desktopWindowOpen = false
     private var pendingBubbleMoveSequence: Int?
     private var companionPanel: NSPanel?
     private var companionWebView: WKWebView?
@@ -3573,8 +3576,16 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         window?.orderOut(nil)
     }
 
+    /// Whether her full window is open, which is when the bubble stays away.
+    ///
+    /// This read `isVisible` alone, and AppKit answers false for a window
+    /// that is minimised or belongs to a hidden app. Reported 13 October
+    /// 2026: the bubble "sometimes pops up when the main window is still
+    /// open". Collapsing the restrained chat with the window in the Dock
+    /// asked this, heard "not visible", and showed the bubble beside a window
+    /// that had never been closed. Open is opened and not closed.
     private func desktopWindowIsVisible() -> Bool {
-        desktopWindow?.isVisible == true
+        desktopWindowOpen || desktopWindow?.isVisible == true
     }
 
     private func desktopURL() -> URL {
@@ -3591,6 +3602,9 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
 
     /// Present the bubble. Idempotent; safe to call on every window close.
     private func showBubble() {
+        // The window, the bubble and the restrained chat are one presence on
+        // three surfaces. Whoever asks, she is not shown twice.
+        if desktopWindowOpen { return }
         if bubblePanel == nil {
             // The page reports its measured pill size after load. Starting at
             // the icon footprint prevents an invisible 520pt web view from
@@ -4034,6 +4048,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         desktopWindow?.center()
         desktopWindow?.makeKeyAndOrderFront(nil)
         desktopWindow?.orderFrontRegardless()
+        desktopWindowOpen = desktopWindow != nil
         activateLauncherSurface()
         NSApp.requestUserAttention(.informationalRequest)
         autoDesktopOpenTriggered = true
@@ -4382,6 +4397,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
 
     func windowWillClose(_ notification: Notification) {
         guard (notification.object as? NSWindow) === desktopWindow else { return }
+        desktopWindowOpen = false
         // She does not leave when the window does. Closing the window is a
         // request for less surface area, not for her to stop; the bubble is
         // what "still here, out of the way" looks like.

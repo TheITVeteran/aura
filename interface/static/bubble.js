@@ -294,8 +294,14 @@
   pill.addEventListener("mousedown", (event) => {
     if (event.button !== 0) return;
     if (event.target.closest("#close, #say")) return;
+    // Reported 13 October 2026: "whole icon doesnt drag". The glyph is an
+    // <img>, and WebKit begins its own drag of an image a few pixels into
+    // the gesture, which took the pointer away from the host's tracking loop
+    // wherever the press landed on the picture itself. The press is ours.
+    event.preventDefault();
     postToHost({ action: "dragStart" });
   });
+  pill.addEventListener("dragstart", (event) => event.preventDefault());
 
   window.addEventListener("aura-bubble-click", openChat);
 

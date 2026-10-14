@@ -41,6 +41,7 @@ html, body {
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-user-drag: none;
 }
 
 #pill {
@@ -204,7 +205,7 @@ html, body {
 <h1 style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0">Aura</h1>
 <div id="pill" class="dormant" role="status" aria-live="polite">
   <div id="glyph-wrap">
-    <img id="glyph" src="/static/neuron_glyph.svg" alt="Aura" title="Aura"/>
+    <img id="glyph" src="/static/neuron_glyph.svg" alt="Aura" title="Aura" draggable="false"/>
     <span id="dot" aria-hidden="true"></span>
   </div>
   <div id="say"></div>

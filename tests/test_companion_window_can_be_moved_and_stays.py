@@ -127,3 +127,37 @@ def test_the_companion_does_not_hide_itself_when_another_app_is_clicked():
         "companionPanel = panel", 1
     )[0]
     assert "hidesOnDeactivate = false" in companion_block
+
+
+# ── reported 13 October 2026 ────────────────────────────────────────
+
+
+def test_the_picture_itself_is_a_handle_and_not_something_webkit_drags():
+    """ "whole icon doesnt drag": the glyph is an <img>, and WebKit drags images itself."""
+    glyph = re.search(r"<img id=\"glyph\"[^>]*>", BUBBLE_HTML)
+    assert glyph and 'draggable="false"' in glyph.group(0)
+    assert "-webkit-user-drag: none" in BUBBLE_HTML
+    press = BUBBLE_JS[BUBBLE_JS.index('pill.addEventListener("mousedown"'):]
+    press = press[:press.index("});") + 3]
+    assert press.index("event.preventDefault()") < press.index('postToHost({ action: "dragStart" })')
+    assert 'pill.addEventListener("dragstart", (event) => event.preventDefault())' in BUBBLE_JS
+
+
+def test_the_bubble_is_not_shown_beside_a_window_that_was_never_closed():
+    """ "sometimes pops up when the main window is still open".
+
+    AppKit answers `isVisible` false for a window minimised to the Dock or
+    hidden with the app, so collapsing the restrained chat showed the bubble
+    beside a window nobody had closed. Open is opened and not closed.
+    """
+    assert "private var desktopWindowOpen = false" in LAUNCHER
+    visible = LAUNCHER[LAUNCHER.index("private func desktopWindowIsVisible() -> Bool {"):]
+    visible = visible[:visible.index("}") + 1]
+    assert "desktopWindowOpen ||" in visible
+    opened = LAUNCHER[LAUNCHER.index("desktopWindow?.makeKeyAndOrderFront(nil)"):]
+    assert "desktopWindowOpen = desktopWindow != nil" in opened[:300]
+    closing = LAUNCHER[LAUNCHER.index("func windowWillClose(_ notification: Notification) {"):]
+    closing = closing[:closing.index("showBubble()")]
+    assert "desktopWindowOpen = false" in closing
+    show = LAUNCHER[LAUNCHER.index("private func showBubble() {"):]
+    assert show.index("if desktopWindowOpen { return }") < show.index("if bubblePanel == nil {")
