@@ -248,10 +248,6 @@
    "characters": 1253,
    "strings": 4
   },
-  "core/brain/llm/mlx_client.py": {
-   "characters": 577,
-   "strings": 1
-  },
   "core/brain/llm/mlx_worker.py": {
    "characters": 2720,
    "strings": 9
@@ -322,10 +318,6 @@
   },
   "core/brain/recent_actions.py": {
    "characters": 206,
-   "strings": 1
-  },
-  "core/brain/unified_inference.py": {
-   "characters": 352,
    "strings": 1
   },
   "core/capabilities/self_code_improver.py": {
@@ -961,5 +953,5 @@
    "strings": 1
   }
  },
- "total_characters": 168909
+ "total_characters": 167980
 }

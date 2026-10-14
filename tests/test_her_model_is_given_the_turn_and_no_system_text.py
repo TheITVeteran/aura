@@ -125,3 +125,118 @@ def test_a_turn_nobody_sent_or_a_lane_still_worded_is_left_as_it_was():
     turn = [{"role": "system", "content": TOLD}, {"role": "user", "content": "plan this"}]
     assert for_her_model(turn, "sys", {}, False, ()) == (turn, "sys")
     assert for_her_model(turn, "sys", {"output_shape": "json"}, True, ()) == (turn, "sys")
+
+
+# The last hop. The gate's removal was live on 13 October and her model still
+# read 577 characters of system text: the client wrote "You are Aura Luna..."
+# in front of every foreground turn after the gate had finished.
+
+def _client_that_records(sent: dict):
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = object.__new__(MLXLocalClient)
+
+    async def generate(prompt, **kwargs):
+        sent["prompt"], sent["messages"] = prompt, kwargs.get("messages")
+        return "ok"
+
+    client.generate = generate
+    return client
+
+
+def test_the_client_hands_the_worker_the_messages_it_was_handed():
+    import asyncio
+
+    sent: dict = {}
+    client = _client_that_records(sent)
+    turn = [
+        {"role": "user", "content": "an earlier thing somebody said"},
+        {"role": "assistant", "content": "what she answered"},
+        {"role": "user", "content": "Why do limpets come back to the same scar?"},
+    ]
+    asyncio.run(
+        client.generate_text_async(
+            "", messages=[dict(m) for m in turn], system_prompt="", foreground_request=True
+        )
+    )
+    assert sent["messages"] == turn
+    assert "<|im_start|>system" not in sent["prompt"]
+    assert "You are" not in sent["prompt"]
+
+
+def test_from_the_gate_to_the_worker_a_turn_of_hers_carries_no_system_message():
+    import asyncio
+
+    sent: dict = {}
+    client = _client_that_records(sent)
+    said = "Why do limpets come back to the same scar?"
+    messages, system_prompt = for_her_model(_turn(), "You are Aura. Be witty.", {}, True, (), said)
+    asyncio.run(
+        client.generate_text_async(
+            "", messages=messages, system_prompt=system_prompt, foreground_request=True
+        )
+    )
+    roles = [message["role"] for message in sent["messages"]]
+    assert "system" not in roles
+    assert roles[-1] == "user" and sent["messages"][-1]["content"] == said
+    assert "<|im_start|>system" not in sent["prompt"]
+
+
+def test_readings_are_named_by_heading_with_their_size():
+    from core.brain.what_she_is_given import readings_by_size
+
+    messages, _ = what_she_is_given(_turn(), "", markers=MARKERS)
+    reading = next(m["content"] for m in messages if m["role"] == RUNTIME_EVIDENCE_ROLE)
+    # One newline is counted after each of its lines.
+    assert readings_by_size(messages) == [("PRESENT MOMENT", len(reading) + 1)]
+    assert readings_by_size([{"role": "user", "content": "## PRESENT MOMENT\nnot a reading"}]) == []
+
+
+def test_a_measurement_turn_keeps_its_readings(monkeypatch):
+    from core.brain import aura_persona
+
+    monkeypatch.setattr(aura_persona, "this_turn_is_a_measurement", lambda: True)
+    monkeypatch.setattr(aura_persona, "left_out", lambda: frozenset())
+    messages, _ = what_she_is_given(_turn(), "", markers=MARKERS)
+    kept = aura_persona.as_measured(messages)
+    assert [m["role"] for m in kept] == [RUNTIME_EVIDENCE_ROLE, "user"]
+
+
+HER_MODEL = __import__("pathlib").Path.home() / ".aura/models/Aura-Qwen3.8-27B-persona-crsm-7f6a2e83f73f5eef9d15"
+
+
+def test_her_own_chat_template_writes_no_system_block_for_such_a_turn():
+    """Her template adds a sentence about reasoning effort unless told `medium`."""
+    import pytest
+
+    template = HER_MODEL / "chat_template.jinja"
+    if not template.exists():
+        pytest.skip("her model is not on this host")
+    from jinja2.sandbox import ImmutableSandboxedEnvironment
+
+    from core.brain.llm.chat_format import reasoning_effort_for_generation
+
+    def raise_exception(message):
+        raise ValueError(message)
+
+    environment = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True)
+    environment.globals["raise_exception"] = raise_exception
+    turn = [
+        {"role": "user", "content": "an earlier thing somebody said"},
+        {"role": "assistant", "content": "what she answered"},
+        {"role": "tool", "content": "## PRESENT MOMENT\n- Clock: 15:06"},
+        {"role": "user", "content": "Why do limpets come back to the same scar?"},
+    ]
+    render = environment.from_string(template.read_text()).render
+    open_channel = render(
+        messages=turn,
+        add_generation_prompt=True,
+        enable_thinking=True,
+        reasoning_effort=reasoning_effort_for_generation(thinking=True),
+    )
+    closed_channel = render(messages=turn, add_generation_prompt=True, enable_thinking=False)
+    for rendered in (open_channel, closed_channel):
+        assert "<|im_start|>system" not in rendered
+        assert "<tool_response>\n## PRESENT MOMENT" in rendered
+    # The default the worker must never fall back to.
+    assert "<|im_start|>system" in render(messages=turn, add_generation_prompt=True)

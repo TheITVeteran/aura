@@ -5,30 +5,18 @@ from core.brain.unified_inference import UnifiedInferenceEngine
 from core.runtime.errors import get_degradation_tracker
 
 
-@pytest.mark.asyncio
-async def test_ensure_identity_anchor():
-    engine = UnifiedInferenceEngine()
-
-    # Case 1: Empty messages
-    messages = []
-    engine._ensure_identity_anchor(messages)
-    assert len(messages) == 1
-    assert messages[0]["role"] == "system"
-    assert "You are Aura Luna" in messages[0]["content"]
-
-    # Case 2: System message exists but lacks identity anchor
-    messages = [{"role": "system", "content": "Keep it technical."}]
-    engine._ensure_identity_anchor(messages)
-    assert len(messages) == 1
-    assert "You are Aura Luna" in messages[0]["content"]
-    assert "Keep it technical" in messages[0]["content"]
-
-    # Case 3: System message already has the anchor
-    existing = "You are Aura Luna. Speak with direct first-person continuity... Keep it technical."
-    messages = [{"role": "system", "content": existing}]
-    engine._ensure_identity_anchor(messages)
-    assert len(messages) == 1
-    assert messages[0]["content"] == existing
+def test_the_messages_it_builds_are_the_ones_it_was_handed():
+    """No identity text is added on the way to the model."""
+    built = UnifiedInferenceEngine._build_messages(
+        prompt="ignored",
+        system_prompt=None,
+        messages=[{"role": "user", "content": "What tide is it?"}],
+    )
+    assert built == [{"role": "user", "content": "What tide is it?"}]
+    assert UnifiedInferenceEngine._build_messages(
+        prompt="What tide is it?", system_prompt=None, messages=None
+    ) == [{"role": "user", "content": "What tide is it?"}]
+    assert not hasattr(UnifiedInferenceEngine, "_ensure_identity_anchor")
 
 
 @pytest.mark.asyncio
@@ -55,7 +43,7 @@ async def test_generate_unified_routes_through_internal_mlx(monkeypatch):
     assert res["thought"] == "thinking process"
     assert calls
     assert calls[0][1]["max_tokens"] == 96
-    assert calls[0][1]["messages"][0]["role"] == "system"
+    assert calls[0][1]["messages"] == [{"role": "user", "content": "test prompt"}]
 
 
 @pytest.mark.asyncio

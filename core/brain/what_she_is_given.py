@@ -251,8 +251,34 @@ def for_her_model(
         markers=(*_READINGS, *_REMEMBERED, *of_herself, *(marker for _name, marker in observables)),
     )
     logger.info(
-        "🧵 [NO SYSTEM TEXT] %d characters the runtime wrote were not dispatched; %d messages go to her model.",
+        "🧵 [NO SYSTEM TEXT] %d characters the runtime wrote were not dispatched; "
+        "%d messages go to her model; readings: %s.",
         told,
         len(given) if isinstance(given, list) else 0,
+        ", ".join(f"{name} {size}" for name, size in readings_by_size(given)) or "none",
     )
     return given, none
+
+
+def readings_by_size(messages: Any) -> list[tuple[str, int]]:
+    """Each reading in the messages by its heading, with its size in characters.
+
+    A reading runs from its heading to the next heading. This is what the
+    stream shows of a turn, so what her model was handed besides the talk can
+    be read off one line.
+    """
+    found: list[tuple[str, int]] = []
+    for message in messages if isinstance(messages, list) else []:
+        if not isinstance(message, dict) or str(message.get("role") or "").lower() != RUNTIME_EVIDENCE_ROLE:
+            continue
+        name, size = "", 0
+        for line in str(message.get("content") or "").splitlines():
+            heading = line.strip()
+            if heading.startswith(("## ", "[")) and len(heading) < 120:
+                if name or size:
+                    found.append((name or "unheaded", size))
+                name, size = heading.lstrip("#[ ").rstrip("] :"), 0
+            size += len(line) + 1
+        if name or size:
+            found.append((name or "unheaded", size))
+    return found
