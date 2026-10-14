@@ -79,11 +79,49 @@ def test_the_worker_reports_it_on_a_job_nobody_waits_for_too(certified):  # noqa
     assert state == {"enabled": False, "surface_alpha_certified": pytest.approx(certificate.alpha)}
 
 
-def test_a_checkpoint_with_no_certificate_reports_zero(monkeypatch, tmp_path):
+def test_a_job_with_no_steering_engine_reports_nothing(monkeypatch, tmp_path):
+    """Its zero is the absence of anything to look up with, and would erase a real report."""
     _point_the_lookup_at(monkeypatch, tmp_path)
     monkeypatch.setattr(mlx_worker, "_FUSION_MODEL_IDENTITY", "d" * 64)
-    state = _apply_surface_generation_controls(None, object(), {"allow_full_affective_steering": True})
-    assert state["surface_alpha_certified"] == 0.0
+    assert _apply_surface_generation_controls(None, object(), {"allow_full_affective_steering": True}) == {
+        "enabled": False
+    }
+    state = _apply_surface_generation_controls(None, object(), {"clean_user_surface_contract": True})
+    assert "surface_alpha_certified" not in state
+
+
+def test_a_reply_nobody_set_a_strength_for_gets_what_the_checkpoint_has_earned(certified):  # noqa: F811
+    """Live, 13 October: the client sent the key with nothing in it and it read as zero."""
+    certificate, engine = certified
+    engine._alpha = None
+    engine._hooks = []
+    job = {
+        "clean_user_surface_contract": True,
+        "clean_user_surface_steering_alpha": None,
+        "user_surface_validation_prompt": "There is a wren nesting in the old boot by my back door.",
+    }
+    state = _apply_surface_generation_controls(engine, object(), job)
+    assert state["surface_alpha_applied"] == pytest.approx(certificate.alpha)
+
+
+def test_and_none_when_what_was_asked_has_one_right_answer(certified):  # noqa: F811
+    _certificate, engine = certified
+    engine._alpha = None
+    engine._hooks = []
+    job = {
+        "clean_user_surface_contract": True,
+        "clean_user_surface_steering_alpha": None,
+        "user_surface_validation_prompt": "What is 17 minus 8, and then times 3?",
+    }
+    assert _apply_surface_generation_controls(engine, object(), job)["surface_alpha_applied"] == 0.0
+
+
+def test_a_request_for_zero_is_still_zero(certified):  # noqa: F811
+    _certificate, engine = certified
+    engine._alpha = None
+    engine._hooks = []
+    job = {"clean_user_surface_contract": True, "clean_user_surface_steering_alpha": 0.0}
+    assert _apply_surface_generation_controls(engine, object(), job)["surface_alpha_applied"] == 0.0
 
 
 def test_the_report_crosses_from_the_worker_to_her_mind():

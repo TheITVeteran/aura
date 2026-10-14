@@ -543,7 +543,9 @@ def _visual_motion_claims() -> tuple:
     )
     from core.perception.learned_tracking.contracts import _tracking_visibility_invariant
     from core.perception.learned_tracking.corrections_while_points_keep_moving import (
+        _capture_batch_invariant,
         _visible_correction_invariant,
+        _visible_mark_retention_invariant,
     )
     from core.perception.learned_tracking.points_for_the_motion_eyes import (
         _learned_point_capture_invariant,
@@ -618,6 +620,12 @@ def _visual_motion_claims() -> tuple:
         ("late_points_need_visible_transport", "core/perception/learned_tracking/corrections_while_points_keep_moving.py",
          "tests/test_learned_corrections_do_not_hold_up_visible_tracking.py", lambda: _visible_correction_invariant() == (),
          "Late learned positions reach the current view only through retained actual captures and fresh correspondence; expired or reset history supplies no correction."),
+        ("grouped_points_use_actual_capture_sequences", "core/perception/learned_tracking/corrections_while_points_keep_moving.py",
+         "tests/test_grouped_points_receive_actual_capture_sequences.py", lambda: _capture_batch_invariant() == (),
+         "Grouped point tracking receives bounded sequences of actual captures; missing history restarts queries and a late answer retains the capture it measured."),
+        ("refinement_keeps_current_visible_marks", "core/perception/learned_tracking/corrections_while_points_keep_moving.py",
+         "tests/test_grouped_points_receive_actual_capture_sequences.py", lambda: _visible_mark_retention_invariant() == (),
+         "Refinement preserves continuing marks measured in the current capture, within a bounded point budget; another reference or duplicate location supplies no additional support."),
         ("an_ending_after_reset_needs_new_activity", "core/skills/a_new_attempt_must_be_seen.py",
          "tests/test_a_retry_restarts_the_page_and_observes_a_new_attempt.py", lambda: _new_attempt_invariant() == (),
          "A new attempt requires current activity after reset; an old capture or another reading of its ending supplies no completed run."),

@@ -45,6 +45,8 @@ class PointsForMotionEyes(FollowingPoints):
         self._native_visible: dict[int, SeenPoint] = {}
         self._slots: tuple[PointSeed, ...] = ()
         self._births: dict[int, float] = {}
+        self._window_positions: dict[int, tuple[float, float]] = {}
+        self._moving_window_marks: set[int] = set()
         self.status = 'not started'
 
     def clear(self) -> None:
@@ -53,6 +55,8 @@ class PointsForMotionEyes(FollowingPoints):
         self._geometry, self._previous_pixels = None, None
         self._native_visible.clear()
         self._slots, self._births = (), {}
+        self._window_positions.clear()
+        self._moving_window_marks.clear()
         self.status = 'reset'
 
     def _new_seed(self, x: float, y: float, at: float) -> PointSeed:
@@ -80,13 +84,17 @@ class PointsForMotionEyes(FollowingPoints):
         frame = TrackingFrame(source, at, self._epoch, self._sequence)
         grey = _grey(source)
         try:
-            if not self._slots:
-                seeds = _new_points(grey, [], self.limit)
+            fresh = self._new_window_queries(source, grey)
+            if not self._slots or fresh:
+                seeds = fresh or _new_points(grey, [], self.limit)
                 if len(seeds) < 3:
                     self.points, self.status = (), 'insufficient visible texture'
                     self._at, self._previous_pixels = at, source.copy()
                     return ()
                 self._slots = tuple(self._new_seed(x, y, at) for x, y in seeds)
+                self._native_visible.clear()
+                self._window_positions = {seed.number: (seed.x, seed.y) for seed in self._slots}
+                self._moving_window_marks.clear()
                 result = self._backend.start(frame, self._slots)
             else:
                 replacements = self._new_texture_queries(source, grey, at)
@@ -103,6 +111,22 @@ class PointsForMotionEyes(FollowingPoints):
         self._at, self._previous_pixels = at, source.copy()
         self._births = {seed.number: self._births[seed.number] for seed in self._slots}
         return self.points
+
+    def _new_window_queries(self, source: np.ndarray, grey: np.ndarray) -> list[tuple[float, float]]:
+        """A finished window can admit new texture when its old marks only describe the background."""
+        if (getattr(self._backend, 'query_window_frames', None) is None or self.status != 'observed'
+                or self._previous_pixels is None):
+            return []
+        moving = [p for p in self._native_visible.values() if math.hypot(p.x - p.old_x, p.y - p.old_y) >= .5]
+        if len(moving) >= 3 or len(self._moving_window_marks) >= 3:
+            return []
+        changed = np.max(abs(source.astype(np.int16) - self._previous_pixels.astype(np.int16)), axis=2) > 12
+        if not changed.any() or changed.mean() > .6:
+            return []
+        exposed = ndimage.maximum_filter(changed, 7)
+        corners = _new_points(grey, moving, min(1536, max(3 * self.limit, source.shape[0] * source.shape[1] // 64)))
+        fresh = [(x, y) for x, y in corners if exposed[int(round(y)), int(round(x))]][:self.limit]
+        return fresh if len(fresh) >= 3 else []
 
     def _new_texture_queries(self, source: np.ndarray, grey: np.ndarray, at: float) -> dict[int, PointSeed]:
         """Replace hidden or resting slots with currently exposed changing corners."""
@@ -145,6 +169,12 @@ class PointsForMotionEyes(FollowingPoints):
                 self._births[track.number], self._at if continued else at, at, error,
                 before.pictures + 1 if continued else 1)
         scale = shape[1] / grey.shape[1], shape[0] / grey.shape[0]
+        if result.status == 'observed' and getattr(self._backend, 'query_window_frames', None) is not None:
+            # This protects useful query slots. Window displacement never
+            # substitutes for consecutive visible motion in the public path.
+            self._moving_window_marks = {number for number, p in current.items()
+                if number in self._window_positions and math.dist((p.x, p.y), self._window_positions[number]) >= .5}
+            self._window_positions = {number: (p.x, p.y) for number, p in current.items()}
         self.points = tuple(SeenPoint(p.number, p.x * scale[0], p.y * scale[1], p.old_x * scale[0], p.old_y * scale[1],
                            p.born, p.before, p.at, p.error, p.pictures) for p in current.values())
         self._native_visible, self.status = current, result.status
