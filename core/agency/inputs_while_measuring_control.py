@@ -90,6 +90,7 @@ class HandsWithControlReceipts:
         async def delivered(*args: Any, **kwargs: Any) -> Any:
             if (id(self), id(asyncio.current_task())) not in _PRIMARY.get():
                 await _end_prepared_motion(self, self.run, self.hers)
+                await _end_reflex_response(self, self.run, self.hers)
                 self._other_input(name, time.monotonic())
             return await original(*args, **kwargs)
 
@@ -129,6 +130,7 @@ def primary_delivery(hands: Any):
 async def hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *, trying: bool = False,
                        now: Any = None) -> None:
     await _end_prepared_motion(hands, run, hers)
+    await _end_reflex_response(hands, run, hers)
     if key == run.held:
         return
     async with _control_delivery_lock(run):
@@ -142,6 +144,14 @@ async def _end_prepared_motion(hands: Any, run: Any, hers: Any) -> None:
 
     if not await abort_prepared_motion(hands, run, hers):
         raise RuntimeError("a prepared input's physical release remains unconfirmed")
+
+
+async def _end_reflex_response(hands: Any, run: Any, hers: Any) -> None:
+    if getattr(run, '_reflex_input', None) is None:
+        return
+    from core.agency.responding_before_slower_planning import abort_reflex_response
+
+    await abort_reflex_response(hands, run, hers)
 
 
 def _control_delivery_lock(run: Any) -> Any:
@@ -175,6 +185,7 @@ async def _hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *,
         if run.held:
             await hands.up(run.held)
             released_at = now()
+            _input_clock_receipt(run, began, released_at, '')
             _end_modelled_observation(run, released_at)
             if run.presses is not None:
                 run.presses.released(run.held, released_at)
@@ -190,6 +201,8 @@ async def _hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *,
             run.presses.pressed(key, now(), run.things.values(), hers.number,
                                 epoch=hers.identification.epoch, independent=trying)
     delivered = now()
+    if key:
+        _input_clock_receipt(run, dispatched, delivered, key)
     run.responses.append(max(0.0, delivered - at))
     timing = getattr(run, 'control_timing', None)
     if timing is not None:
@@ -198,6 +211,12 @@ async def _hold_control(hands: Any, run: Any, hers: Any, key: str, at: float, *,
         hers.tapped(key, delivered, began=dispatched)
     run.held, run.held_since, run.held_trying = key, delivered, trying
     hers.holding(key, delivered, trying=trying)
+
+
+def _input_clock_receipt(run: Any, began: float, ended: float, key: str) -> None:
+    receipts = getattr(run, '_input_clock_receipts', [])
+    receipts.append((began, ended, key))
+    run._input_clock_receipts = receipts[-128:]
 
 
 def _end_modelled_observation(run: Any, at: float) -> None:
@@ -216,6 +235,7 @@ async def release_after_play(hands: Any, run: Any, hers: Any) -> None:
 
     await _end_prepared_motion(hands, run, hers)
     cancel_trial_deadline(run)
+    await _end_reflex_response(hands, run, hers)
     for field in ('_steering_input_deadline', '_reflex_input_deadline', 'reading'):
         task = getattr(run, field, None)
         if task is not None:

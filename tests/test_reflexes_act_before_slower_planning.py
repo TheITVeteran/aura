@@ -15,9 +15,11 @@ from core.agency.inputs_while_measuring_control import (
 from core.agency.playing_as_it_happens import _Run
 from core.agency.reflexes_from_measured_consequences import (
     ReflexCircuit,
+    ReflexEffect,
     ReflexObservation,
     ReflexResponse,
     _reflex_consequence_invariant,
+    _reflex_effect_invariant,
 )
 from core.agency.responding_before_slower_planning import _response_context, respond_before_planning
 from core.agency.what_a_press_does import WhatAPressDoes
@@ -107,8 +109,45 @@ def test_a_short_response_prevents_a_failure_before_a_slow_decision_can_arrive(e
     assert failed(ordinary) and not failed(reactive)
     circuit.ended(receipt, 1.22)
     after = ReflexObservation(environment, 1.23, cost(reactive, response_rate), (response,))
-    circuit.inspect(after, 1.24)
+    effect = ReflexEffect(environment, receipt.delivered_at, after.captured_at,
+                          (reactive,), (initial + response_rate * .15,), 1e-8, (ordinary,))
+    circuit.inspect(after, 1.24, effect)
     assert circuit.outcomes[-1].observed_cost == 0.
+    assert circuit.outcomes[-1].response_observed is True
+
+
+def test_lower_risk_cannot_hide_a_contradicted_physical_response():
+    circuit = ReflexCircuit()
+    response = ReflexResponse('actuator', 0., .1)
+    sample = ReflexObservation('owner and model', 1., 4., (response,))
+    assert circuit.inspect(sample, 1.01) is response
+    receipt = circuit.delivered(sample, response, 1.01, 1.02)
+    circuit.ended(receipt, 1.12)
+    after = ReflexObservation(sample.context, 1.2, 0., (response,))
+    contradictory = ReflexEffect(sample.context, receipt.delivered_at, 1.2, (-10.,), (10.,), 1.)
+    circuit.inspect(after, 1.21, contradictory)
+    assert circuit.outcomes[-1].response_observed is False
+    assert circuit.inspect(ReflexObservation(sample.context, 2., 4., (response,)), 2.01) is None
+
+
+def test_another_receipts_motion_cannot_verify_this_response():
+    circuit = ReflexCircuit()
+    response = ReflexResponse('actuator', 0., .1)
+    sample = ReflexObservation('owner and model', 1., 4., (response,))
+    circuit.inspect(sample, 1.01)
+    receipt = circuit.delivered(sample, response, 1.01, 1.02)
+    circuit.ended(receipt, 1.12)
+    after = ReflexObservation(sample.context, 1.2, 0., (response,))
+    foreign = ReflexEffect(sample.context, .5, 1.2, (10.,), (10.,), 1.)
+    circuit.inspect(after, 1.21, foreign)
+    assert circuit.outcomes[-1].response_observed is None
+
+
+def test_a_response_indistinguishable_from_continued_input_remains_unknown():
+    ambiguous = ReflexEffect('model', 1., 1.2, (10.,), (11.,), 2., (9.,))
+    assert ambiguous.agrees and ambiguous.verified is None
+    clear = ReflexEffect('model', 1., 1.2, (10.,), (11.,), 2., (2.,))
+    assert clear.verified is True
 
 
 class Hands:
@@ -123,6 +162,9 @@ class Hands:
         self.events.append(('up', key, time.monotonic()))
         self.held.discard(key)
 
+    async def tap(self, key):
+        self.events.append(('tap', key, time.monotonic()))
+
 
 def world(monkeypatch):
     at = time.monotonic()
@@ -136,7 +178,9 @@ def world(monkeypatch):
                                    Kind(1, np.zeros(64), 64., incoming.colour)])
     hers = WhichIsHers()
     hers.number, hers.kind = 1, 0
-    monkeypatch.setattr(hers, 'way_of', lambda key: (0., -120.) if key == 'a' else (0., 120.) if key == 'b' else None)
+    monkeypatch.setattr(hers, 'way_of', lambda key: (0., -120.) if key == 'a' else (0., 120.) if key == 'b'
+                       else (0., 0.) if key == '' else None)
+    hers.holding('', at - 1.)
     run = _Run(keys=['a', 'b'], began=at, last_moving=at)
     run.things, run.presses = moves.things, WhatAPressDoes()
     meeting = WhatMeetingDoes()
@@ -177,6 +221,110 @@ async def test_a_deadline_cannot_release_a_new_owners_input(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_secondary_input_releases_the_reflex_before_it_is_delivered(monkeypatch):
+    run, _moves, hers, choosing, raw, hands, at = world(monkeypatch)
+    try:
+        assert await respond_before_planning(hands, run, hers, choosing, at)
+        await hands.tap('other channel')
+        assert [e[:2] for e in raw.events] == [('down', 'a'), ('up', 'a'), ('tap', 'other channel')]
+        assert run._reflex_input is None and not raw.held
+        assert run._reflex_circuit.outcomes[-1].response_observed is None
+    finally:
+        await release_after_play(hands, run, hers)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('follows_model', [True, False])
+async def test_the_actual_adapter_compares_later_body_motion_with_the_delivered_response(monkeypatch, follows_model):
+    run, _moves, hers, choosing, _raw, hands, at = world(monkeypatch)
+    try:
+        assert await respond_before_planning(hands, run, hers, choosing, at)
+        active = run._reflex_input
+        await asyncio.sleep(.15)
+        receipt = run._reflex_circuit.pending
+        duration = receipt.ended_at - receipt.delivered_at
+        way = active.ways[active.key]
+        choosing.mine.y += way[1] * duration if follows_model else -way[1] * duration
+        choosing.mine.seen = choosing.at = now = time.monotonic()
+        await respond_before_planning(hands, run, hers, choosing, now)
+        assert run._reflex_circuit.outcomes[-1].response_observed is follows_model
+    finally:
+        await release_after_play(hands, run, hers)
+
+
+@pytest.mark.asyncio
+async def test_filtered_velocity_lag_cannot_contradict_the_actual_input_interval(monkeypatch):
+    run, moves, hers, choosing, _raw, hands, at = world(monkeypatch)
+    try:
+        at -= .04
+        moves.things[2].x = 70.
+        choosing.mine.seen, choosing.at, choosing.mine.vy = at, at, 800.
+        assert await respond_before_planning(hands, run, hers, choosing, at)
+        active = run._reflex_input
+        await asyncio.sleep(.15)
+        receipt = run._reflex_circuit.pending
+        duration = receipt.ended_at - receipt.delivered_at
+        choosing.mine.y += active.ways[active.key][1] * duration
+        choosing.mine.seen = choosing.at = now = time.monotonic()
+        await respond_before_planning(hands, run, hers, choosing, now)
+        assert run._reflex_circuit.outcomes[-1].response_observed is True
+    finally:
+        await release_after_play(hands, run, hers)
+
+
+@pytest.mark.asyncio
+async def test_one_missing_motion_measurement_does_not_shorten_a_bounded_response(monkeypatch):
+    run, _moves, hers, choosing, raw, hands, at = world(monkeypatch)
+    try:
+        assert await respond_before_planning(hands, run, hers, choosing, at)
+        active = run._reflex_input
+        choosing.mine.motion_evidence, choosing.mine.motion_measured_at = 'unavailable', None
+        choosing.mine.seen = choosing.at = now = time.monotonic()
+        assert await respond_before_planning(hands, run, hers, choosing, now)
+        assert raw.held == {'a'} and run._reflex_input is active
+        await asyncio.sleep(.15)
+        assert not raw.held and run._reflex_input is None
+        receipt = run._reflex_circuit.pending
+        choosing.mine.y += active.ways[active.key][1] * (receipt.ended_at - receipt.delivered_at)
+        choosing.mine.motion_evidence = 'direct'
+        choosing.mine.seen = choosing.at = now = time.monotonic()
+        await respond_before_planning(hands, run, hers, choosing, now)
+        assert run._reflex_circuit.outcomes[-1].response_observed is True
+    finally:
+        await release_after_play(hands, run, hers)
+
+
+@pytest.mark.asyncio
+async def test_a_missing_feedback_window_cannot_block_planning_indefinitely(monkeypatch):
+    run, _moves, hers, choosing, raw, hands, at = world(monkeypatch)
+    try:
+        assert await respond_before_planning(hands, run, hers, choosing, at)
+        choosing.mine.motion_evidence, choosing.mine.motion_measured_at = 'unavailable', None
+        await asyncio.sleep(.15)
+        choosing.mine.seen = choosing.at = now = time.monotonic()
+        assert await respond_before_planning(hands, run, hers, choosing, now)
+        await asyncio.sleep(.15)
+        choosing.mine.seen = choosing.at = now = time.monotonic()
+        assert not await respond_before_planning(hands, run, hers, choosing, now)
+        assert not raw.held and run._reflex_circuit.outcomes[-1].response_observed is None
+    finally:
+        await release_after_play(hands, run, hers)
+
+
+@pytest.mark.asyncio
+async def test_an_actual_owner_departure_ends_the_response_immediately(monkeypatch):
+    run, _moves, hers, choosing, raw, hands, at = world(monkeypatch)
+    try:
+        assert await respond_before_planning(hands, run, hers, choosing, at)
+        hers.number = None
+        assert not await respond_before_planning(hands, run, hers, choosing, time.monotonic())
+        assert not raw.held and run._reflex_input is None
+        assert run._reflex_circuit.outcomes[-1].response_observed is None
+    finally:
+        await release_after_play(hands, run, hers)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('fault', ['stale', 'lost', 'trial', 'unmeasured', 'carried'])
 async def test_a_reflex_cannot_borrow_missing_control_evidence(monkeypatch, fault):
     run, _moves, hers, choosing, raw, hands, at = world(monkeypatch)
@@ -207,7 +355,10 @@ def test_the_reflex_claim_has_a_registered_mechanical_check():
     from core.organism.model_validation import ValidationSuite
 
     assert _reflex_consequence_invariant() == ()
+    assert _reflex_effect_invariant() == ()
     suite = ValidationSuite()
     install_realtime_control_claims(suite)
     check = next(t for t in suite.tests() if t.name == 'fresh_consequences_can_interrupt_slower_planning')
     assert check.predict(None) is True and any(c.test == check.name for c in suite.claims())
+    effect_check = next(t for t in suite.tests() if t.name == 'reflex_motion_feedback_needs_its_owned_response')
+    assert effect_check.predict(None) is True and any(c.test == effect_check.name for c in suite.claims())

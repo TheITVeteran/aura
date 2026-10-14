@@ -491,10 +491,20 @@ def _control_discovery_claims() -> tuple:
         _body_probe_phase_invariant,
         _body_trial_rest_invariant,
     )
-    from core.agency.reflexes_from_measured_consequences import _reflex_consequence_invariant
+    from core.agency.reflexes_from_measured_consequences import (
+        _reflex_consequence_invariant,
+        _reflex_effect_invariant,
+    )
+    from core.agency.what_acknowledged_inputs_predict import _acknowledged_prediction_invariant
     from core.perception.a_world_as_its_code_makes_it import _saved_world_effects_invariant
 
     return (
+        ("acknowledged_inputs_cover_the_response_interval", "core/agency/what_acknowledged_inputs_predict.py",
+         "tests/test_acknowledged_inputs_cover_visual_latency.py", lambda: _acknowledged_prediction_invariant() == (),
+         "Direct-response predictions integrate acknowledged control intervals with bounded state channels; missing model intervals preserve uncertainty."),
+        ("reflex_motion_feedback_needs_its_owned_response", "core/agency/reflexes_from_measured_consequences.py",
+         "tests/test_reflexes_act_before_slower_planning.py", lambda: _reflex_effect_invariant() == (),
+         "Observed response checks belong to an acknowledged input and its current model context; contradictory motion suspends that response even when risk falls."),
         ("fresh_consequences_can_interrupt_slower_planning", "core/agency/reflexes_from_measured_consequences.py",
          "tests/test_reflexes_act_before_slower_planning.py", lambda: _reflex_consequence_invariant() == (),
          "Short responses require fresh improving consequence estimates, acknowledged inputs and later observed outcomes; absent observations remain unknown."),

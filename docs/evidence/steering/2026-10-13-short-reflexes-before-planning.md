@@ -51,3 +51,34 @@ control separation; it makes no formal safety guarantee from those papers.
 Original Flash wins, the 56-game campaign and ordinary desktop request
 proof remain open. A fresh whole-app repeat and response confirmation are
 next.
+
+### Later response confirmation and bounded observation gaps
+
+The response circuit now checks independent later motion against the
+measured input model and the alternative of continuing the previous input.
+Risk falling alone cannot verify the response. Contradictory motion
+suspends the response; missing or ambiguous motion remains unknown.
+Actual request-to-acknowledgement intervals bound clock uncertainty.
+A brief missing measurement does not cut an owned pulse short. After
+release, a 150 ms feedback window expires without retaining input ownership.
+
+Four further ordinary-entry private dodge runs did not establish a verified
+physical reflex improvement. The bounded-gap candidate finished still
+playing with 61 points and three lives, but its two settled risk outcomes
+had one unknown physical response and one contradiction. The current
+clock-envelope candidate returned in 65.880976 seconds with 14 points,
+three lives and no completed game. Startup and menu work consumed most
+of that budget: none of its 640 cycles started a reflex. Neither survival
+nor absence of a loss field is evidence of a causal improvement.
+
+The clock-envelope focused suites passed 112 tests in 13.33 seconds.
+The final gates and any further results are recorded below. The repository
+governance lint has 116 existing regressions in 30 other files; these
+changed files do not occur in that offender set. No baseline was relaxed.
+
+- Bounded-gap pilot: `/private/tmp/codex-steer/reflex-bounded-observation-gap-dodge-seed1-1013/`
+- Current pilot: `/private/tmp/codex-steer/reflex-clock-envelope-dodge-seed1-1013/`
+
+Final clock-envelope gates: all nine passed. Smoke passed 165 tests,
+with one skip, in 43.37 seconds. Log:
+`/private/tmp/codex-steer/reflex-clock-final-gates-1013.log`.

@@ -57,11 +57,50 @@ class ReflexReceipt:
 
 
 @dataclass(frozen=True)
+class ReflexEffect:
+    """A response model's prediction compared with a later independent observation."""
+
+    context: Hashable
+    delivered_at: float
+    captured_at: float
+    observed: tuple[float, ...]
+    expected: tuple[float, ...]
+    tolerance: float
+    alternative: tuple[float, ...] | None = None
+
+    def __post_init__(self) -> None:
+        hash(self.context)
+        if (self.context is None or not isinstance(self.observed, tuple) or not isinstance(self.expected, tuple)
+                or not 1 <= len(self.observed) == len(self.expected) <= 16
+                or not all(_finite(v) for v in (*self.observed, *self.expected, self.delivered_at,
+                                              self.captured_at, self.tolerance))
+                or self.captured_at < self.delivered_at or self.tolerance < 0):
+            raise ValueError('a reflex effect needs finite comparable observations in one context')
+        if (self.alternative is not None and (not isinstance(self.alternative, tuple)
+                or len(self.alternative) != len(self.expected) or not all(_finite(v) for v in self.alternative))):
+            raise ValueError('a response alternative must share its observed state channels')
+
+    @property
+    def agrees(self) -> bool:
+        return math.dist(self.observed, self.expected) <= self.tolerance
+
+    @property
+    def verified(self) -> bool | None:
+        if not self.agrees:
+            return False
+        if self.alternative is None or math.dist(self.observed, self.alternative) <= self.tolerance:
+            return None
+        return True
+
+
+@dataclass(frozen=True)
 class ReflexOutcome:
     receipt: ReflexReceipt
     captured_at: float | None
     observed_cost: float | None
     reason: str
+    response_observed: bool | None = None
+    effect: ReflexEffect | None = None
 
 
 class ReflexCircuit:
@@ -89,7 +128,8 @@ class ReflexCircuit:
     def fresh(self, observation: ReflexObservation, now: float) -> bool:
         return _finite(now) and 0 <= now - observation.captured_at <= self.max_age_s
 
-    def inspect(self, observation: ReflexObservation, now: float) -> ReflexResponse | None:
+    def inspect(self, observation: ReflexObservation, now: float,
+                effect: ReflexEffect | None = None) -> ReflexResponse | None:
         self.offered = None
         if not self.fresh(observation, now) or observation.captured_at <= self.last_capture:
             return None
@@ -102,12 +142,20 @@ class ReflexCircuit:
             if receipt.ended_at is None or observation.captured_at <= receipt.ended_at:
                 return None
             self.pending = None
-            self.outcomes.append(ReflexOutcome(receipt, observation.captured_at, observation.cost, 'observed'))
+            matched = (effect is not None and effect.context == receipt.context
+                        and effect.delivered_at == receipt.delivered_at
+                        and effect.captured_at == observation.captured_at)
+            verified = effect.verified if matched else None
+            self.outcomes.append(ReflexOutcome(receipt, observation.captured_at, observation.cost,
+                                               'risk from later observation', verified,
+                                               effect if matched else None))
             action = receipt.response.action
             if action not in self.failures and len(self.failures) >= 64:
                 self.failures.pop(next(iter(self.failures)))
             self.failures[action] = (self.failures.get(action, 0) + 1
                                      if observation.cost >= receipt.observation.cost * self.improvement else 0)
+            if verified is False:
+                self.failures[action] = 2
         if now < self.next_at or observation.cost <= 0:
             return None
         eligible = [r for r in observation.responses if self.failures.get(r.action, 0) < 2
@@ -155,4 +203,21 @@ def _reflex_consequence_invariant() -> tuple:
     assert circuit.inspect(ReflexObservation(sample.context, 1.2, 0., (response,)), 1.21) is None
     assert circuit.outcomes[-1].observed_cost == 0.
     assert circuit.inspect(ReflexObservation(sample.context, 2., 4., (response,)), 3.) is None
+    return ()
+
+
+@invariant('agency.reflex_effects_belong_to_the_delivered_response', scope='agency',
+           owner='core/agency/reflexes_from_measured_consequences.py', observational=False)
+def _reflex_effect_invariant() -> tuple:
+    circuit = ReflexCircuit()
+    response = ReflexResponse('response', 0., .1)
+    before = ReflexObservation(('owner', 'model'), 1., 4., (response,))
+    assert circuit.inspect(before, 1.01) is response
+    receipt = circuit.delivered(before, response, 1.01, 1.02)
+    circuit.ended(receipt, 1.12)
+    after = ReflexObservation(before.context, 1.2, 0., (response,))
+    effect = ReflexEffect(before.context, receipt.delivered_at, 1.2, (-10.,), (10.,), 1.)
+    assert circuit.inspect(after, 1.21, effect) is None
+    assert circuit.outcomes[-1].response_observed is False
+    assert circuit.inspect(ReflexObservation(before.context, 2., 4., (response,)), 2.01) is None
     return ()
