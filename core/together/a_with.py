@@ -120,6 +120,8 @@ class With:
     #: What she has already said her piece about.
     remarked_on: set[str] = field(default_factory=set)
     _waiting: Turn | None = None
+    #: The words of the last screen reading the with saw, to measure change by.
+    _screen_words: set[str] | None = None
 
     @property
     def open(self) -> bool:

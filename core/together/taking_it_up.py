@@ -35,6 +35,8 @@ logger = logging.getLogger("Aura.Together")
 __all__ = ["TakingItUp", "get_taking_it_up", "install"]
 
 HEADER = "## WHAT WAS PROPOSED TO YOU AND WHAT YOUR RECORD SAYS YOU WANT"
+SENSES_HEADER = "## WHAT YOU CAN SENSE AND REACH NOW"
+SCREEN_HEADER = "## WHAT IS ON THE SCREEN"
 
 #: What a with is of when what was proposed named nothing she can name.
 BEING_TOGETHER = "being together"
@@ -216,31 +218,75 @@ class TakingItUp:
         about = [f"topic:{term}" for term in self._her_record().talk.subjects_of(str(said or ""))]
         held.said(HER, at, about=about, until=at, unprompted=unprompted)
 
+    def needs_her_senses(self) -> bool:
+        """Whether the turn just read asks her to do or join something, or is part of a with."""
+        read = self._this
+        return bool(read) and (
+            (read.get("proposal") or {}).get("kind") in {"do", "join"} or bool(read.get("with"))
+        )
+
+    async def take_what_it_needs(self) -> None:
+        """For a turn that asks her to do or join something: what she can sense and reach, measured.
+
+        Live, 13 October, invited to watch a video in his browser, she said
+        "I don't have access to video streams or the internet", with her
+        screen sense granted and the web reachable. Her capability ledger
+        measures each sense by running the precondition its executor runs
+        (core/self/capability_ledger.py); those lines are what she is handed,
+        and when she is joining something, or is in a with, what is on the
+        screen as well. In a with, what the screen shows is also the with's
+        shared field (core/together/a_with.py).
+        """
+        if not self.needs_her_senses():
+            return
+        read = self._this
+        try:
+            from core.self.capability_ledger import get_capability_ledger
+
+            measured = await asyncio.to_thread(get_capability_ledger().measure_all)
+            read["senses"] = [
+                f"- {availability.as_evidence_line()}" for availability in measured.values() if availability.known
+            ]
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("together", exc, severity="warning", action="her senses were not measured for this turn")
+        if (read.get("proposal") or {}).get("kind") == "join" or read.get("with"):
+            read["screen"] = await _the_screen_now()
+            held = self._withs().current(read.get("who", ""))
+            if held is not None and read["screen"]:
+                held.shown(_what_is_in_front(read["screen"]), time.time(), change=_how_much_changed(held, read["screen"]))
+
     def of_this_turn(self, said: str) -> str:
-        """The reading her model is handed when what was said proposed doing something together."""
+        """The readings her model is handed with what was said: her answer, her senses, the screen."""
         read = self._this
         if not read or " ".join(str(said or "").split()) != read.get("said"):
             return ""
+        blocks = []
+        if read.get("senses"):
+            blocks.append("\n".join([SENSES_HEADER, *read["senses"]]))
+        if read.get("screen"):
+            blocks.append(f"{SCREEN_HEADER}\n{read['screen']}")
         answer, proposal = read.get("answer"), read.get("proposal") or {}
         if not answer or proposal.get("kind") != "join":
-            return ""
+            return "\n\n".join(blocks)
         wants = {
             True: "joining is worth more to you than what you would leave for it",
             False: "what you would leave for it is worth more to you than joining",
             None: "nothing you have met tells joining from staying apart",
         }[answer["joins"]]
+        # What she wants and what she would leave, and not the arithmetic
+        # under it: handed the numbers, she recited them (live, 13 October,
+        # "higher expected value (-0.209 vs +0.266)"). They are in the log and
+        # in her record's status for anybody who asks.
         lines = [
             HEADER,
-            f"- What was said proposes doing something together (read at {proposal.get('sure', 0.0):.2f} "
-            "from which answers come next after it).",
+            "- What was said proposes doing something together.",
             f"- Your record: {wants}.",
-            f"- {answer['why']}.",
         ]
         if answer["leaving"]:
             lines.append(f"- You are in the middle of: {answer['leaving']}.")
         if answer["unknown"]:
             lines.append(f"- New to you: {', '.join(key.split(':', 1)[-1] for key in answer['unknown'])}.")
-        return "\n".join(lines)
+        return "\n\n".join(["\n".join(lines), *blocks])
 
     def status(self) -> dict[str, Any]:
         return {"this_turn": dict(self._this), "withs": self._withs().status()}
@@ -315,7 +361,38 @@ async def heard_in_a_turn(said: str, client: Any) -> dict[str, Any]:
     anything is looked up or written for the reply.
     """
     taking = install()
-    return await taking.heard(said, who=who_she_is_with(taking._her_record()), client=client)
+    read = await taking.heard(said, who=who_she_is_with(taking._her_record()), client=client)
+    await taking.take_what_it_needs()
+    return read
+
+
+async def _the_screen_now() -> str:
+    """The screen as her own screen reading takes it (core/brain/observable_registry.py), or nothing."""
+    try:
+        from core.brain.observable_grounding import OBSERVABLES
+
+        screen = next((item for item in OBSERVABLES if item.name == "screen"), None)
+        if screen is None:
+            return ""
+        return str(await asyncio.wait_for(screen.read(""), timeout=screen.timeout_s) or "").strip()
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+        record_degradation("together", exc, severity="warning", action="the screen was not read for this turn")
+        return ""
+
+
+def _what_is_in_front(screen: str) -> str:
+    """The first line of a screen reading, which names what is in front."""
+    return next((line.strip() for line in screen.splitlines() if line.strip()), "")
+
+
+def _how_much_changed(held: Any, screen: str) -> float | None:
+    """How different this screen reading is from the last one the with saw, in [0, 1]."""
+    words = set(screen.lower().split())
+    last = held._screen_words
+    held._screen_words = words
+    if last is None or not (words | last):
+        return None
+    return 1.0 - len(words & last) / len(words | last)
 
 
 async def asked_to_do_something(said: str) -> bool:

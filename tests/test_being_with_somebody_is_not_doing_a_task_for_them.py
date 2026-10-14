@@ -11,6 +11,7 @@ The package under test is core/together.
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
 
 import pytest
@@ -721,3 +722,91 @@ def test_a_reader_with_no_history_is_set_against_what_follows_nothing_in_particu
             what_she_is_given.OF_THIS_TURN.remove(taking.of_this_turn)
     assert [asked["said"] for asked in client.asked] == [*CONTENT_FREE, said]
     assert read["proposal"]["kind"] == "join" and read["proposal"]["heard_before"] == len(CONTENT_FREE)
+
+
+# ── what she can sense and reach, and what is on the screen ─────────
+
+
+class _Seen:
+    def __init__(self, summary, known=True):
+        self.summary, self.known = summary, known
+
+    def as_evidence_line(self):
+        return self.summary
+
+
+def _senses_and_screen(monkeypatch, taking_it_up, screen="Safari — Herons at dawn — YouTube\n0:42 / 3:10"):
+    from core.self import capability_ledger
+
+    class Ledger:
+        def measure_all(self):
+            return {
+                "screen_sight": _Seen("I can capture and read this screen."),
+                "world_access": _Seen("I can reach the web."),
+                "camera": _Seen("unknown", known=False),
+            }
+
+    monkeypatch.setattr(capability_ledger, "get_capability_ledger", lambda: Ledger())
+
+    async def the_screen_now():
+        return screen
+
+    monkeypatch.setattr(taking_it_up, "_the_screen_now", the_screen_now)
+
+
+def test_an_invitation_carries_what_she_can_sense_and_what_is_on_the_screen(record, monkeypatch):
+    """Live, 13 October: invited to watch a video in his browser, she denied having screen or web."""
+    import asyncio
+
+    from core.together import taking_it_up
+
+    _lived(record, {INES: 0.5})
+    record.started(INES, "conversation", label="ines")
+    taking = TakingItUp(_reader(), record=record, together=Together())
+    monkeypatch.setattr(taking_it_up, "_TAKING", taking)
+    _senses_and_screen(monkeypatch, taking_it_up)
+    said = "Do you want to watch this video with me?"
+    try:
+        asyncio.run(taking_it_up.heard_in_a_turn(said, _TurnsClient(SAID)))
+    finally:
+        from core.brain import what_she_is_given
+
+        if taking.of_this_turn in what_she_is_given.OF_THIS_TURN:
+            what_she_is_given.OF_THIS_TURN.remove(taking.of_this_turn)
+    given = taking.of_this_turn(said)
+    assert given.startswith(HEADER)
+    assert f"{taking_it_up.SENSES_HEADER}\n- I can capture and read this screen.\n- I can reach the web." in given
+    assert "unknown" not in given  # what could not be measured is not said
+    assert f"{taking_it_up.SCREEN_HEADER}\nSafari — Herons at dawn — YouTube" in given
+    # And the with she joined has the screen as its shared field.
+    held = taking._withs().current(INES)
+    assert held.in_view(time.time()).what == "Safari — Herons at dawn — YouTube"
+
+
+def test_a_request_carries_her_senses_and_a_telling_carries_nothing(record, monkeypatch):
+    import asyncio
+
+    from core.together import taking_it_up
+
+    taking, _withs = _taking(record)
+    monkeypatch.setattr(taking_it_up, "_TAKING", taking)
+    _senses_and_screen(monkeypatch, taking_it_up)
+    asked = "Watch this video for ten minutes and comment on it."
+    taking.read(asked, who=INES, at=1.0)
+    asyncio.run(taking.take_what_it_needs())
+    given = taking.of_this_turn(asked)
+    assert taking_it_up.SENSES_HEADER in given and taking_it_up.SCREEN_HEADER not in given
+    told = "The wrens left the boot this morning."
+    taking.read(told, who=INES, at=2.0)
+    asyncio.run(taking.take_what_it_needs())
+    assert taking.of_this_turn(told) == ""
+
+
+def test_what_the_screen_shows_moves_the_withs_field_by_how_much_it_changed(record, monkeypatch):
+    from core.together.taking_it_up import _how_much_changed
+
+    held = With(who=INES, what=FILM, began=0.0)
+    assert _how_much_changed(held, "a heron stands in the reeds") is None
+    assert _how_much_changed(held, "a heron stands in the reeds") == 0.0
+    assert _how_much_changed(held, "credits roll now") == 1.0
+    assert _how_much_changed(held, "credits roll later") == pytest.approx(0.5)
