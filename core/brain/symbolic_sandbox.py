@@ -165,8 +165,15 @@ class SymbolicSandbox:
             record_degradation("symbolic_sandbox_vet", exc)
             return False, ["safety analyzer unavailable"]
 
-    async def run(self, code: str, *, timeout_override: float | None = None) -> SandboxResult:
-        """Vet then execute a single script in CPython isolated mode."""
+    async def run(self, code: str, *, timeout_override: float | None = None, prelude: str = "",
+                  extra_read_paths: tuple[str, ...] = ()) -> SandboxResult:
+        """Vet then execute a single script in CPython isolated mode.
+
+        ``prelude`` is trusted runtime code put before the vetted body (it
+        defines what the body may call, e.g. core/learning/kept_steps.py), and
+        ``extra_read_paths`` what the child may read for it. The body alone is
+        vetted; the kernel boundary contains both.
+        """
         body = _strip_fence(code)
         safe, warnings = self.vet(body)
         if _fence_count(code) > 1:
@@ -183,8 +190,9 @@ class SymbolicSandbox:
 
             outcome = await asyncio.to_thread(
                 run_untrusted_script,
-                body,
+                prelude + body,
                 timeout_s=effective_timeout,
+                extra_read_paths=tuple(extra_read_paths),
                 require_boundary=True,
                 source="symbolic_cognition",
             )

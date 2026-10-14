@@ -1493,6 +1493,14 @@ class ReasoningAmplifierV2:
             and not explicitly_enabled
         ):
             return None
+        kept_steps = None
+        try:
+            from core.learning.procedures_from_solved_examples import her_kept_steps
+
+            kept_steps = her_kept_steps()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            record_degradation("amplifier_v2_kept_steps", exc, severity="warning",
+                               action="programs run without her kept kinds as steps")
         try:
             from core.brain.executable_reasoning import derive_executable_candidate
 
@@ -1512,6 +1520,7 @@ class ReasoningAmplifierV2:
                 # generation wrapper meters both calls, and executable receipts
                 # preserve every preflight or sandbox outcome.
                 max_generation_attempts=2,
+                kept_steps=kept_steps,
             )
         except (TimeoutError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation(

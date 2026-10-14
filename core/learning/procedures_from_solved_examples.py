@@ -176,25 +176,32 @@ def _example_text(index: int, example: SolvedExample) -> str:
     return f"Problem {index}:\n{example.problem.strip()}\n\nAnswer {index}: {example.answer.strip()}"
 
 
-def _available(mechanisms: str | None) -> str:
+def _available(mechanisms: str | None, steps: str | None = None) -> str:
     if not mechanisms:
-        return "Only the Python standard library is available."
-    return ("The Python standard library is available, and `import mechanisms` gives these exact "
-            "mechanisms:\n\n" + mechanisms.strip() + "\n")
+        text = "Only the Python standard library is available."
+    else:
+        text = ("The Python standard library is available, and `import mechanisms` gives these exact "
+                "mechanisms:\n\n" + mechanisms.strip() + "\n")
+    if steps:
+        # core/learning/kept_steps.py: kinds already kept, callable as steps of a larger procedure.
+        text += ("\nThe function `kept_answer` is already defined, and a step that is a problem of one of "
+                 "these kinds can be answered with it:\n\n" + steps.strip() + "\n")
+    return text
 
 
-def proposal_request(shown: Sequence[SolvedExample], mechanisms: str | None = None) -> str:
+def proposal_request(shown: Sequence[SolvedExample], mechanisms: str | None = None,
+                     steps: str | None = None) -> str:
     examples = "\n\n".join(_example_text(i + 1, e) for i, e in enumerate(shown))
     return (
         "Each problem below is followed by its correct answer. Write a Python function "
         "`solve(problem: str) -> str` that computes the correct answer for any problem of this kind, "
-        "including new ones, returned in the same form as these answers. " + _available(mechanisms)
+        "including new ones, returned in the same form as these answers. " + _available(mechanisms, steps)
         + " Reply with one Python code block.\n\n" + examples
     )
 
 
 def repair_request(code: str, shown: Sequence[SolvedExample], failures: Sequence[tuple[SolvedExample, Outcome]],
-                   mechanisms: str | None = None) -> str:
+                   mechanisms: str | None = None, steps: str | None = None) -> str:
     examples = "\n\n".join(_example_text(i + 1, e) for i, e in enumerate(shown))
     wrong = "\n\n".join(
         f"Problem:\n{example.problem.strip()}\n\nCorrect answer: {example.answer.strip()}\n"
@@ -205,7 +212,7 @@ def repair_request(code: str, shown: Sequence[SolvedExample], failures: Sequence
         "Each problem below is followed by its correct answer. This function was written to compute "
         "the answer for any problem of this kind:\n\n```python\n" + code.strip() + "\n```\n\n"
         "It is wrong on the problems that follow the examples. Write a corrected "
-        "`solve(problem: str) -> str` for every problem of this kind. " + _available(mechanisms)
+        "`solve(problem: str) -> str` for every problem of this kind. " + _available(mechanisms, steps)
         + " Reply with one Python code block.\n\n" + examples
         + "\n\nWhere it was wrong:\n\n" + wrong
     )
@@ -215,6 +222,38 @@ def _mechanisms_directory() -> str:
     from core.reasoning import mechanisms
 
     return str(Path(mechanisms.__file__).resolve().parent)
+
+
+def _mechanisms_prelude() -> str:
+    return f"import sys as _aura_sys\n_aura_sys.path.insert(0, {_mechanisms_directory()!r})\n"
+
+
+@dataclass(frozen=True)
+class KeptSteps:
+    """What a sandboxed program needs to call a book's kept kinds as steps (core/learning/kept_steps.py).
+
+    ``listing`` is what her model reads, ``prelude`` the lines put before the
+    program, and ``read_paths`` what the child may read: the mechanisms, the
+    helper, and the book itself.
+    """
+
+    listing: str
+    prelude: str
+    read_paths: tuple[str, ...]
+
+
+def kept_steps_from(book_path: str | Path, book: ProcedureBook | None = None) -> KeptSteps | None:
+    """The kept kinds of the book at ``book_path`` as steps; None when it keeps no procedure."""
+    from core.learning import kept_steps
+
+    path = Path(book_path).resolve()
+    book = book if book is not None else ProcedureBook.from_json(json.loads(path.read_text(encoding="utf-8")))
+    if not book.procedures:
+        return None
+    helper = str(Path(kept_steps.__file__).resolve().parent)
+    return KeptSteps(listing=kept_steps.reference({"procedures": book.procedures, "examples": book.examples}),
+                     prelude=_mechanisms_prelude() + kept_steps.prelude(helper, str(path)),
+                     read_paths=(_mechanisms_directory(), helper, str(path)))
 
 
 _FRAME = re.compile(r'File "[^"]*candidate\.py", line (\d+), in (\S+)\n\s*(.*)')
@@ -229,19 +268,21 @@ def _where_it_failed(stderr: str, prelude_lines: int) -> str:
     return f"line {int(line) - prelude_lines}, in {function}: {text.strip()}"
 
 
-def run_procedure(code: str, problem: str, *, timeout_s: float | None = None) -> tuple[str | None, str]:
+def run_procedure(code: str, problem: str, *, timeout_s: float | None = None,
+                  steps: KeptSteps | None = None) -> tuple[str | None, str]:
     """One call of ``solve`` in the OS sandbox: what it returned, or why it did not.
 
     The child may read core/reasoning, so ``import mechanisms`` works there
     (core/reasoning/mechanisms.py imports only the standard library and its
-    sibling constraint engine).
+    sibling constraint engine). With ``steps``, ``kept_answer`` is defined
+    too, and the child may read the book it answers from.
     """
     from core.sandbox.untrusted_python import DEFAULT_TIMEOUT_S, call_untrusted_function
 
-    directory = _mechanisms_directory()
-    prelude = f"import sys as _aura_sys\n_aura_sys.path.insert(0, {directory!r})\n"
+    prelude = steps.prelude if steps is not None else _mechanisms_prelude()
+    read_paths = steps.read_paths if steps is not None else (_mechanisms_directory(),)
     outcome = call_untrusted_function(prelude + code, "solve", calls=[[problem]],
-                                      timeout_s=timeout_s or DEFAULT_TIMEOUT_S, extra_read_paths=(directory,),
+                                      timeout_s=timeout_s or DEFAULT_TIMEOUT_S, extra_read_paths=read_paths,
                                       source="procedures_from_solved_examples")
     if outcome.status != "ok":
         where = _where_it_failed(outcome.stderr or "", prelude.count("\n"))
@@ -256,7 +297,8 @@ def run_procedure(code: str, problem: str, *, timeout_s: float | None = None) ->
 
 
 def check_program(code: str, examples: Sequence[SolvedExample], agree: Agree = agrees_with_shown_answer,
-                  *, workers: int = 1, stop_after_failures: int | None = None) -> list[Outcome]:
+                  *, workers: int = 1, stop_after_failures: int | None = None,
+                  steps: KeptSteps | None = None) -> list[Outcome]:
     """Run ``solve`` on each example in order, one sandboxed child each, so one hang costs one example.
 
     With ``stop_after_failures``, no further examples start once that many
@@ -266,7 +308,7 @@ def check_program(code: str, examples: Sequence[SolvedExample], agree: Agree = a
     """
 
     def one(example: SolvedExample) -> Outcome:
-        returned, error = run_procedure(code, example.problem)
+        returned, error = run_procedure(code, example.problem, steps=steps)
         agreed = returned is not None and bool(agree(returned, example))
         return Outcome(key=example.key, agreed=agreed, returned=returned, error=error)
 
@@ -311,6 +353,7 @@ def induce(
     agree: Agree = agrees_with_shown_answer,
     workers: int = 1,
     mechanisms: str | None = None,
+    steps: KeptSteps | None = None,
     on_candidate: Callable[[Candidate], None] | None = None,
 ) -> dict[str, Family]:
     """Write, check and revise procedures for every family, all families' requests batched per round.
@@ -321,8 +364,10 @@ def induce(
     wrong; after a failure confined to the sealed half (or no code at all) it
     starts again from a fresh draw. A line stops once a function is admitted.
     ``mechanisms`` is the reference text of core/reasoning/mechanisms.py when
-    her model is told it may import them.
+    her model is told it may import them, and ``steps`` the kinds already
+    kept, which a procedure may call for a step and is checked calling.
     """
+    listing = steps.listing if steps is not None else None
     state: dict[str, Family] = {}
     for name, examples in families.items():
         pool, sealed = split_examples(examples)
@@ -344,9 +389,9 @@ def induce(
             failures = [(by_key[o.key], o) for o in previous.pool if not o.agreed][:shots] \
                 if previous is not None else []
             if previous is not None and failures:
-                requests.append(repair_request(previous.code, shown, failures, mechanisms))
+                requests.append(repair_request(previous.code, shown, failures, mechanisms, listing))
             else:
-                requests.append(proposal_request(shown, mechanisms))
+                requests.append(proposal_request(shown, mechanisms, listing))
             shown_sets.append(shown)
         texts = propose(requests)
         for (name, line), shown, text in zip(active, shown_sets, texts, strict=True):
@@ -360,10 +405,11 @@ def induce(
                                   sha256=hashlib.sha256(code.encode()).hexdigest(),
                                   shown_keys=[e.key for e in shown],
                                   pool_total=len(family.pool), sealed_total=len(family.sealed))
-            candidate.pool = check_program(code, family.pool, agree, workers=workers, stop_after_failures=shots)
+            candidate.pool = check_program(code, family.pool, agree, workers=workers, stop_after_failures=shots,
+                                           steps=steps)
             if candidate.pool_agreed == len(family.pool):
                 candidate.sealed = check_program(code, family.sealed, agree, workers=workers,
-                                                 stop_after_failures=1)
+                                                 stop_after_failures=1, steps=steps)
             family.candidates.append(candidate)
             if on_candidate is not None:
                 on_candidate(candidate)
@@ -385,6 +431,8 @@ class ProcedureBook:
     ``meanings`` holds a kind's direction in her embedding space
     (core/learning/kinds_by_meaning.py) and ``examples`` a few of its solved
     problems as shown, which is what a request worded otherwise is restated by.
+    ``steps`` is set on a book read from a file, so a procedure that calls
+    another kept kind (core/learning/kept_steps.py) can run; it is not saved.
     """
 
     signatures: dict[str, Signature]
@@ -392,6 +440,7 @@ class ProcedureBook:
     agreed: dict[str, int] = field(default_factory=dict)
     meanings: dict[str, Any] = field(default_factory=dict)
     examples: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+    steps: KeptSteps | None = field(default=None, compare=False, repr=False)
 
     @classmethod
     def from_families(cls, families: dict[str, Family]) -> ProcedureBook:
@@ -462,7 +511,7 @@ class ProcedureBook:
         if not codes:
             receipt["declined"] = "kind_has_no_kept_procedure"
             return receipt
-        returned = [run_procedure(code, problem) for code in codes]
+        returned = [run_procedure(code, problem, steps=self.steps) for code in codes]
         receipt["procedures"] = [{"sha256": hashlib.sha256(c.encode()).hexdigest()[:16],
                                   "returned": r, "error": e} for c, (r, e) in zip(codes, returned, strict=True)]
         values = [r for r, _e in returned if r is not None]
@@ -509,9 +558,17 @@ def kept_procedure_book() -> ProcedureBook | None:
     except FileNotFoundError:
         return None
     if _kept_cache.get("stamp") != (str(path), stamp):
-        _kept_cache["book"] = ProcedureBook.from_json(json.loads(path.read_text(encoding="utf-8")))
+        book = ProcedureBook.from_json(json.loads(path.read_text(encoding="utf-8")))
+        book.steps = kept_steps_from(path, book)
+        _kept_cache["book"] = book
         _kept_cache["stamp"] = (str(path), stamp)
     return _kept_cache["book"]
+
+
+def her_kept_steps() -> KeptSteps | None:
+    """Her kept kinds as steps a sandboxed program may call; None when her book keeps no procedure."""
+    book = kept_procedure_book()
+    return book.steps if book is not None else None
 
 
 def keep_for_her(book: ProcedureBook) -> Path:

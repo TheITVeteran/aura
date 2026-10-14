@@ -318,6 +318,7 @@ def _program_prompt(
     excluded_program_sha256s: tuple[str, ...],
     excluded_candidate_sha256s: tuple[str, ...],
     prior_failure_class: str,
+    steps_listing: str = "",
 ) -> str:
     contract = str(response_contract or "").strip()
     output_rule = (
@@ -343,6 +344,7 @@ def _program_prompt(
         "input, shell, subprocesses, reflection, or external packages. Standard pure "
         "computation with builtins and safe modules such as math, itertools, fractions, "
         "collections, statistics, decimal, and json is allowed.\n"
+        f"{_steps_text(steps_listing)}"
         "Derive the answer from the task; do not guess it or embed an unexplained final "
         "constant. Prefer exhaustive search or an independent invariant when practical. "
         "Never assert a literal expected final answer, expected full sequence, or checksum. "
@@ -358,6 +360,14 @@ def _program_prompt(
     )
 
 
+def _steps_text(listing: str) -> str:
+    """The kept kinds a program may call for a step (core/learning/kept_steps.py), or nothing."""
+    if not listing:
+        return ""
+    return ("The function `kept_answer` is already defined in the sandbox, and a step that is a problem of "
+            "one of these kinds can be answered with it:\n" + listing.strip() + "\n")
+
+
 def _restart_prompt(
     objective: str,
     diagnostic: str,
@@ -365,6 +375,7 @@ def _restart_prompt(
     prior_program_sha256: str,
     *,
     strategy: str,
+    steps_listing: str = "",
 ) -> str:
     """Request a disjoint retry without exposing the failed source or answer."""
 
@@ -377,6 +388,7 @@ def _restart_prompt(
         "input, reflection, or external packages. Never assert a literal expected final "
         "answer, expected full sequence, or checksum; assertions may check only generic "
         "invariants computed from the candidate itself. "
+        + _steps_text(steps_listing)
         + (
             "It must print exactly one terminal FINAL_ANSWER JSON object satisfying "
             f"{contract}. "
@@ -474,8 +486,15 @@ async def derive_executable_candidate(
     excluded_candidate_sha256s: tuple[str, ...] = (),
     prior_failure_class: str = "",
     max_generation_attempts: int = 2,
+    kept_steps: Any = None,
 ) -> ExecutableReasoningResult:
-    """Generate, execute, and receipt one bounded program-of-thought attempt."""
+    """Generate, execute, and receipt one bounded program-of-thought attempt.
+
+    ``kept_steps`` (core/learning/procedures_from_solved_examples.py
+    KeptSteps) lists her kept kinds to her model, and a program that calls
+    ``kept_answer`` runs with the prelude that defines it.
+    """
+    steps_listing = str(getattr(kept_steps, "listing", "") or "")
 
     started = time.monotonic()
     if type(max_generation_attempts) is not int or not 1 <= max_generation_attempts <= 2:
@@ -529,6 +548,7 @@ async def derive_executable_candidate(
                 excluded_program_sha256s=excluded_program_sha256s,
                 excluded_candidate_sha256s=excluded_candidate_sha256s,
                 prior_failure_class=prior_failure_class,
+                steps_listing=steps_listing,
             )
             if attempt_index == 0
             else _restart_prompt(
@@ -537,6 +557,7 @@ async def derive_executable_candidate(
                 response_contract,
                 _sha256(program),
                 strategy=strategy,
+                steps_listing=steps_listing,
             )
         )
         try:
@@ -601,8 +622,13 @@ async def derive_executable_candidate(
                 }
             )
             continue
+        calls_steps = bool(steps_listing) and "kept_answer" in program
         try:
-            execution = await sandbox.run(program)
+            if calls_steps:
+                execution = await sandbox.run(program, prelude=kept_steps.prelude,
+                                              extra_read_paths=tuple(kept_steps.read_paths))
+            else:
+                execution = await sandbox.run(program)
         except (TimeoutError, OSError, RuntimeError, AttributeError, TypeError, ValueError):
             diagnostic = "sandbox_infrastructure_failure"
             attempts.append(
@@ -629,6 +655,7 @@ async def derive_executable_candidate(
                 "program_chars": len(program),
                 "program_bytes": len(program.encode("utf-8")),
                 "sandbox": execution_receipt,
+                "kept_steps_called": calls_steps,
             }
         )
         if getattr(execution, "ok", False):
