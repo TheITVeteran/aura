@@ -1033,6 +1033,10 @@ def _load(self) -> None:
         self._going = max(0.0, min(1.0, float(stored.get("going", 0.5))))
         for row in stored.get("things", []):
             thing = Thing.from_dict(row)
+            # What a process was in the middle of ended with it. Live, 13
+            # October, two games were still "under way" from runs long gone,
+            # so she was busy in every answer and every turn was theirs.
+            thing.under_way.clear()
             self._things[thing.key] = thing
         self.talk = WhatHerTalkIsAbout(stored, changed=lambda: _save(self, _held(self)))
         self.care = _care_of(self, stored.get("care"))

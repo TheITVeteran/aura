@@ -412,3 +412,14 @@ def test_a_person_she_cares_about_doing_worse_is_her_loss_and_doing_better_her_g
         got = record.care.felt().get(ines)
         assert got == (pytest.approx(felt) if felt is not None else None)
     assert record.care.concerns() == []
+
+
+def test_what_a_process_was_in_the_middle_of_ended_with_it(record, tmp_path):
+    """Live, 13 October: two games stayed under way from runs long gone, so she was always busy."""
+    pond = "game:heron pond"
+    record.started(pond, "play", label="heron pond")
+    record.met(["self"], 0.1)
+    assert record.thing(pond).under_way
+    flush_writes_behind()
+    again = WhatSheWants(tmp_path / "wants.json", engine=ConationEngine())
+    assert again.thing(pond) is not None and again.thing(pond).under_way == {}
