@@ -251,7 +251,9 @@ def _the_world_run_forward(choosing: Any, scene: _Scene) -> None:
     from core.agency.what_meeting_things_does import AVOID, CLICK, MEET, SHOOT
 
     worth_of = {MEET: GAIN, CLICK: GAIN, AVOID: -LOSS, SHOOT: -LOSS}
-    things = [(t, worth_of.get(choosing.stance(t), 0.0)) for t in choosing.others()]
+    # A kind that costs her as much getting by her as touching her is nothing to keep clear of (what_meeting_things_does).
+    anyway = getattr(getattr(choosing, "meeting", None), "lands_anyway", ())
+    things = [(t, 0.0 if int(t.kind) in anyway else worth_of.get(choosing.stance(t), 0.0)) for t in choosing.others()]
     things = [(t, w) for t, w in things if w != 0.0]
     physics = getattr(choosing, "physics", None)
     # What she plans with is a construal of the scene, as people's is (value-guided construal, Ho et al. 2022): what

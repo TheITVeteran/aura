@@ -27,6 +27,8 @@ WORLDS = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "worlds_th
 #: Her working picture of a 480 x 320 world: 240 x 160.
 SHAPE = (160, 240)
 KEYS = {"left": "ArrowLeft", "right": "ArrowRight", "up": "ArrowUp", "down": "ArrowDown", "space": " "}
+#: How often a shot is fired at most, in seconds: as live play fires one whose going it has not yet timed.
+FIRES_EVERY_S = 0.45
 
 
 def reading_of(world: str) -> Any:
@@ -90,7 +92,7 @@ class HerChoicesOnAWorld:
 
     def __init__(self, world: str, *, seed: int = 1, ground_from_code: bool = True, decide_every: float = 1 / 30,
                  reading: Any = None, late_by: int = 0, swerves_from_code: bool = False, jitter: float = 0.0,
-                 marks_seen: bool = False, query: str = "", comes_known: bool = False) -> None:
+                 marks_seen: bool = False, query: str = "", comes_known: bool = False, fires: bool = False) -> None:
         self.world, self.seed = world, seed
         self.reading = reading if reading is not None else reading_of(world)
         self.ground_from_code = ground_from_code
@@ -113,6 +115,9 @@ class HerChoicesOnAWorld:
         #: Whether the kinds the reading says chase her are known to come for her, as play comes to know them
         #: (core/agency/what_comes_for_her.py).
         self.comes_known = comes_known
+        #: Whether she fires what its code says her keys send, when her choosing says she is lined up, at the pace
+        #: live play fires a shot whose going she has not yet timed (core/agency/playing_as_it_happens.py `_trigger`).
+        self.fires = fires
         #: What else the page is told when it is loaded ("level=7").
         self._oracle = WorldRunFromItsCode(world, seed=seed, query=query)
         self.trace: list[dict[str, Any]] = []
@@ -184,19 +189,33 @@ class HerChoicesOnAWorld:
 
         hers = _HerKeys(self.reading.hers.paces, self.scale)
         keys = list(hers.paces)
+        if self.fires:
+            from core.agency.which_one_answers_to_her import Makes
+
+            for key, name in self.reading.sends.items():
+                kind = next(k for k, of in enumerate(self.reading.things, start=1) if of.name == name)
+                of = self.reading.things[kind - 1]
+                going = {"rises": -1.0, "falls": 1.0}.get(of.moves)
+                if going is not None and of.speed:
+                    hers.makes[key] = Makes(key, kind, 0.0, going * of.speed * self.scale, 0)
+        fired_at = -math.inf
+        self.shots_fired = 0
         meeting = WhatMeetingDoes()
         for kind, of in enumerate(self.reading.things, start=1):
             if of.touching == "costs a life":
                 meeting.told[kind] = AVOID
             elif of.touching == "scores":
                 meeting.told[kind] = MEET
+            if of.past_an_edge and of.past_an_edge == of.touching:
+                meeting.lands_anyway.add(kind)
         ground = ground_in_her_picture(self.reading, SHAPE) if self.ground_from_code else None
         covered: set[tuple[int, int]] = set()
         cell = None
         # What she last sent, as her hands hold it and live play hands it to her choosing; and what the world is doing,
         # which is what she sent ``late_by`` choices ago.
         held = applied = ""
-        on_the_way: list[str] = []
+        pressed_fire = False
+        on_the_way: list[tuple[str, str | None]] = []
         state = self._oracle.state()
         kept: dict[int, Any] = {}
         told = {kind: of.speed * self.scale for kind, of in enumerate(self.reading.things, start=1)
@@ -224,13 +243,20 @@ class HerChoicesOnAWorld:
             if self.comes_known:
                 choosing.comes = _Comes({kind for kind, of in enumerate(self.reading.things, start=1)
                                          if of.moves == "chases her"})
-            key, why, _aim = choosing.key(held)
+            key, why, aim = choosing.key(held)
             held = key
-            on_the_way.append(key)
-            arriving = on_the_way.pop(0) if len(on_the_way) > self.late_by else applied
-            if arriving != applied:
-                self._oracle.hold(*([KEYS.get(arriving, arriving)] if arriving else []))
+            fire = choosing.fire(aim, why) if self.fires else None
+            if fire is not None and at - fired_at >= FIRES_EVERY_S:
+                fired_at, self.shots_fired = at, self.shots_fired + 1
+            else:
+                fire = None
+            on_the_way.append((key, fire))
+            arriving, firing = on_the_way.pop(0) if len(on_the_way) > self.late_by else (applied, None)
+            if arriving != applied or firing or pressed_fire:
+                self._oracle.hold(*([KEYS.get(arriving, arriving)] if arriving else []),
+                                  *([KEYS.get(firing, firing)] if firing else []))
                 applied = arriving
+            pressed_fire = bool(firing)
             hers.last_velocity = hers.paces.get(applied, (0.0, 0.0)) if applied else (0.0, 0.0)
             if len(self.trace) < 100000:
                 self.trace.append({"at": round(at, 3), "key": key, "why": why, "x": mine.x, "y": mine.y})

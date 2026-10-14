@@ -306,6 +306,9 @@ class WhatMeetingDoes:
         self._clicks: dict[int, tuple[float, int]] = {}
         #: What reading the situation said each kind is for, before any evidence.
         self.told: dict[int, str] = {}
+        #: Kinds that cost her as much getting by her as touching her (an invader that lands): what is to be done about
+        #: one is to shoot it, and keeping clear of it saves nothing.
+        self.lands_anyway: set[int] = set()
         #: What she supposes a kind is for from what it looks like (a zombie is trouble, a coin is worth getting), until
         #: meeting it says (core/agency/naming_what_she_sees.py).
         self.supposed: dict[int, str] = {}

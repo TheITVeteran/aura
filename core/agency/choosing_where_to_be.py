@@ -651,7 +651,8 @@ class _Choosing:
         mine = self.mine
         warned = self._warned_along(path)
         threats = [(t, 0.0) for t in self.others()
-                   if (self.stance(t) in (AVOID,) or self.stance(t) == SHOOT) and not self._struck_first(t)]
+                   if (self.stance(t) in (AVOID,) or self.stance(t) == SHOOT) and not self._struck_first(t)
+                   and int(t.kind) not in getattr(self.meeting, "lands_anyway", ())]
         # What to keep clear of that went out of sight is still where its going was taking it (what_moves_in_the_picture).
         threats += [(t, self.at - when) for t, when in getattr(self.moves, "out_of_sight", {}).values()
                     if self.at is not None and self.meeting.stance(t.kind) == AVOID]

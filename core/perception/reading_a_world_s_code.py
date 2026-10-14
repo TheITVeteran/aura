@@ -136,6 +136,8 @@ class _Condition:
     words: str = ""
     #: Quantities of things it tests as true or false (``f.good``, ``!c.hole``), by their references, and which way.
     flags: tuple[tuple[str, bool], ...] = ()
+    #: Whether what it tests are alternatives, any one of them enough (``a || b``), not all needed together.
+    either: bool = False
 
 
 @dataclass
@@ -610,6 +612,7 @@ class _Reader:
                 return
             if op == "||":
                 keys_before = found.keys
+                found.either = True
                 self._condition_into(left, local, found, negated)
                 if found.keys == keys_before:
                     self._condition_into(right, local, found, negated)
@@ -1244,8 +1247,33 @@ def _things(r: _Reading, body: str) -> list[AKindOfThing]:
         size = (_constant(r.initial.get(element + ".w")), _constant(r.initial.get(element + ".h")))
         speed, moves = _how_it_moves(r, element, body)
         out.append(AKindOfThing(collection, touching, moves, speed,
-                                size if all(v is not None for v in size) else None, _looks(r, element, by_flag)))
+                                size if all(v is not None for v in size) else None, _looks(r, element, by_flag),
+                                _past_an_edge(r, element, body)))
     return out
+
+
+#: How near an edge of the stage a bound must be, as a share of the stage across it, to be that edge.
+NEAR_AN_EDGE = 0.25
+
+
+def _past_an_edge(r: _Reading, element: str, body: str) -> str:
+    """What a thing getting past an edge of the stage does, where one test does it for that or for its touching her,
+    either being enough: ``if (f.y > world.H - 20 || hits(f, me)) world.lose()`` costs a life. '' where none does."""
+    for event in r.events:
+        if event.what != "lose":
+            continue
+        for condition in event.conditions:
+            if not condition.either or not any(element in pair and body in pair for pair in condition.touches):
+                continue
+            for lhs, op, rhs in condition.compares:
+                bound = _constant(rhs)
+                for axis, across in ((".x", r.stage[0]), (".y", r.stage[1])):
+                    if bound is None or not across or (lhs or {}).get(("@" + element + axis,)) != 1.0:
+                        continue
+                    if op in (">", ">=") and bound >= (1.0 - NEAR_AN_EDGE) * across or op in ("<", "<=") \
+                            and bound <= NEAR_AN_EDGE * across:
+                        return "costs a life"
+    return ""
 
 
 def _looks(r: _Reading, element: str, by_flag: dict[tuple[str, bool], set[str]]) -> tuple[tuple[str, str], ...]:
@@ -1412,4 +1440,7 @@ def read_a_world_s_code(sources: Iterable[str], stage: tuple[float, float] | Non
 
     for key, flag in r.flags.items():
         world.keys.setdefault(key, _what_it_is(flag) or "does something")
+        sent = flag[len("fire "):].split(".")[-1] if flag.startswith("fire ") else ""
+        if sent and world.thing(sent) is not None:
+            world.sends[key] = sent
     return world

@@ -38,6 +38,7 @@ class CodeKind:
     touching: str = ""
     moves: str = ""
     wanders: float = 0.0
+    past_an_edge: str = ""
 
 
 def _rgb(colour: str) -> tuple[int, int, int] | None:
@@ -75,7 +76,7 @@ def _drawn(world: Any, scale: float) -> list[tuple[tuple[int, int, int], CodeKin
                 continue
             touching = does or (thing.touching if " or " not in thing.touching else "")
             wanders = (thing.speed or 0.0) * scale if thing.moves == "wanders" else 0.0
-            out.append((rgb, CodeKind(thing.name, touching, thing.moves, wanders)))
+            out.append((rgb, CodeKind(thing.name, touching, thing.moves, wanders, getattr(thing, "past_an_edge", ""))))
     return out
 
 
@@ -201,7 +202,16 @@ def what_its_code_says_she_sees(run: Any, moves: Any, hers: Any, meeting: Any, a
         if code.name == GROUND_GONE_OVER:
             meeting.told[kind] = IGNORE                          # ground gone over: nothing to meet or keep clear of
             continue
-        if code.name == "hers" or meeting.evidence.get(kind) is not None:
+        if code.name == "hers":
+            continue
+        if code.past_an_edge and code.past_an_edge == code.touching and kind not in meeting.lands_anyway:
+            # What costs her wherever it gets past her is shot, not kept clear of: offline 2026-10-14 she ran from the
+            # invaders she was lined up on, and they landed and cost her the life they would have cost on her.
+            meeting.lands_anyway.add(kind)
+            if tell is not None:
+                tell(f"Its code says the {code.name} cost me wherever they get by; I'll shoot them, not dodge them.",
+                     f"code says {code.name} land")
+        if meeting.evidence.get(kind) is not None:
             continue
         stance = {"costs a life": AVOID, "scores": MEET}.get(code.touching)
         if stance and meeting.told.get(kind) != stance:
@@ -211,10 +221,10 @@ def what_its_code_says_she_sees(run: Any, moves: Any, hers: Any, meeting: Any, a
                 what = ("cost" if many else "costs") + " me" if stance == AVOID else ("are" if many else "is") + " worth getting"
                 tell(f"Its code says the {code.name} {what}.", f"code says {code.name}")
     mine = [kind for kind, code in matched.items() if code.name == "hers"]
-    if len(mine) == 1 and getattr(hers, "number", None) is None:
-        hers_seen = [t for t in getattr(moves, "things", {}).values() if int(t.kind) == mine[0]]
-        if len(hers_seen) == 1:
-            hers.seen_to_be_her(hers_seen[0], at, f"its code draws me in {world.hers.drawn_in}")
+    if mine and getattr(hers, "number", None) is None:
+        body = _her_body_among([t for t in getattr(moves, "things", {}).values() if int(t.kind) in mine])
+        if body is not None:
+            hers.seen_to_be_her(body, at, f"its code draws me in {world.hers.drawn_in}")
             follows = tuple(bool(axis) for axis in (getattr(world.hers, "follows_pointer", None) or (False, False)))
             if any(follows):
                 # Its code puts her where the pointer is: she is played with the pointer from the first picture, and her
@@ -224,4 +234,65 @@ def what_its_code_says_she_sees(run: Any, moves: Any, hers: Any, meeting: Any, a
             if tell is not None:
                 tell("Its code says which one is me, and that it goes where the mouse goes." if any(follows) else
                      "Its code says which one is me; I'll check it answers my keys.", "code says me")
+    number = getattr(hers, "number", None)
+    body = getattr(moves, "things", {}).get(number) if number is not None else None
+    for kind in mine:
+        # Another kind drawn in her colour, beside a body of hers of its own kind, is a part of her (a ship's gun): not
+        # something to meet, keep clear of, or line up on.
+        if body is not None and kind != int(body.kind) and meeting.told.get(kind) != IGNORE:
+            meeting.told[kind] = IGNORE
+    _what_her_keys_send(world, moves, hers, matched, tell, guide)
     return matched
+
+
+def _her_body_among(seen: list[Any]) -> Any:
+    """Of the things drawn in her colour, her body: the one, or the biggest where the rest are on it or against it (a
+    ship and its gun, seen as two). None where they are apart: two of hers, or two drawn alike, are left to play.
+    Offline 2026-10-14 a ship's gun was seen as a kind of its own, two kinds were drawn as her, she was taken for
+    neither, and she lined up her shots on the gun."""
+    if len(seen) <= 1:
+        return seen[0] if seen else None
+    biggest = max(seen, key=lambda t: float(t.w) * float(t.h))
+    for thing in seen:
+        if thing is biggest:
+            continue
+        gap_x = abs(float(thing.x) - float(biggest.x)) - (float(thing.w) + float(biggest.w)) / 2
+        gap_y = abs(float(thing.y) - float(biggest.y)) - (float(thing.h) + float(biggest.h)) / 2
+        if max(gap_x, gap_y) > ON_HER_PX:
+            return None
+    return biggest
+
+
+#: How far apart a thing drawn in her colour may be from her body and be part of it, in her picture's pixels.
+ON_HER_PX = 2.0
+
+
+def _what_her_keys_send(world: Any, moves: Any, hers: Any, matched: dict[int, CodeKind], tell: Any,
+                        guide: Any = None) -> None:
+    """What each key its code says sends a thing sends, put where she keeps what her keys make, until she has seen it:
+    which way it goes and how fast, in her picture. A shot too small and quick for her eyes to follow is aimed from the
+    first press. Offline 2026-10-14 a shooter's shots were two pixels wide and went 26 pixels a picture; she fired
+    once in 1.5 s until she saw one, 10.7 s into play, and 14 times in a minute."""
+    makes = getattr(hers, "makes", None)
+    if makes is None or not getattr(world, "sends", None):
+        return
+    from core.agency.which_one_answers_to_her import Makes
+
+    told = getattr(hers, "sends_told", None)
+    if told is None:
+        told = hers.sends_told = set()
+    scale = _laid(world, moves, guide)
+    for key, name in world.sends.items():
+        if key in makes or key in told:
+            continue
+        thing = world.thing(name)
+        speed = (getattr(thing, "speed", None) or 0.0) * scale
+        way = {"rises": "up", "falls": "down"}.get(getattr(thing, "moves", ""), "")
+        going = {"up": (0.0, -speed), "down": (0.0, speed)}.get(way)
+        if going is None or speed <= 0.0:
+            continue
+        kinds = [kind for kind, code in matched.items() if code.name == name]
+        makes[key] = Makes(key, kinds[0] if len(kinds) == 1 else -1, going[0], going[1], 0)
+        told.add(key)
+        if tell is not None:
+            tell(f"Its code says {key} fires its {name} {way}.", f"code says {key} sends")

@@ -117,6 +117,9 @@ class AKindOfThing:
     #: Each look it is drawn with, and what touching her does when it looks so: ("#f2c230", "scores"); the second is ""
     #: where the code does not tell the looks apart in what touching does.
     looks: tuple[tuple[str, str], ...] = ()
+    #: What its getting past an edge of the stage does, where the code does it in the same breath as touching her ("an
+    #: invader that lands or touches her costs a life"): then touching her costs nothing that letting it by would not.
+    past_an_edge: str = ""
 
 
 @dataclass
@@ -132,6 +135,8 @@ class AWorldAsItsCodeMakesIt:
     lives: int | None = None
     #: Each key it listens for, and what it does: "moves", "jumps", "acts", "pauses", ...
     keys: dict[str, str] = field(default_factory=dict)
+    #: Each key under which it makes a thing of a kind it keeps, and that kind's name: space sends "shots".
+    sends: dict[str, str] = field(default_factory=dict)
     #: Where in the code each finding was read: what a check against the running world names when it fails.
     read_at: dict[str, str] = field(default_factory=dict)
 

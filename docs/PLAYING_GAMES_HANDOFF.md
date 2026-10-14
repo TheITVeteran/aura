@@ -222,3 +222,12 @@ cd ~/.aura/flash-campaign/offline-bundle && git init -b main && git add -A \
    rewrite of the sampling in numpy gave the same numbers and was slower, and
    was taken out.
 4. Survival at two decisions a second.
+5. **Shooter, through the whole of her play.** Given the world's state, her
+   choosing now plays the shooter's minute out on seeds 1 to 6 at seven
+   decisions a second, a decision late: it shoots what costs her wherever it
+   lands instead of dodging it, and takes her ship, not its gun, for her.
+   Through the whole of her play it is not yet better: seeds 1 to 3 still
+   lost each game in about 10 to 15 s, best 0 to 40 points. Find what the
+   live path does that the harness does not: her eyes, the fire pace
+   (`_trigger` in `core/agency/playing_as_it_happens.py`), or whether the
+   code's reading reaches her choosing there.
