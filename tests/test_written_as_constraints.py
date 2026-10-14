@@ -41,7 +41,10 @@ def test_the_count_is_read_and_only_a_unique_solution_gives_an_answer() -> None:
 @pytest.mark.asyncio
 async def test_a_written_program_runs_her_engine_in_the_sandbox() -> None:
     from core.brain.symbolic_sandbox import SymbolicSandbox
-    from core.learning.procedures_from_solved_examples import _mechanisms_directory, _mechanisms_prelude
+    from core.learning.procedures_from_solved_examples import (
+        _mechanisms_directory,
+        _mechanisms_prelude,
+    )
 
     result = await SymbolicSandbox().run(PROGRAM, prelude=_mechanisms_prelude(),
                                          extra_read_paths=(_mechanisms_directory(),))

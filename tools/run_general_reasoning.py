@@ -348,7 +348,10 @@ def main() -> int:  # noqa: C901 - one stage after another, each short
                     crux.settled, crux.how, crux.detail = side, "computed in the sandbox", f"The computed value: {value}"
 
         if last >= STAGES.index("formal"):
-            from core.learning.procedures_from_solved_examples import _mechanisms_directory, _mechanisms_prelude
+            from core.learning.procedures_from_solved_examples import (
+                _mechanisms_directory,
+                _mechanisms_prelude,
+            )
             from core.reasoning.written_as_constraints import (
                 Outcome,
                 formalization_request,
