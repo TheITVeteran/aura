@@ -70,8 +70,8 @@ def problems(kind: str, part: str) -> list[dict[str, Any]]:
     if kind in ("cruxeval", "lcb", "blocksworld", "mystery_blocksworld") or kind.startswith("dm_"):
         from tools.run_g09_organ import LOADERS, _dm_tasks
 
-        load = LOADERS.get(kind) or (lambda: _dm_tasks(kind.removeprefix("dm_")))
-        tasks = sorted(load(), key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
+        loader = LOADERS.get(kind) or (lambda: _dm_tasks(kind.removeprefix("dm_")))
+        tasks = sorted(loader(), key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
         half = tasks[: len(tasks) // 2] if part == "development" else tasks[len(tasks) // 2:]
         if kind in ("blocksworld", "mystery_blocksworld"):
             from tools.planbench_restated import plan_as_text

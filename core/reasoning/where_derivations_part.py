@@ -95,7 +95,7 @@ def crux_request(question: str, first_reply: str, second_reply: str) -> str:
         "Name the one point they disagree on that decides between them. Reply with three lines:\n"
         "FIRST: what the first answer asserts on that point\n"
         "SECOND: what the second answer asserts on that point\n"
-        "QUESTION: one question whose answer settles that point"
+        "QUESTION: one question, complete in itself, whose answer settles that point"
     )
 
 

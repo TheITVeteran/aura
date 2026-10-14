@@ -83,8 +83,8 @@ def render_tokens(tokenizer: Any, conversation: list, *, thinking: bool = True) 
     return [int(t) for t in tokenizer.encode(prompt, add_special_tokens=False)]
 
 
-def _decode_token_groups(model: Any, tokenizer: Any, prompts: Sequence[list[int]], *, max_tokens: int, width: int,
-                         on_finish: Any, sampler: Any = None, seed: int | None = None) -> None:
+def _decode_token_groups(model: Any, tokenizer: Any, prompts: Sequence[list[int]], *, max_tokens: int | Sequence[int],
+                         width: int, on_finish: Any, sampler: Any = None, seed: int | None = None) -> None:
     """Decodes of token prompts in fixed groups of ``width``: greedy, or by ``sampler`` from ``seed``.
 
     Each group gets its own generator, prefilled once before any of it
@@ -98,6 +98,7 @@ def _decode_token_groups(model: Any, tokenizer: Any, prompts: Sequence[list[int]
     ``tokens`` excludes the stop token and ``seconds`` runs from its first
     generated token. A sampled run seeds MLX's generator once per group from
     ``seed`` and the group's first index, so a resumed run draws the same.
+    ``max_tokens`` is one bound for all, or one per prompt.
     """
     import gc
 
@@ -112,7 +113,8 @@ def _decode_token_groups(model: Any, tokenizer: Any, prompts: Sequence[list[int]
         sampling = {"sampler": sampler} if sampler is not None else {}
         generator = BatchGenerator(model, stop_tokens=[[token] for token in tokenizer.eos_token_ids],
                                    completion_batch_size=len(group), prefill_batch_size=len(group), **sampling)
-        uids = generator.insert([list(prompts[index]) for index in group], [max_tokens] * len(group))
+        bounds = [int(max_tokens)] * len(group) if isinstance(max_tokens, int) else [int(max_tokens[i]) for i in group]
+        uids = generator.insert([list(prompts[index]) for index in group], bounds)
         index_of = {uid: index for uid, index in zip(uids, group, strict=True)}
         tokens: dict[int, list[int]] = {uid: [] for uid in uids}
         started: dict[int, float] = {}
@@ -141,7 +143,7 @@ def decode_stream(
     tokenizer: Any,
     conversations: Sequence[list],
     *,
-    max_tokens: int,
+    max_tokens: int | Sequence[int],
     width: int,
     on_record: Any,
     thinking: bool = True,
