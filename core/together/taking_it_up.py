@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import time
 from typing import Any
 
@@ -77,7 +78,8 @@ class TakingItUp:
             from core.conversation.persistence import get_persistence
 
             stored = get_persistence().get_recent_history(limit=1024)
-        except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        # A store that will not read raises the database's own error as often as the OS's.
+        except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError, sqlite3.Error) as exc:
             record_degradation(
                 "together", exc, severity="warning",
                 action="what an utterance asks of her is read against later ones only",
@@ -136,7 +138,7 @@ class TakingItUp:
         """`read`, off the event loop. Never raises: an utterance not read is answered as it would have been."""
         try:
             return await asyncio.to_thread(self.read, said, who=who, at=at)
-        except (ImportError, AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        except (ImportError, ArithmeticError, LookupError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "together", exc, severity="warning",
                 action="one utterance was not read for what it asks of her",
@@ -207,19 +209,33 @@ def who_it_is(person: str, sent_from: str) -> str:
 _HEARING: set[Any] = set()
 
 
-def hear_in_the_background(said: str, *, person: str, sent_from: str) -> None:
+def who_she_is_with(record: Any) -> str:
+    """Who a turn with no name on it is from: whoever she is talking with, or the last person she met."""
+    people = [thing for thing in getattr(record, "_things", {}).values() if thing.kind == "person"]
+    if not people:
+        return who_it_is("", "")
+    talking = [thing for thing in people if thing.under_way]
+    return max(talking or people, key=lambda thing: (thing.last, thing.key)).key
+
+
+def hear_in_the_background(said: str, *, person: str = "", sent_from: str = "") -> None:
     """Start reading what somebody said while the turn it belongs to is prepared.
 
     The reading waits on her fast model for about half a second, and her
     reply is seconds away, so it runs beside the turn and is there when her
     model is handed the turn. A turn that outruns it is answered without it.
+    A turn that arrives with no name and no place on it, as one through the
+    kernel does, is from whoever she is with.
     """
     taking = install()
     try:
-        task = asyncio.get_running_loop().create_task(
-            taking.heard(said, who=who_it_is(person, sent_from)), name="what_it_asks_of_her"
+        who = who_it_is(person, sent_from) if (person or sent_from) else who_she_is_with(taking._her_record())
+        task = asyncio.get_running_loop().create_task(taking.heard(said, who=who), name="what_it_asks_of_her")
+    except (RuntimeError, ImportError, AttributeError, OSError) as exc:
+        record_degradation(
+            "together", exc, severity="warning",
+            action="one utterance was not read for what it asks of her",
         )
-    except RuntimeError:
         return
     _HEARING.add(task)
     task.add_done_callback(_HEARING.discard)

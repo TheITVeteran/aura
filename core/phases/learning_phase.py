@@ -244,13 +244,17 @@ async def read_what_the_turn_was_worth(state: AuraState, *, person: str = "", se
                 # free again; the turns between their messages are part of it.
                 who = about[0]
                 get_what_she_wants().started(who, "conversation", label=who.split(":", 1)[1])
-                _how_they_are_reaches_her(who)
             said = _said_this_turn(state)
-            if sent_from and about and len(said) > 1:
+            # Whoever the turn was with, named by the door it came through or
+            # by her own reading of who was in it. A turn through the kernel
+            # arrives with no place on it.
+            who = next((key for key in about if key.startswith("person:")), "")
+            if who and len(said) > 1:
+                _how_they_are_reaches_her(who)
                 # Her turn in whatever she and they are doing together.
                 from core.together.taking_it_up import get_taking_it_up
 
-                get_taking_it_up().she_said(said[1], who=about[0])
+                get_taking_it_up().she_said(said[1], who=who)
             met_this_turn(about, reading, said=said)
     except _LEARNING_RECOVERABLE_ERRORS as e:
         _record_learning_degradation(

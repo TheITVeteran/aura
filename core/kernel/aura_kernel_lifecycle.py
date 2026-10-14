@@ -210,6 +210,12 @@ class _TicksAndShutsDown:
 
             start_time = time.time()
             logger.info("🌀 Unitary Tick Initiated: '%s' (priority=%s)", objective, priority)
+            if priority and objective:
+                # What the message asks of her, and her answer if it is an
+                # invitation, read while the turn is prepared. Never raises.
+                from core.together.taking_it_up import hear_in_the_background
+
+                hear_in_the_background(objective)
 
             # 1. Feedback Loop: Begin
             entry = self.feedback_observer.begin_tick(

@@ -410,3 +410,49 @@ def test_her_own_model_tells_bryans_invitation_from_bryans_task():
     asked = reader.heard("hey, watch this youtube video for 10 minutes and comment on it as you watch.")
     assert invited.kind == "join" and invited.by_kind["join"] > invited.by_kind["do"]
     assert asked.kind == "do" and asked.by_kind["do"] > asked.by_kind["join"]
+
+
+# ── through the door a turn actually comes in by ────────────────────
+
+
+def test_a_turn_with_no_name_on_it_is_from_whoever_she_is_with(record):
+    """Live, 13 October: chat came through the kernel, which names nobody, and nothing was read."""
+    from core.together.taking_it_up import who_it_is, who_she_is_with
+
+    assert who_she_is_with(record) == who_it_is("", "")
+    _lived(record, {INES: 0.5, "person:marek": 0.1}, turns=3)
+    assert who_she_is_with(record) == "person:marek"  # the last she met
+    record.started(INES, "conversation", label="ines")
+    assert who_she_is_with(record) == INES  # whoever she is in the middle of talking with
+
+
+def test_the_kernels_tick_starts_the_reading_of_a_persons_message():
+    source = Path("core/kernel/aura_kernel_lifecycle.py").read_text()
+    start = source.index("Unitary Tick Initiated")
+    assert "hear_in_the_background(objective)" in source[start:start + 600]
+    assert "if priority and objective:" in source[start:start + 300]
+
+
+def test_the_reading_started_from_a_turn_reaches_the_with_and_her_model(record, monkeypatch):
+    import asyncio
+
+    from core.brain import what_she_is_given
+    from core.together import taking_it_up
+
+    _lived(record, {INES: 0.5})
+    taking, withs = _taking(record)
+    monkeypatch.setattr(taking_it_up, "_TAKING", taking)
+    said = "Do you want to watch this video with me?"
+
+    async def a_turn():
+        taking_it_up.hear_in_the_background(said)
+        await asyncio.gather(*list(taking_it_up._HEARING))
+
+    try:
+        asyncio.run(a_turn())
+        assert taking.of_this_turn in what_she_is_given.OF_THIS_TURN
+        assert withs.current(INES) is not None
+        assert taking.of_this_turn(said).startswith(HEADER)
+    finally:
+        if taking.of_this_turn in what_she_is_given.OF_THIS_TURN:
+            what_she_is_given.OF_THIS_TURN.remove(taking.of_this_turn)
