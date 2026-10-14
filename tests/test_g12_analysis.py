@@ -65,3 +65,27 @@ def test_empty_source_expectation_does_not_certify_an_unmeasured_run() -> None:
     result = paired({}, {}, "correct", expected_keys=[])
     assert result["requests"] == 0 and result["coverage"]["expected"] == 0
     assert result["coverage"]["complete"] is None
+
+
+def test_her_runs_alone_are_reported_without_a_base_run(tmp_path, monkeypatch) -> None:
+    import sys
+
+    from tools import g12_analysis
+
+    math_rows = tmp_path / "math" / "rows"
+    math_rows.mkdir(parents=True)
+    for key, correct, level in (("a", True, 1), ("b", False, 2), ("c", True, 2)):
+        (math_rows / f"{key}.json").write_text(json.dumps({"unique_id": key, "correct": correct, "level": level}))
+    graded = tmp_path / "ifbench" / "eval"
+    graded.mkdir(parents=True)
+    for mode, followed in (("loose", [True, True]), ("strict", [True, False])):
+        (graded / f"eval_results_{mode}.jsonl").write_text("".join(
+            json.dumps({"prompt": f"p{i}", "follow_all_instructions": f}) + "\n" for i, f in enumerate(followed)))
+    output = tmp_path / "report.json"
+    monkeypatch.setattr(sys, "argv", ["g12_analysis.py", "--her-math", str(tmp_path / "math"),
+                                      "--her-ifbench", str(tmp_path / "ifbench"), "--output", str(output)])
+    assert g12_analysis.main() == 0
+    report = json.loads(output.read_text())
+    assert report["math500"]["her"] == 2 and report["math500"]["requests"] == 3 and "base" not in report["math500"]
+    assert report["math500"]["by_level"] == {"1": {"n": 1, "her": 1}, "2": {"n": 2, "her": 1}}
+    assert report["ifbench"]["loose"]["her"] == 2 and report["ifbench"]["strict"]["her"] == 1

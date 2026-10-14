@@ -6,9 +6,14 @@ are paired by request and compared with an exact two-sided McNemar test; IFBench
 the prompt-level loose accuracy its authors report, with strict beside it,
 and paired the same way on whether every instruction was followed.
 
+G12 is assessed on her three runs (amendment of 8 October in
+docs/evidence/G12_FRONTIER_EVALUATION_2026-10-07.md); a benchmark whose base
+run is not given is reported for her alone: accuracy with its 95% Wilson
+interval, by group, and how many expected cases are missing.
+
 Usage:
-    g12_analysis.py --her-math DIR --base-math DIR --her-bbeh DIR --base-bbeh DIR
-        --her-ifbench DIR --base-ifbench DIR --output FILE
+    g12_analysis.py --her-math DIR [--base-math DIR] --her-bbeh DIR [--base-bbeh DIR]
+        --her-ifbench DIR [--base-ifbench DIR] --output FILE
 """
 
 from __future__ import annotations
@@ -94,6 +99,24 @@ def paired(her: dict[str, dict], base: dict[str, dict], field: str, group: str |
     return result
 
 
+def alone(her: dict[str, dict], field: str, group: str | None = None,
+          *, expected_keys: Iterable[str] | None = None) -> dict[str, Any]:
+    """Her accuracy on one benchmark with no base run beside it."""
+    expected = set(expected_keys) if expected_keys is not None else None
+    if expected is not None and set(her) - expected:
+        raise ValueError(f"results contain unexpected source case IDs: {sorted(set(her) - expected)!r}")
+    correct = sum(bool(row[field]) for row in her.values())
+    result = {"requests": len(her), "her": correct, "her_interval": wilson(correct, len(her)),
+              "missing": None if expected is None else len(expected - set(her))}
+    if group:
+        by: dict[str, list[str]] = defaultdict(list)
+        for k, row in her.items():
+            by[str(row[group])].append(k)
+        result["by_" + group] = {name: {"n": len(keys), "her": sum(bool(her[k][field]) for k in keys)}
+                                 for name, keys in sorted(by.items())}
+    return result
+
+
 def ifbench(directory: Path) -> dict[str, dict[str, Any]]:
     """Per prompt, whether every instruction was followed, loose and strict."""
     out: dict[str, dict[str, Any]] = {}
@@ -110,9 +133,9 @@ def ifbench(directory: Path) -> dict[str, dict[str, Any]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("her-math", "base-math", "her-ifbench", "base-ifbench"):
+    for name in ("her-math", "her-ifbench"):
         parser.add_argument("--" + name, type=Path, required=True)
-    for name in ("her-bbeh", "base-bbeh", "her-bbh", "base-bbh"):
+    for name in ("base-math", "base-ifbench", "her-bbeh", "base-bbeh", "her-bbh", "base-bbh"):
         parser.add_argument("--" + name, type=Path)
     parser.add_argument("--bbeh-mini", type=Path, default=Path("~/.aura/benchmarks/g09/bbeh/mini/data.json"),
                         help="the pinned complete Mini source, for case coverage and reference validation")
@@ -120,20 +143,25 @@ def main() -> int:
     args = parser.parse_args()
 
     report: dict[str, Any] = {}
-    report["math500"] = paired(rows(args.her_math, "unique_id"), rows(args.base_math, "unique_id"), "correct", "level")
-    if args.her_bbeh and args.base_bbeh:
+    her_math = rows(args.her_math, "unique_id")
+    report["math500"] = (paired(her_math, rows(args.base_math, "unique_id"), "correct", "level") if args.base_math
+                         else alone(her_math, "correct", "level"))
+    if args.her_bbeh:
         from tools.run_g12_bbeh import load_cases, validate_saved_result
 
         _, catalog = load_cases(args.bbeh_mini)
-        her, base = rows(args.her_bbeh, "id"), rows(args.base_bbeh, "id")
+        her = rows(args.her_bbeh, "id")
+        base = rows(args.base_bbeh, "id") if args.base_bbeh else {}
         for row in (*her.values(), *base.values()):
             catalog.validate_row(row)
             validate_saved_result(row)
-        report["bbeh_mini"] = paired(her, base, "correct", "task", expected_keys=catalog.by_id)
+        report["bbeh_mini"] = (paired(her, base, "correct", "task", expected_keys=catalog.by_id) if args.base_bbeh
+                               else alone(her, "correct", "task", expected_keys=catalog.by_id))
     if args.her_bbh and args.base_bbh:
         report["bbh"] = paired(rows(args.her_bbh, "id"), rows(args.base_bbh, "id"), "correct", "task")
-    her_if, base_if = ifbench(args.her_ifbench), ifbench(args.base_ifbench)
-    report["ifbench"] = {mode: paired({k: v for k, v in her_if.items()}, {k: v for k, v in base_if.items()}, mode)
+    her_if = ifbench(args.her_ifbench)
+    base_if = ifbench(args.base_ifbench) if args.base_ifbench else None
+    report["ifbench"] = {mode: paired(her_if, base_if, mode) if base_if is not None else alone(her_if, mode)
                          for mode in ("loose", "strict")}
     args.output.write_text(json.dumps(report, indent=1, sort_keys=True), encoding="utf-8")
     print(json.dumps({name: {k: v for k, v in value.items() if not k.startswith("by_")} if "her" in value else value
