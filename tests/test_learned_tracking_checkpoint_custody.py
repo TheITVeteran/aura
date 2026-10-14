@@ -19,9 +19,11 @@ def test_a_checkpoint_must_match_its_actual_file(tmp_path):
 
 
 def test_selecting_a_known_name_does_not_bypass_custody_or_choose_another_backend(tmp_path):
-    assert set(SOURCES) == {'online_tapir', 'cotracker3', 'sam2'}
+    assert set(SOURCES) == {'online_tapir', 'sam2'}
     for name in SOURCES:
         with pytest.raises(ValueError):
             load_backend(name, tmp_path / 'absent')
     with pytest.raises(ValueError):
         load_backend('unregistered', tmp_path / 'absent')
+    with pytest.raises(ValueError):
+        load_backend('cotracker3', tmp_path / 'absent')

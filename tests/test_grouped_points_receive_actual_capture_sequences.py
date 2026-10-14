@@ -194,12 +194,12 @@ def test_window_queries_admit_new_texture_and_protect_continuing_moving_marks(mo
 def test_actual_motion_selection_accepts_grouped_causal_tracking(monkeypatch):
     from core.perception.learned_tracking import selection
 
-    monkeypatch.setenv('AURA_PLAY_POINT_BACKEND', 'cotracker3')
-    monkeypatch.setenv('AURA_PLAY_POINT_WEIGHTS', '/invented-verified-checkpoint')
+    monkeypatch.setenv('AURA_PLAY_POINT_BACKEND', 'continuity_points')
+    monkeypatch.delenv('AURA_PLAY_POINT_WEIGHTS', raising=False)
     monkeypatch.setenv('AURA_PLAY_POINT_MODE', 'correcting')
     monkeypatch.setenv('AURA_PLAY_POINT_PIXEL_BUDGET', '1000000')
     eyes = selection.selected_motion_eyes()
-    assert isinstance(eyes.points, correcting.CorrectionsWhilePointsMove) and eyes.points._sequence_required
+    assert isinstance(eyes.points, correcting.CorrectionsWhilePointsMove) and not eyes.points._sequence_required
     assert eyes.points._teacher is None
     assert eyes.points.pixel_budget == 1_000_000
     monkeypatch.setenv('AURA_PLAY_POINT_PIXEL_BUDGET', '1000001')

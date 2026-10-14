@@ -33,11 +33,18 @@ class OnlineTapirBackend:
 
     name = "online_tapir"
 
-    def __init__(self, weights: Path, *, device: str = "cpu", model: Any = None, max_points: int = 64) -> None:
+    def __init__(self, weights: Path, *, device: str = "cpu", model: Any = None, max_points: int = 64,
+                 memory_lease: Any = None) -> None:
         if not _whole_number(max_points) or not 1 <= max_points <= 384:
             raise ValueError("TAPIR's point limit must be a bounded positive whole number")
         if model is None and not Path(weights).is_file():
             raise FileNotFoundError(f"TAPIR checkpoint is absent: {weights}")
+        if model is None:
+            from core.runtime.model_lane_control import (
+                require_active_synchronous_in_process_model_lane,
+            )
+
+            require_active_synchronous_in_process_model_lane(memory_lease)
         import torch
 
         self._torch = torch

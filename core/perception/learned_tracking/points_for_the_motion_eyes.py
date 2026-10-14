@@ -14,6 +14,7 @@ from scipy import ndimage
 
 from core.perception.learned_tracking.contracts import PointSeed, TrackingFrame
 from core.perception.picture_arithmetic import shrink
+from core.perception.points_before_the_picture_is_reduced import PointsBeforeReduction
 from core.perception.points_that_keep_their_motion import (
     FollowingPoints,
     SeenPoint,
@@ -21,6 +22,7 @@ from core.perception.points_that_keep_their_motion import (
     _new_points,
     _sample,
 )
+from core.runtime.optional_compute import OptionalComputeBusy
 from core.verify import invariant
 
 
@@ -33,7 +35,7 @@ class PointsForMotionEyes(FollowingPoints):
     """One worker-owned causal tracker, expressed in the motion eyes' working pixels."""
 
     def __init__(self, backend: Any, *, limit: int = 64, pixel_budget: int = 256_000,
-                 longest_gap: float = 1.) -> None:
+                 longest_gap: float = 1., fallback_when_busy: bool = False) -> None:
         super().__init__(limit=limit, longest_gap=longest_gap)
         if not 3 <= self.limit <= 384 or type(pixel_budget) is not int or not 256 <= pixel_budget <= 1_000_000:
             raise ValueError('learned point observation needs bounded point and pixel budgets')
@@ -48,6 +50,9 @@ class PointsForMotionEyes(FollowingPoints):
         self._window_positions: dict[int, tuple[float, float]] = {}
         self._moving_window_marks: set[int] = set()
         self.status = 'not started'
+        if type(fallback_when_busy) is not bool:
+            raise ValueError('a point fallback needs an explicit boolean choice')
+        self._fallback = PointsBeforeReduction(limit=limit, pixel_budget=pixel_budget) if fallback_when_busy else None
 
     def clear(self) -> None:
         super().clear()
@@ -58,6 +63,14 @@ class PointsForMotionEyes(FollowingPoints):
         self._window_positions.clear()
         self._moving_window_marks.clear()
         self.status = 'reset'
+        if self._fallback is not None:
+            self._fallback.clear()
+
+    def close(self) -> None:
+        close = getattr(self._backend, 'close', None)
+        if callable(close):
+            close()
+        self.clear()
 
     def _new_seed(self, x: float, y: float, at: float) -> PointSeed:
         seed = PointSeed(self._number, x, y)
@@ -72,6 +85,7 @@ class PointsForMotionEyes(FollowingPoints):
             self.clear()
             return ()
         original_shape = source.shape[:2]
+        fast = self._fallback.see_source(source, working, at) if self._fallback is not None else ()
         factor = min(1., math.sqrt(self.pixel_budget / (source.shape[0] * source.shape[1])))
         if factor < 1.:
             source = shrink(source, int(source.shape[1] * factor), int(source.shape[0] * factor))
@@ -105,12 +119,32 @@ class PointsForMotionEyes(FollowingPoints):
             if not _same_capture(result, frame):
                 raise ValueError('a learned point result belongs to another capture')
             self._publish(result, grey, working.shape[:2], at)
+        except OptionalComputeBusy as why:
+            if self._fallback is None:
+                self.clear()
+                raise
+            self._slots = ()
+            self._native_visible.clear()
+            self._births.clear()
+            self._window_positions.clear()
+            self._moving_window_marks.clear()
+            self.status = f'point model deferred: {why}'
+            self.points = self._fallback_marks(fast)
         except BaseException:
             self.clear()
             raise
         self._at, self._previous_pixels = at, source.copy()
         self._births = {seed.number: self._births[seed.number] for seed in self._slots}
+        if not self.points and fast:
+            self.points = self._fallback_marks(fast)
         return self.points
+
+    @staticmethod
+    def _fallback_marks(points: tuple) -> tuple:
+        # Distinct namespaces prevent a fallback mark inheriting a model
+        # query's identity when the available compute changes.
+        return tuple(SeenPoint(p.number + (1 << 52), p.x, p.y, p.old_x, p.old_y, p.born,
+                               p.before, p.at, p.error, p.pictures) for p in points)
 
     def _new_window_queries(self, source: np.ndarray, grey: np.ndarray) -> list[tuple[float, float]]:
         """A finished window can admit new texture when its old marks only describe the background."""

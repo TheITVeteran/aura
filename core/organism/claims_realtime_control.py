@@ -474,8 +474,16 @@ def _travel_turn_claims() -> tuple:
 
 def _bounded_pixel_claims() -> tuple:
     from core.perception.boundary_support_for_translation import _bounded_edge_samples_invariant
+    from core.perception.learned_tracking.continuity_backend import _continuity_invariant
+    from core.runtime.optional_compute import _optional_headroom_invariant
 
     return (
+        ('continuity_points_need_fresh_unique_pixels', 'core/perception/learned_tracking/continuity_backend.py',
+         'tests/test_original_continuity_points.py', lambda: _continuity_invariant() == (),
+         'Original point tracking retains bounded appearance memory; absent or competing current patches supply no visible motion.'),
+        ('optional_compute_preserves_unobserved_headroom', 'core/runtime/optional_compute.py',
+         'tests/test_tracking_models_share_host_capacity.py', lambda: _optional_headroom_invariant() == (),
+         'Optional numerical work defers when host headroom is unknown and cannot queue behind an occupied process permit.'),
         ("bounded_edge_samples_keep_their_observed_median", "core/perception/boundary_support_for_translation.py",
          "tests/test_bounded_edge_samples_keep_their_pixels.py", lambda: _bounded_edge_samples_invariant() == (),
          "Exterior edge samples retain the same observed colour medians through support holes; missing samples remain unavailable."),

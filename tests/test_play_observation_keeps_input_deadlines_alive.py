@@ -399,3 +399,48 @@ async def test_public_activity_preserves_measured_quiet_and_change_without_worke
 
 async def test_detached_state_has_a_local_invariant():
     assert observing._owned_play_observation_invariant() == ()
+
+
+async def test_close_releases_the_actual_eyes_after_its_pending_frame_finishes(slots):
+    entered, finished_frame, disposed = threading.Event(), threading.Event(), threading.Event()
+    events = []
+
+    class OwnedEyes(Eyes):
+        def close(self):
+            events.append((finished_frame.is_set(), threading.get_ident()))
+            disposed.set()
+
+    eyes = OwnedEyes(delay=.08, entered=entered, finished=finished_frame)
+    observation = await observing.open_play_observation(factory=lambda **_kw: eyes, frame_wait_s=.005)
+    assert await observation.see(PICTURE, 1.) is None and entered.is_set()
+    await observation.close()
+    assert not disposed.is_set()
+    for _ in range(200):
+        if disposed.is_set():
+            break
+        await asyncio.sleep(.002)
+    assert disposed.is_set() and len(events) == 1 and events[0][0] is True
+    assert events[0][1] != threading.get_ident()
+    await observation.close()
+    assert len(events) == 1
+
+
+async def test_an_abandoned_startup_closes_its_late_model_owner(slots):
+    disposed = threading.Event()
+
+    class OwnedEyes(Eyes):
+        def close(self):
+            disposed.set()
+
+    def factory(**_kw):
+        time.sleep(.08)
+        return OwnedEyes()
+
+    observation = observing.PlayObservation(factory=factory, startup_wait_s=.005)
+    assert not await observation.start()
+    await observation.close()
+    for _ in range(200):
+        if disposed.is_set():
+            break
+        await asyncio.sleep(.002)
+    assert disposed.is_set() and observation._eyes is None

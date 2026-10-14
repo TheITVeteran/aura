@@ -10,7 +10,7 @@
 # Everything else below is the closed-world list the generator wrote: what
 # this package imports today, and nothing else.
 
-description = "core.organism: measured claims may exercise named observation custody, bounded picture probes, lattice phase geometry, drawing-clock correlation, rigid point geometry, appearance parts and joined-foreground retention, saved program effects, construction readiness, picked-outcome and spatial-relation canaries; other imports remain closed."
+description = "core.organism: measured claims may exercise named observation custody, original point correspondence, bounded picture probes, lattice phase geometry, drawing-clock correlation, rigid point geometry, appearance parts and joined-foreground retention, saved program effects, construction readiness, picked-outcome and spatial-relation canaries; other imports remain closed."
 
 include_rules = [
     # The registered knowledge-revision canary exercises the canonical store.
@@ -33,6 +33,7 @@ include_rules = [
     "+core.perception.a_board_seen", # Pure check of grouped lattice phases against observed teeth.
     "+core.perception.a_picture_examined_without_holding_the_loop", # Pure check of detached picture-probe inputs.
     "+core.perception.learned_tracking.contracts", # Pure check of capture geometry and occluded predictions.
+    "+core.perception.learned_tracking.continuity_backend", # Pure check of original current pixel correspondence.
     "+core.perception.learned_tracking.points_for_the_motion_eyes", # Pure check of learned points retaining capture custody.
     "+core.perception.learned_tracking.corrections_while_points_keep_moving", # Pure check of late corrections transported through observed pixels.
     "+core.perception.foreground_appearance", # Synthetic validation of bounded appearance masks.

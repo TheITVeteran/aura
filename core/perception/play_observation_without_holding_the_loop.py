@@ -79,6 +79,30 @@ def _seen(eyes: Any, picture: Any, at: float) -> tuple[list[dict[str, Any]], dic
     return copy.deepcopy(happened), _detached_state(eyes)
 
 
+def _close_owned_eyes(eyes: Any) -> None:
+    close = getattr(eyes, 'close', None)
+    if not callable(close):
+        close = getattr(getattr(eyes, 'points', None), 'close', None)
+    if callable(close):
+        close()
+
+
+def _retired_operation(raw: Future, eyes: Any, kind: str) -> None:
+    """Dispose on the executor after the owner finishes, including late startup."""
+    if kind == 'start' and not raw.cancelled() and raw.exception() is None:
+        eyes = raw.result()[0]
+    if eyes is not None:
+        cleanup = submit_blocking_io(_close_owned_eyes, eyes, label='play_observation_cleanup')
+        cleanup.add_done_callback(_cleanup_received)
+
+
+def _cleanup_received(raw: Future) -> None:
+    if not raw.cancelled() and raw.exception() is not None:
+        from core.runtime.errors import record_degradation
+
+        record_degradation('play_observation_cleanup', raw.exception(), action='kept unreleased model memory counted')
+
+
 def _completed(raw: Future, slots: Any) -> None:
     """The actual operation, including a cancelled queued call, returns its permit."""
     try:
@@ -213,13 +237,19 @@ class PlayObservation:
         return await self._wait(operation, self._frame_wait_s)
 
     def _retire(self) -> None:
+        if self._closed:
+            return
         self._closed = True
         self._generation += 1
-        self._eyes = None
+        eyes, self._eyes = self._eyes, None
         operation, self._operation = self._operation, None
         if operation is not None:
             operation.discard = True
+            operation.raw.add_done_callback(lambda done: _retired_operation(done, eyes, operation.kind))
             operation.raw.cancel()
+        elif eyes is not None:
+            cleanup = submit_blocking_io(_close_owned_eyes, eyes, label='play_observation_cleanup')
+            cleanup.add_done_callback(_cleanup_received)
         self._status = "closed"
 
     async def close(self) -> None:

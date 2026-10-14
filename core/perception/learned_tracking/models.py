@@ -1,7 +1,9 @@
 """Explicit local visual-model selection with pinned source and checkpoint custody."""
 from __future__ import annotations
 
+import gc
 import hashlib
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,10 +20,6 @@ class ModelSource:
 
 
 SOURCES = {
-    'cotracker3': ModelSource('cotracker3', 'https://github.com/facebookresearch/co-tracker',
-        '82e02e8029753ad4ef13cf06be7f4fc5facdda4d',
-        'https://huggingface.co/facebook/cotracker3/resolve/acc21f9dba34834006a50432bde26b86aa68d794/scaled_online.pth',
-        '205d34789f19699d64b22cf93f9b697f15f28d4025240e31532e504109837218', 'CC-BY-NC-4.0'),
     'online_tapir': ModelSource('online_tapir', 'https://github.com/google-deepmind/tapnet',
         '730cda1c730877cfedbe01bf87fb1cadb78a565d',
         'https://storage.googleapis.com/dm-tapnet/bootstap/causal_bootstapir_checkpoint.pt',
@@ -51,14 +49,32 @@ def load_backend(name: str, weights: Path, *, device: str = 'cpu', expected_sha2
     if name not in SOURCES:
         raise ValueError('the requested visual tracker has no registered source')
     verified_checkpoint(weights, expected_sha256 or SOURCES[name].sha256)
+    from core.perception.learned_tracking.admitted_model_memory import (
+        AdmittedTrackingBackend,
+        admit_tracking_memory,
+        finish_device_work,
+    )
+    from core.runtime.optional_compute import optional_compute
+
+    lease = admit_tracking_memory(name, weights)
+    try:
+        with optional_compute():
+            backend = _construct_backend(name, weights, device=device, memory_lease=lease, **options)
+            finish_device_work(device)
+    except BaseException as why:
+        traceback.clear_frames(why.__traceback__)
+        gc.collect()
+        finish_device_work(device, empty_cache=True)
+        lease.release(reason='tracking_model_construction_failed')
+        raise
+    return AdmittedTrackingBackend(backend, lease, name=name, device=device)
+
+
+def _construct_backend(name: str, weights: Path, *, device: str, **options: Any) -> Any:
     if name == 'online_tapir':
         from core.perception.learned_tracking.tapir_backend import OnlineTapirBackend
 
         return OnlineTapirBackend(weights, device=device, **options)
-    if name == 'cotracker3':
-        from core.perception.learned_tracking.cotracker_backend import CoTrackerBackend
-
-        return CoTrackerBackend(weights, device=device, **options)
     from core.perception.learned_tracking.sam2_backend import Sam2Backend
 
     return Sam2Backend(weights, device=device, **options)

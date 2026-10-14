@@ -70,7 +70,7 @@ class Sam2Backend:
 
     def __init__(self, weights: str | Path, *, device: str = "cpu", config: str = TINY_CONFIG,
                  predictor: Any = None, max_objects: int = 16, retained_frames: int = 32,
-                 retained_conditioning: int = 2) -> None:
+                 retained_conditioning: int = 2, memory_lease: Any = None) -> None:
         if device not in ("cpu", "mps", "cuda"):
             raise ValueError("tracking device must be cpu, mps or cuda")
         if (type(max_objects) is not int or not 1 <= max_objects <= 64
@@ -85,11 +85,17 @@ class Sam2Backend:
         self._index = -1
         self.max_objects, self.retained_frames = max_objects, retained_frames
         self.retained_conditioning = retained_conditioning
+        self._memory_lease = memory_lease
 
     def _model(self) -> Any:
         if self._predictor is None:
             if not self.weights.is_file():
                 raise FileNotFoundError(f"SAM 2 weights are not present: {self.weights}")
+            from core.runtime.model_lane_control import (
+                require_active_synchronous_in_process_model_lane,
+            )
+
+            require_active_synchronous_in_process_model_lane(self._memory_lease)
             from sam2.build_sam import build_sam2_video_predictor
 
             self._predictor = build_sam2_video_predictor(

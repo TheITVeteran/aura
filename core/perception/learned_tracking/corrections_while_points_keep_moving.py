@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import math
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
@@ -21,6 +22,7 @@ from core.perception.points_before_the_picture_is_reduced import (
 from core.perception.points_that_keep_their_motion import SeenPoint, _grey, _pyramid
 from core.runtime.executors import submit_blocking_io
 from core.runtime.lockdep import checked_thread_semaphore
+from core.runtime.optional_compute import OptionalComputeBusy
 from core.verify import invariant
 
 _SLOTS = checked_thread_semaphore('perception.learned_point_corrections', 1)
@@ -158,6 +160,8 @@ class CorrectionsWhilePointsMove(PointsBeforeReduction):
         self._learned: tuple[SeenPoint, ...] = ()
         self._transport: _VisibleTransport | None = None
         self.correction_status = 'not started'
+        self._closed = False
+        self._deferred_until = 0.
 
     def clear(self) -> None:
         super().clear()
@@ -167,6 +171,7 @@ class CorrectionsWhilePointsMove(PointsBeforeReduction):
         self._transport = None
         self._failed_generation = None
         self._submitted_at = None
+        self._deferred_until = 0.
         self.correction_status = 'reset'
 
     def _refine(self, pictures: tuple[_Picture, ...], reset: bool) -> _Refinement:
@@ -217,6 +222,10 @@ class CorrectionsWhilePointsMove(PointsBeforeReduction):
             if transported is not None:
                 self._transport = _retain_visible_marks(self._transport, transported, min(192, self.limit))
             self.correction_status = 'current visible correction' if transported is not None else 'no visible correspondence'
+        except OptionalComputeBusy as why:
+            self._operation = None
+            self.correction_status = f'correction deferred: {why}'
+            self._deferred_until = time.monotonic() + .5
         except Exception as why:
             from core.runtime.errors import record_degradation
 
@@ -246,7 +255,8 @@ class CorrectionsWhilePointsMove(PointsBeforeReduction):
 
     def _submit(self, picture: _Picture) -> None:
         slots = _SLOTS
-        if self._failed_generation == self._generation or self._operation is not None or not slots.acquire(blocking=False):
+        if (self._closed or time.monotonic() < self._deferred_until or self._failed_generation == self._generation
+                or self._operation is not None or not slots.acquire(blocking=False)):
             return
         pictures, reset = self._batch(picture)
         if not pictures:
@@ -275,7 +285,8 @@ class CorrectionsWhilePointsMove(PointsBeforeReduction):
         fast = super().see_source(source, working, at)
         if self._transport is not None:
             self._transport.see_source(source, working, at)
-        picture = _Picture(np.array(source, copy=True), np.array(working, copy=True), at, self._generation)
+        picture = _Picture(np.array(_native_picture(source, self.pixel_budget), copy=True),
+                           np.array(working, copy=True), at, self._generation)
         self._retained.append(picture)
         self._receive()
         current = self._current_learned(at)
@@ -284,6 +295,24 @@ class CorrectionsWhilePointsMove(PointsBeforeReduction):
                                                                  for p in current)))
         self._submit(picture)
         return self.points
+
+    def close(self) -> None:
+        """The pending worker closes its teacher after its last operation finishes."""
+        self._closed = True
+        operation = self._operation
+        if operation is not None and not operation.future.done():
+            operation.future.add_done_callback(lambda _done: self._close_teacher())
+        else:
+            self._close_teacher()
+
+    def _close_teacher(self) -> None:
+        teacher, self._teacher = self._teacher, None
+        if teacher is not None:
+            close = getattr(teacher, 'close', None)
+            if callable(close):
+                close()
+        self._retained.clear()
+        self._transport = None
 
     def _current_learned(self, at: float) -> tuple[SeenPoint, ...]:
         carried = self._transport.points if self._transport is not None else ()
