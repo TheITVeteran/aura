@@ -50,5 +50,7 @@ def test_every_dm_module_and_bbh_task_splits_into_disjoint_halves_graded_by_its_
         assert abs(len(development) - len(test)) <= 1
         row = development[0]
         assert grader_for(kind)(str(row["truth"]), row["truth"])
+    framed = problems("bbh_word_sorting", "development")[0]
+    assert framed["key"].startswith("word_sorting:") and framed["problem"].rstrip().endswith("Let's think step by step.")
     option = next(r for r in problems("bbh_date_understanding", "development") if r["truth"].startswith("("))
     assert grader_for("bbh_date_understanding")(option["truth"].strip("()"), option["truth"])

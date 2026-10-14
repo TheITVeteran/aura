@@ -15,8 +15,9 @@ Natural Plan kind, CRUXEval's output prediction, LiveCodeBench's execution set a
 generation, the problems are
 ordered by a hash of their id and the first half is development. Every
 DeepMind mathematics module (``dm_<module>``) and every BIG-Bench Hard task
-(``bbh_<task>``, its bare question and target) is split the same way, so a
-book can be filled from development halves alone.
+(``bbh_<task>``, posed with BBH's worked examples as the transfer domain poses
+it) is split the same way, so a book can be filled from development halves
+alone.
 
 Usage:
     induce_g09_procedures.py --kinds bbeh_hyperbaton,calendar --output DIR    (or --kinds all, minus --except)
@@ -59,12 +60,13 @@ def problems(kind: str, part: str) -> list[dict[str, Any]]:
     from tools.run_g09_organ import BBEH_SUFFIX
 
     if kind.startswith("bbh_"):
-        task = kind.removeprefix("bbh_")
-        examples = json.loads((BENCH / f"bbh-src/bbh/{task}.json").read_text(encoding="utf-8"))["examples"]
-        ordered = sorted(range(len(examples)), key=lambda i: hashlib.sha256(f"{kind}:{i}".encode()).hexdigest())
-        chosen = ordered[: len(ordered) // 2] if part == "development" else ordered[len(ordered) // 2:]
-        return [{"key": f"{kind}:{i}", "problem": examples[i]["input"], "truth": examples[i]["target"]}
-                for i in chosen]
+        from tools.run_g09_organ import _transfer_tasks
+
+        group = kind.removeprefix("bbh_")
+        tasks = sorted((t for t in _transfer_tasks() if t["group"] == group),
+                       key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
+        half = tasks[: len(tasks) // 2] if part == "development" else tasks[len(tasks) // 2:]
+        return [{"key": t["id"], "problem": t["request"], "truth": t["truth"]} for t in half]
     if kind in ("cruxeval", "lcb", "blocksworld", "mystery_blocksworld") or kind.startswith("dm_"):
         from tools.run_g09_organ import LOADERS, _dm_tasks
 
@@ -120,7 +122,7 @@ def test_ids(domain: str) -> set[str]:
         kinds = ["calendar"]
     elif domain == "trip":
         kinds = ["trip"]
-    elif domain in ("cruxeval", "meeting", "lcb", "blocksworld", "mystery_blocksworld") or domain.startswith("dm_"):
+    elif domain in ("cruxeval", "meeting", "lcb", "blocksworld", "mystery_blocksworld") or domain.startswith(("dm_", "bbh_")):
         kinds = [domain]
     else:
         raise ValueError(f"no development and test split is defined for {domain}")

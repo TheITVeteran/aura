@@ -55,9 +55,14 @@ if str(ROOT) not in sys.path:
 
 #: Four DeepMind mathematics modules (Saxton et al. 2019), drawn by random.Random(20261012) from its 56.
 DM_MODULES = ("algebra__linear_1d", "algebra__linear_2d_composed", "comparison__sort_composed", "polynomials__evaluate")
-DOMAINS = ("math", "code", "planning", "knowledge", "transfer", "bbeh", "trip", "aime", "cruxeval", "meeting", "lcb",
-           "blocksworld", "mystery_blocksworld", *(f"dm_{module}" for module in DM_MODULES))
 BENCH = Path("~/.aura/benchmarks").expanduser()
+#: Every DeepMind mathematics module and BIG-Bench Hard task on this host. Each is also a domain of its
+#: own, so the requests of one kind can be drafted and answered by kind.
+DM_ALL = tuple(sorted(p.stem for p in (BENCH / "g09/dm-math/mathematics_dataset-v1.0/interpolate").glob("*.txt")))
+BBH_ALL = tuple(sorted(p.stem for p in (BENCH / "bbh-src/bbh").glob("*.json")))
+DOMAINS = ("math", "code", "planning", "knowledge", "transfer", "bbeh", "trip", "aime", "cruxeval", "meeting", "lcb",
+           "blocksworld", "mystery_blocksworld", *(f"dm_{module}" for module in dict.fromkeys((*DM_MODULES, *DM_ALL))),
+           *(f"bbh_{task}" for task in BBH_ALL))
 #: EvalPlus's own request for a chat model.
 CODE_REQUEST = ("Please provide a self-contained Python script that solves the following problem "
                 "in a markdown code block:\n```\n{prompt}\n```")
@@ -263,7 +268,9 @@ LOADERS = {"math": _math_tasks, "code": _code_tasks, "planning": _planning_tasks
            "meeting": _meeting_tasks, "lcb": _lcb_tasks,
            "blocksworld": lambda: _planbench_tasks("blocksworld"),
            "mystery_blocksworld": lambda: _planbench_tasks("mystery_blocksworld"),
-           **{f"dm_{module}": (lambda module=module: _dm_tasks(module)) for module in DM_MODULES}}
+           **{f"dm_{module}": (lambda module=module: _dm_tasks(module)) for module in (*DM_MODULES, *DM_ALL)},
+           **{f"bbh_{task}": (lambda task=task: [t for t in _transfer_tasks() if t["group"] == task])
+              for task in BBH_ALL}}
 
 
 def sample(tasks: list[dict[str, Any]], count: int, seed: int, excluded: set[str]) -> list[dict[str, Any]]:
@@ -618,7 +625,8 @@ GRADERS = {"math": grade_math, "code": grade_code, "planning": grade_planning,
            "meeting": grade_meeting, "lcb": grade_lcb,
            "blocksworld": lambda text, truth: _planbench_grade(text, truth),
            "mystery_blocksworld": lambda text, truth: _planbench_grade(text, truth),
-           **{f"dm_{module}": grade_dm for module in DM_MODULES}}
+           **{f"dm_{module}": grade_dm for module in (*DM_MODULES, *DM_ALL)},
+           **{f"bbh_{task}": grade_transfer for task in BBH_ALL}}
 
 
 # ── The run ────────────────────────────────────────────────────────────────
