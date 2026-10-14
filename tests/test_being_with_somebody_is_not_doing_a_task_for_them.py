@@ -693,3 +693,28 @@ def test_the_scorer_does_not_load_a_model_where_mlx_is_kept_off_the_gpu(monkeypa
     # And with nothing scored, nothing is read and nothing is waited on twice.
     reader = WhatItAsksOfHer(ear.score)
     assert reader.heard("Do you want to watch this with me?").kind == ""
+
+
+def test_a_reader_with_no_history_is_set_against_what_follows_nothing_in_particular(record, monkeypatch):
+    """Her cortex starts with nothing to set its scores against, and four passes give it a reference."""
+    import asyncio
+
+    from core.together import taking_it_up
+    from core.together.what_was_proposed import CONTENT_FREE
+
+    _lived(record, {INES: 0.5})
+    record.started(INES, "conversation", label="ines")
+    fresh = WhatItAsksOfHer(lambda said, seconds: (_ for _ in ()).throw(AssertionError("the parent must not score")))
+    taking = TakingItUp(fresh, record=record, together=Together())
+    monkeypatch.setattr(taking_it_up, "_TAKING", taking)
+    client = _TurnsClient(SAID)
+    said = "Do you want to watch this video with me?"
+    try:
+        read = asyncio.run(taking_it_up.heard_in_a_turn(said, client))
+    finally:
+        from core.brain import what_she_is_given
+
+        if taking.of_this_turn in what_she_is_given.OF_THIS_TURN:
+            what_she_is_given.OF_THIS_TURN.remove(taking.of_this_turn)
+    assert [asked["said"] for asked in client.asked] == [*CONTENT_FREE, said]
+    assert read["proposal"]["kind"] == "join" and read["proposal"]["heard_before"] == len(CONTENT_FREE)

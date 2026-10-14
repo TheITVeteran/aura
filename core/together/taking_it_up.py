@@ -172,8 +172,15 @@ class TakingItUp:
             scored = None
             if client is not None:
                 from core.brain.llm.what_she_expects_next import asked_of_the_worker
+                from core.together.what_was_proposed import CONTENT_FREE
 
-                scored = await asked_of_the_worker(client, said, self._reads().seconds())
+                reader = self._reads()
+                if reader.heard_before() <= 0:
+                    # Her cortex's own reference, once: what the answers
+                    # score after nothing in particular.
+                    for empty in CONTENT_FREE:
+                        reader.remember(empty, scored=await asked_of_the_worker(client, empty, reader.seconds()) or None)
+                scored = await asked_of_the_worker(client, said, reader.seconds())
                 if not scored:
                     return {}
             return await asyncio.to_thread(self.read, said, who=who, at=at, scored=scored)

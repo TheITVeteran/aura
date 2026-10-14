@@ -54,7 +54,7 @@ from typing import Any
 
 from core.runtime.lockdep import checked_lock
 
-__all__ = ["KINDS", "SECONDS", "Proposal", "WhatItAsksOfHer"]
+__all__ = ["CONTENT_FREE", "KINDS", "SECONDS", "Proposal", "WhatItAsksOfHer"]
 
 KINDS: tuple[str, ...] = ("join", "do", "ask", "tell", "greet")
 
@@ -68,6 +68,13 @@ SECONDS: Mapping[str, tuple[str, ...]] = {
     "tell": ("Oh, really?", "That's lovely.", "Oh no.", "That sounds"),
     "greet": ("Hi!", "Hello.", "Hey.", "Bye!"),
 }
+
+#: Utterances that ask nothing, for a reader with no history to set scores
+#: against: what a second part scores after nothing in particular is its own
+#: likelihood, which is what has to be taken out (Zhao et al. 2021). Measured
+#: 13 October on the held-out set with the reference held fixed: these four
+#: read 43 of 48 as written, and all 188 of her stored messages 44.
+CONTENT_FREE: tuple[str, ...] = ("N/A", "...", "[blank]", "-")
 
 #: How many of the things said to her a second part's usual score is taken
 #: over; the window her record reads her own history over.
