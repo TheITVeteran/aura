@@ -885,6 +885,14 @@ class _RunsTheThinkingLoop:
         context, foreground_turn_objective = self._run_thinking_loop_part_1(context, objective, origin, state)
 
         is_background = bool(kwargs.get("is_background", False))
+        if not is_background and self._is_user_facing_origin(origin):
+            # What the message asks of her, and her answer if it is an
+            # invitation, read while the turn is prepared. Never raises.
+            from core.together.taking_it_up import hear_in_the_background
+
+            hear_in_the_background(
+                objective, person=str((context or {}).get("user_id") or ""), sent_from=str(origin or "")
+            )
         explicit_timeout = kwargs.get("timeout_s", kwargs.get("timeout"))
         try:
             cycle_timeout = float(explicit_timeout) if explicit_timeout is not None else 0.0

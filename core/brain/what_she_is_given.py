@@ -165,11 +165,32 @@ def readings_in(text: Any, markers: Iterable[str]) -> list[str]:
     return found
 
 
+#: Readings taken of the turn itself by whatever takes them, each given what
+#: was said and returning a headed block or nothing. They travel as readings
+#: with the rest. See core/together/taking_it_up.py for the first.
+OF_THIS_TURN: list[Any] = []
+
+
+def _of_this_turn(said: Any) -> list[str]:
+    found: list[str] = []
+    for read in list(OF_THIS_TURN):
+        try:
+            block = str(read(str(said or "")) or "").strip()
+        # A reading that fails is one reading fewer, and her turn goes on.
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("a reading of this turn was not taken: %s", exc)
+            continue
+        if block:
+            found.append(block)
+    return found
+
+
 def what_she_is_given(
     messages: Any,
     system_prompt: Any,
     *,
     markers: Iterable[str],
+    of_this_turn: Iterable[str] = (),
 ) -> tuple[Any, str]:
     """The turn without the runtime's own words, and with its readings kept as readings.
 
@@ -181,7 +202,7 @@ def what_she_is_given(
     if not isinstance(messages, list):
         return messages, str(system_prompt or "")
     heads = tuple(markers)
-    readings: list[str] = list(readings_in(system_prompt, heads))
+    readings: list[str] = [*readings_in(system_prompt, heads), *of_this_turn]
     kept: list[Any] = []
     for message in messages:
         if not isinstance(message, dict) or str(message.get("role") or "").strip().lower() != "system":
@@ -249,6 +270,7 @@ def for_her_model(
         messages,
         system_prompt,
         markers=(*_READINGS, *_REMEMBERED, *of_herself, *(marker for _name, marker in observables)),
+        of_this_turn=_of_this_turn(said),
     )
     logger.info(
         "🧵 [NO SYSTEM TEXT] %d characters the runtime wrote were not dispatched; "

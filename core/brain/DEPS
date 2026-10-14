@@ -93,6 +93,9 @@ include_rules = [
     "+core.state",
     "+core.synthesis",
     "+core.thought_stream",
+    # The loop that serves chat starts the reading of what a message asks of
+    # her, so an invitation is answered by her and not carried out as a task.
+    "+core.together",
     "+core.utils",
     "+core.verify",
     "+core.voice",
