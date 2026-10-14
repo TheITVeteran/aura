@@ -54,3 +54,45 @@ All nine repository gates passed. Smoke passed 165 tests with one skip in
 82.17 seconds. The first layering check rejected the newly registered
 world-reading canary; the narrow organism dependency now names that module
 and its reason. No baseline or gate was weakened.
+
+## Independent bounded whole-app results at eca2af0c9
+
+The corrected one-minute task budgets returned normally. Seed 1 took
+67.076471 seconds and ended still playing at score 360, two lives, one
+loss and no completed game. Its actor received 51.286942 seconds of
+pictures, with 622 action cycles, 582 trigger calls and 74 taps. A task
+budget includes preparation; this is not a full 60 seconds of play.
+
+Seed 2 took 68.534283 seconds. Its first game ended at score zero after
+7.715800 seconds; its second ended at score 200 after 37.150400 seconds.
+At the final read it was in a third game at score 20 with three lives,
+and had accumulated six life losses. Seed 3 took 68.095608 seconds and
+ended still playing at score 360, two lives, one loss and no completed
+game. All three returned no error and all three had won false.
+
+The independent tally was read only after normal whole-app play returned.
+No world state selected an action. The end image for seed 1 independently
+shows SCORE 360 and LIVES 2. These results establish an improvement for
+two seeds and retain a failed first attempt on the third. They cannot
+certify reliable performance or a presentation-ready campaign.
+
+The combined three-seed record is at
+`/private/tmp/codex-steer/shooter-current-control-sources-three-seeds-1013.json`.
+
+## Rejected scheduling experiment
+
+A candidate gave one 0.25-second ordinary action turn after a completed
+isolated neutral phase, preserved receipt ownership, released ordinary
+holds before later trials and excluded unresolved task guesses. Its
+related suites passed 150 tests in 44.50 seconds. The ordinary whole-app
+seed-2 measurement nevertheless took 60.850882 seconds and lost five
+games. Their scores were 0, 0, 0, 0 and 20, after 8.489800, 9.469900,
+9.352400, 10.883300 and 12.760600 seconds. The final tally was over,
+score 20, no lives and 15 accumulated life losses. It returned no error
+and won false. The trigger ran 989 times but delivered only 15 taps.
+
+The candidate is rejected from the working implementation. Passing its
+component tests did not establish a gameplay gain. Its patch and helper
+are preserved at `/private/tmp/codex-steer/rejected-calibration-action-window-1013/`;
+its run is at `/private/tmp/codex-steer/shooter-calibration-action-window-seed2-1013/`.
+The pushed eca2af0c9 control routing remains the accepted checkpoint.
