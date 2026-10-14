@@ -258,3 +258,19 @@ def test_a_book_kept_for_her_is_the_one_her_route_reads(tmp_path, monkeypatch) -
     path = keep_for_her(book)
     assert path == tmp_path / module.KEPT_BOOK_RELATIVE
     assert kept_procedure_book().to_json() == book.to_json()
+
+
+def test_books_that_share_kinds_combine_with_every_kept_procedure_of_each_kind() -> None:
+    from core.learning.kinds_by_meaning import KindMeaning
+    from core.learning.procedures_from_solved_examples import ProcedureBook, Signature
+
+    first = ProcedureBook({"a": Signature({"a": 1.0}, 0.9), "b": Signature({"b": 1.0}, 0.9)}, {"a": ["A1"]},
+                          {"a": 40}, meanings={"b": KindMeaning([1.0], 0.5)})
+    second = ProcedureBook({"a": Signature({"a": 1.0}, 0.8), "b": Signature({"b": 1.0}, 0.7),
+                            "c": Signature({"c": 1.0}, 0.6)}, {"a": ["A1", "A2"], "b": ["B1"]}, {"a": 50, "b": 30},
+                           examples={"b": [{"problem": "p", "answer": "x"}]})
+    book = ProcedureBook.combined([first, second])
+    assert set(book.signatures) == {"a", "b", "c"}
+    assert book.procedures == {"a": ["A1", "A2"], "b": ["B1"]} and book.agreed == {"a": 50, "b": 30}
+    assert book.signatures["a"].nearest_required == 0.9 and book.signatures["b"].nearest_required == 0.7
+    assert book.meanings["b"].nearest_required == 0.5 and book.examples["b"][0]["answer"] == "x"

@@ -529,6 +529,32 @@ class ProcedureBook:
             out.examples.update(book.examples)
         return out
 
+    @classmethod
+    def combined(cls, books: Sequence[ProcedureBook]) -> ProcedureBook:
+        """One book from several that may share kinds: each kind keeps the procedures of every book that keeps it.
+
+        A kind's procedures were each checked against all of its known answers,
+        so two books' procedures for one kind are both kept and must agree when
+        they answer. Its count of agreed answers is the largest any book has;
+        its signature, meaning and examples come from the first book that keeps
+        a procedure for it, or else from the first that has it at all.
+        """
+        out = cls(signatures={}, procedures={}, agreed={})
+        kinds = list(dict.fromkeys(kind for book in books for kind in book.signatures))
+        for kind in kinds:
+            having = [b for b in books if kind in b.signatures]
+            keeping = [b for b in having if b.procedures.get(kind)]
+            source = (keeping or having)[0]
+            out.signatures[kind] = source.signatures[kind]
+            for part in ("meanings", "examples"):
+                value = next((getattr(b, part)[kind] for b in [source, *having] if kind in getattr(b, part)), None)
+                if value is not None:
+                    getattr(out, part)[kind] = value
+            if keeping:
+                out.procedures[kind] = list(dict.fromkeys(code for b in keeping for code in b.procedures[kind]))
+                out.agreed[kind] = max(int(b.agreed.get(kind, 0)) for b in keeping)
+        return out
+
     def route(self, problem: str) -> tuple[str | None, float]:
         """The nearest kind, if the problem is at least as near as that kind's least typical sealed problem."""
         if not self.signatures:
