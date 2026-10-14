@@ -1405,12 +1405,14 @@ def test_unitary_response_compact_prompt_uses_live_voice_snapshot(monkeypatch):
     phase = UnitaryResponsePhase.__new__(UnitaryResponsePhase)
     prompt = phase._build_compact_router_system_prompt(state)
 
-    # System prompt should use voice shaping cues, not raw numeric telemetry
+    # Neither raw telemetry nor cues written from it: her state reaches her
+    # voice through her residual stream and the sampler, and is not put into
+    # words for the model to read (core/brain/what_she_is_given.py).
     assert "YOUR LIVE SUBSTRATE SNAPSHOT" not in prompt
     assert "Energy: 0.4123" not in prompt
     assert "Phi: 0.5772" not in prompt
-    # Should still contain voice shaping context
-    assert "VOICE SHAPING" in prompt or "Tone:" in prompt
+    assert "VOICE SHAPING" not in prompt and "Tone:" not in prompt
+    assert "You are Aura" not in prompt and "HARD RULES" not in prompt
 
 
 @pytest.mark.asyncio

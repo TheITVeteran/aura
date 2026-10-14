@@ -888,10 +888,8 @@ def _kept(game: _Game, known: dict[str, Any] | None) -> None:
     known["well_enters"] = sorted(game.enters)
 
 
-async def a_well_with_a_piece_coming_down(look: Any, known: Any = None, seen: list[Any] | None = None) -> Any:
-    """The well in front of her, where there is one with something coming down in it by itself: the two things that
-    make a game one of falling pieces. Watched for a few seconds, with nothing pressed. A well seen with nothing yet
-    coming down it is put in ``seen``, for whoever would rather wait for a piece than take it for something else."""
+def _what_a_well_picture_shows(picture: Any, known: Any) -> tuple:
+    """Read detached pixels together; temporal history stays with the capture owner."""
     from core.perception.a_well_seen import (
         a_ground_like_a_wells,
         a_well_in,
@@ -899,6 +897,30 @@ async def a_well_with_a_piece_coming_down(look: Any, known: Any = None, seen: li
         what_rests,
         what_stands_in,
     )
+
+    well = a_well_in(picture, known)
+    if well is None:
+        return None, a_ground_like_a_wells(picture), {}, None
+    cells = what_stands_in(picture, well)
+    return well, True, cells, the_piece_in(picture, well, what_rests(cells, well))
+
+
+async def a_well_with_a_piece_coming_down(look: Any, known: Any = None, seen: list[Any] | None = None) -> Any:
+    """Watch for falling pieces while pure picture work leaves the control loop free."""
+    from core.perception.a_picture_examined_without_holding_the_loop import PictureProbe
+
+    probe = PictureProbe()
+    try:
+        return await _watched_for_a_well(look, known, seen, probe)
+    finally:
+        await probe.close()
+
+
+async def _watched_for_a_well(look: Any, known: Any, seen: list[Any] | None, probe: Any) -> Any:
+    """The well in front of her, where there is one with something coming down in it by itself: the two things that
+    make a game one of falling pieces. Watched for a few seconds, with nothing pressed. A well seen with nothing yet
+    coming down it is put in ``seen``, for whoever would rather wait for a piece than take it for something else."""
+    from core.perception.a_picture_examined_without_holding_the_loop import UNMEASURED
 
     began = _now()
     well = None
@@ -910,17 +932,18 @@ async def a_well_with_a_piece_coming_down(look: Any, known: Any = None, seen: li
         got = await look()
         if got is None:
             return None
-        well = well or a_well_in(got[0], known)
+        measured = await probe.examine(_what_a_well_picture_shows, got[0], well or known)
+        if measured is UNMEASURED:
+            return UNMEASURED
+        well, ground, cells, piece = measured
         if well is None:
             # No ground a well could be: not this kind of game. Ground with nothing in it yet is watched on.
-            if not a_ground_like_a_wells(got[0]):
+            if not ground:
                 return None
             await _wait(LOOKS_APART_S)
             continue
         if seen is not None and not seen:
             seen.append(well)
-        cells = what_stands_in(got[0], well)
-        piece = the_piece_in(got[0], well, what_rests(cells, well))
         # In a well the piece is the one thing that moves. Where cells fill and empty in columns the piece is not over,
         # other things are about: a field with creatures in it, not a well. LIVE 2026-10-11 one was taken for a well.
         over = {piece.column + dc for dc, _dr, _kind in piece.parts} if piece is not None else set()

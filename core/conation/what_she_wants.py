@@ -72,16 +72,14 @@ from __future__ import annotations
 import json
 import logging
 import math
-import re
 import time
-from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from statistics import NormalDist
 from typing import Any
 
 from core.conation.state import Incentive
+from core.conation.what_her_talk_is_about import WhatHerTalkIsAbout, terms_of
 from core.runtime.atomic_writer import atomic_write_text_behind
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import checked_lock
@@ -126,26 +124,9 @@ MAX_COMPANY = 16
 FIND_OUT = "find_out"
 
 MAX_THINGS = 4096
-#: How many distinct terms her reference of past exchanges keeps.
-MAX_TERMS = 65536
-
-#: A word: letters only, in any script, long enough to carry content.
-_WORD = re.compile(r"[^\W\d_]{3,}")
-#: Where a run of words ends, so a pair never spans two clauses.
-_BREAK = re.compile(r"[.!?;:,()\[\]\n\"]+")
-
-
-def terms_of(*texts: str) -> Counter[str]:
-    """The words of an exchange and the pairs that stand side by side in it."""
-    found: Counter[str] = Counter()
-    for text in texts:
-        for run in _BREAK.split(str(text or "").lower()):
-            words = _WORD.findall(run)
-            found.update(words)
-            found.update(f"{a} {b}" for a, b in zip(words, words[1:], strict=False))
-    return found
 MAX_OPEN = 8
 SCHEMA = 2
+
 
 
 def liking_of(reading: Any) -> float | None:
@@ -370,16 +351,9 @@ class WhatSheWants(_WantReadouts):
         #: Where she went since the last turn was read, and how. The turn that
         #: is read next is the one that going is part of.
         self._went: list[tuple[str, str]] = []
-        #: How often each term has been used across her exchanges so far, and
-        #: how many terms those exchanges held: what a new exchange is set
-        #: against to say which of its terms are particular to it.
-        self._said: Counter[str] = Counter()
-        self._said_total = 0
-        #: How many of those exchanges each term was in, and how many there
-        #: have been: whether a term is dwelt on or spread thin.
-        self._said_in: Counter[str] = Counter()
-        self._exchanges = 0
-        self._shares: dict[str, float] = {}
+        #: What her exchanges have said so far, and so what a new one is about.
+        #: See core/conation/what_her_talk_is_about.py.
+        self.talk = WhatHerTalkIsAbout(changed=lambda: _save(self, _held(self)))
         #: What she has decided to do when she next can, if anything: one of
         #: her wants, as it stood when she decided.
         self._decided: dict[str, Any] | None = None
@@ -399,62 +373,7 @@ class WhatSheWants(_WantReadouts):
 
     # ── what a turn was about ────────────────────────────────────────────
 
-    def about(self, *texts: str) -> list[str]:
-        """The terms this exchange uses more than her exchanges have before.
-
-        Most particular first. The exchange then joins what later ones are
-        set against. With nothing yet to set it against, nothing is
-        particular.
-        """
-        here = terms_of(*texts)
-        if sum(here.values()) <= 0:
-            return []
-        with self._lock:
-            found = _subjects(self, here)
-            _count_exchange(self, here)
-        return found
-
-    def subjects_of(self, *texts: str) -> list[str]:
-        """What `about` would say of this exchange, without counting it.
-
-        For asking what something said is about when it is not one of her
-        exchanges yet, or may never be.
-        """
-        here = terms_of(*texts)
-        if sum(here.values()) <= 0:
-            return []
-        with self._lock:
-            return _subjects(self, here)
-
-
-    def shares(self) -> dict[str, float]:
-        """Each subject's share of what the last exchange read dwelt on."""
-        with self._lock:
-            return dict(self._shares)
-
-
-    def talked_before(self) -> bool:
-        """Whether there is anything yet to set an exchange against."""
-        with self._lock:
-            return self._said_total > 0
-
-    def remember_talk(self, exchanges: Iterable[Iterable[str]]) -> int:
-        """Exchanges she had before this record was kept, as reference only.
-
-        Nothing in them is read as a thing she met: what they were worth was
-        never measured. They are what a new exchange is set against.
-        """
-        added = 0
-        with self._lock:
-            for exchange in exchanges:
-                _count_exchange(self, terms_of(*exchange))
-                added += 1
-            held = _held(self)
-        _save(self, held)
-        return added
-
     # ── a turn ───────────────────────────────────────────────────────────
-
 
     def met(
         self,
@@ -1036,8 +955,8 @@ def read_turn(
     keys = [key for key in keys if not key.startswith("topic:")]
     stood_out: dict[str, float] = {}
     if words:
-        keys.extend(f"topic:{term}" for term in record.about(*words))
-        stood_out = {f"topic:{term}": share for term, share in record.shares().items()}
+        keys.extend(f"topic:{term}" for term in record.talk.about(*words))
+        stood_out = {f"topic:{term}": share for term, share in record.talk.shares().items()}
     reachable = [key for key in keys if ":" in key and key.split(":", 1)[0] in REACHABLE_KINDS]
     labels = {key: key.split(":", 1)[1].strip() for key in reachable}
     return record.met(
@@ -1082,10 +1001,7 @@ def _load(self) -> None:
         for row in stored.get("things", []):
             thing = Thing.from_dict(row)
             self._things[thing.key] = thing
-        self._said = Counter({str(k): int(v) for k, v in dict(stored.get("said", {})).items()})
-        self._said_total = max(0, int(stored.get("said_total", 0)))
-        self._said_in = Counter({str(k): int(v) for k, v in dict(stored.get("said_in", {})).items()})
-        self._exchanges = max(0, int(stored.get("exchanges", 0)))
+        self.talk = WhatHerTalkIsAbout(stored, changed=lambda: _save(self, _held(self)))
         decided = stored.get("decided")
         self._decided = dict(decided) if isinstance(decided, dict) and decided.get("thing") else None
         self._forecasts = max(0, int(stored.get("forecasts", 0)))
@@ -1111,10 +1027,7 @@ def _held(self) -> dict[str, Any]:
         "going": self._going,
         "saved_at": time.time(),
         "things": [thing.to_dict() for thing in self._things.values()],
-        "said": dict(self._said),
-        "said_total": self._said_total,
-        "said_in": dict(self._said_in),
-        "exchanges": self._exchanges,
+        **self.talk.held(),
         "decided": self._decided,
         "forecasts": self._forecasts,
         "miss": self._miss,
@@ -1141,62 +1054,6 @@ def _conation(self) -> Any:
 
         self._engine = get_conation()
     return self._engine
-
-
-def _subjects(self, here: Counter[str]) -> list[str]:
-    """The subjects among an exchange's terms. Lock held."""
-    total = sum(here.values())
-    before, before_total = self._said, self._said_total
-    scored: list[tuple[float, str]] = []
-    if before_total > 0:
-        # One test per term offered, so the level each is held to is the
-        # conventional one divided by how many there are.
-        critical = NormalDist().inv_cdf(1.0 - _WRONG / len(here) / 2.0) ** 2
-        exchanges = self._exchanges + 1
-        for term, count in here.items():
-            past = before.get(term, 0)
-            if count / total <= past / before_total:
-                continue
-            pooled = (count + past) / (total + before_total)
-            ratio = 2.0 * count * math.log(count / (total * pooled))
-            if past:
-                ratio += 2.0 * past * math.log(past / (before_total * pooled))
-            if ratio <= critical:
-                continue
-            # Dwelt on: with this exchange counted, the exchanges it is in
-            # are fewer than half of those a term used this often would be
-            # in by chance.
-            by_chance = exchanges * (1.0 - math.exp(-(past + count) / exchanges))
-            if math.log2(by_chance / (self._said_in.get(term, 0) + 1)) > 1.0:
-                scored.append((ratio, term))
-    # A pair is one thing when neither word is there without the other.
-    # Then the words are the pair, and a pair one of whose words also
-    # stands alone is that word beside something else.
-    pairs = {
-        term
-        for _ratio, term in scored
-        if " " in term and all(here[word] <= here[term] for word in term.split())
-    }
-    inside = {word for term in pairs for word in term.split()}
-    kept = [
-        (ratio, term)
-        for ratio, term in sorted(scored, key=lambda row: (-row[0], row[1]))
-        if (term in pairs) or (" " not in term and term not in inside)
-    ]
-    whole = sum(ratio for ratio, _term in kept)
-    self._shares = {term: ratio / whole for ratio, term in kept} if whole > 0.0 else {}
-    return [term for _ratio, term in kept]
-
-
-def _count_exchange(self, here: Counter[str]) -> None:
-    """Add one exchange to what later ones are set against. Lock held."""
-    self._said.update(here)
-    self._said_total += sum(here.values())
-    self._said_in.update(here.keys())
-    self._exchanges += 1
-    if len(self._said) > MAX_TERMS:
-        self._said = Counter(dict(self._said.most_common(MAX_TERMS // 2)))
-        self._said_in = Counter({term: self._said_in[term] for term in self._said})
 
 
 def _touch(self, key: str, label: str, reachable: bool) -> Thing:

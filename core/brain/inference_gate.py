@@ -1075,6 +1075,9 @@ def _flatten_messages_for_local_model(messages: list[dict[str, str]]) -> str:
     return format_chatml_messages(messages)
 
 
+from core.brain.what_she_is_given import for_her_model  # noqa: E402
+
+
 def _observable_dispatch_markers() -> tuple[tuple[str, str], ...]:
     """(name, header) for every registered observable, for the survival check.
 
@@ -9924,6 +9927,8 @@ class InferenceGate(_GateInitializationMixin, _ThinkingBudgetMixin, _ServesTheTu
                     max_tokens = _affordable
 
         max_tokens = self._generate_with_metadata_sink_serving_lane(_grounded, context, initial_visible_user_prompt, keeps_its_length(context, max_tokens), messages, morpho_kwargs, system_prompt)
+        # No system text on her own turns. See core/brain/what_she_is_given.py.
+        messages, system_prompt = for_her_model(messages, system_prompt, context, _is_user_facing, _observable_dispatch_markers(), initial_visible_user_prompt)
         self._generate_with_metadata_sink_part_28(max_tokens, messages, origin, prompt_chars, prompt_mode, request_chars, scaffold_chars, system_prompt)
 
         if (

@@ -37,6 +37,7 @@ __all__ = [
     "is_stamped_grounding",
     "is_stamped_runtime_payload",
     "stamp_grounding",
+    "injected_blocks_in",
     "stamp_runtime_payload",
     "strip_injected_blocks",
 ]
@@ -174,6 +175,11 @@ _TRAILING_RE = re.compile(
     rf"\[\s*(?:{_BANNER_ALTERNATION})\b[^\]]*\].*\Z",
     re.DOTALL | re.IGNORECASE,
 )
+
+
+def injected_blocks_in(text: Any) -> list[str]:
+    """Each fenced block the turn attached, whole, in the order it stands."""
+    return [match.group(0).strip() for match in _FENCED_RE.finditer(str(text or ""))]
 
 
 def strip_injected_blocks(text: Any) -> str:

@@ -48,11 +48,30 @@ def attempt_activity_was_seen(reflexes: Any) -> bool | None:
     receipt = getattr(reflexes, 'keep', {}).get('attempt_observation')
     if not isinstance(receipt, AttemptObservation):
         records = getattr(reflexes, 'stretches', ())
-        return True if any((r.get('pictures') or 0) > 0 or (r.get('turns') or 0) > 0 for r in records) else None
-    return receipt.activity_at is not None or any(
-        _how_many(record.get('observations')) > 0 and _how_many(record.get('responsive_pictures')) > 0
-        for record in getattr(reflexes, 'stretches', ())
-    )
+        return True if any(isinstance(r, dict) and (_positive_count(r.get('pictures')) or _positive_count(r.get('turns')))
+                           for r in records) else None
+    return receipt.activity_at is not None or any(_observed_play_record(record)
+        for record in getattr(reflexes, 'stretches', ()))
+
+
+def _positive_count(value: Any) -> bool:
+    values = value.values() if isinstance(value, dict) else (value,)
+    return any(isinstance(count, (int, float)) and not isinstance(count, bool)
+               and math.isfinite(count) and count > 0 for count in values)
+
+
+def _observed_play_record(record: dict) -> bool:
+    """The real-time actor records capture sources separately from delivered inputs.
+
+    A body can remain unidentified during a real attempt. Captured play with
+    delivered input establishes participation, never control or a win.
+    """
+    pictures = record.get('pictures', _how_many(record.get('observations'))) if isinstance(record, dict) else None
+    return (isinstance(record, dict) and isinstance(pictures, (int, float))
+            and not isinstance(pictures, bool) and _positive_count(pictures) and pictures >= 2
+            and _positive_count(record.get('observations'))
+            and any(_positive_count(record.get(key)) for key in
+                    ('responsive_pictures', 'input_key_downs', 'clicks', 'taps')))
 
 
 def a_game_was_played(reflexes: Any) -> bool:
@@ -60,16 +79,17 @@ def a_game_was_played(reflexes: Any) -> bool:
     picture. An ending with no new activity of hers after such play is a game that ended before she had hold of it, to
     be tried again; with none, it is an old ending still on the screen. Offline 2026-10-13, a ball set going by PLAY
     fell three times in the 4.2 s before she had found which thing was hers, and the game was left after one round."""
-    return any(_how_many(record.get('pictures')) > 0 for record in getattr(reflexes, 'stretches', ()))
+    return any(isinstance(record, dict) and _positive_count(record.get('pictures'))
+               for record in getattr(reflexes, 'stretches', ()))
 
 
 def _how_many(counted: Any) -> float:
     """A count, or the sum of counts kept by where they came from: a stretch keeps its pictures by their source
     ({"pixels": 40, "canvas-paint-v1": 12}). Offline 2026-10-13 a count kept so ended every run of a game from its
     title screen in a TypeError, the moment its first stretch of play was over."""
-    if isinstance(counted, dict):
-        return float(sum(v for v in counted.values() if isinstance(v, (int, float)) and not isinstance(v, bool)))
-    return float(counted) if isinstance(counted, (int, float)) and not isinstance(counted, bool) else 0.0
+    values = counted.values() if isinstance(counted, dict) else (counted,)
+    return float(sum(v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)
+                     and math.isfinite(v) and v > 0))
 
 
 @invariant('agency.an_ending_after_reset_needs_new_activity', scope='agency',
@@ -87,4 +107,10 @@ def _new_attempt_invariant() -> tuple:
     kept_by_source = SimpleNamespace(keep={'attempt_observation': AttemptObservation(10.)},
                                      stretches=[{'observations': {'pixels': 30, 'canvas-paint-v1': 0}, 'responsive_pictures': 4}])
     assert attempt_activity_was_seen(kept_by_source)
+    reflexes.keep['attempt_observation'] = AttemptObservation(11.)
+    reflexes.stretches = [{'pictures': 12, 'observations': {'pixels': 12}, 'input_key_downs': {'opaque': 2},
+                          'responsive_pictures': 0}]
+    assert attempt_activity_was_seen(reflexes)
+    reflexes.stretches[0]['observations'] = {'pixels': 0}
+    assert not attempt_activity_was_seen(reflexes)
     return ()

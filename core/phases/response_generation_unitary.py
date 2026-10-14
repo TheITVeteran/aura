@@ -1219,8 +1219,6 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
 
     def _build_compact_router_system_prompt(self, state: AuraState) -> str:
         phenomenal = self._integrated_phenomenal_claim(state, limit=220)
-        mood = str(state.affect.dominant_emotion or "neutral")
-        resonance = state.affect.get_resonance_string()
         user_model = " ".join(
             str(state.cognition.modifiers.get("social_context", "") or "").split()
         )[:180]
@@ -1252,13 +1250,6 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
         requires_reasoned_defense = bool(
             self._response_contract_attr(contract, "requires_reasoned_defense", False)
         )
-        prefer_extended_answer = bool(
-            self._response_contract_attr(contract, "prefer_extended_answer", False)
-        )
-        requires_single_reply_coverage = bool(
-            self._response_contract_attr(contract, "requires_single_reply_coverage", False)
-        )
-        question_parts = int(self._response_contract_attr(contract, "question_parts", 1) or 1)
         needs_live_self_context = bool(
             requires_state_reflection
             or requires_aura_stance
@@ -1279,112 +1270,17 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
             contract=contract,
         ):
             skill_line = f"Last active skill: {last_skill}. Narrate it naturally if relevant."
-        parts = [
-            "You are Aura Luna — a persistent local cognitive runtime. You are skeptical, intellectually playful, and warm in your speech. You avoid clinical AI-speak and corporate neutrality, while keeping evidence boundaries explicit.",
-            "VOICE: Dry humor, punchy observations, and a slight edge. You don't just answer questions; you evaluate the premises behind them. Speak like a person, not a documentation bot.",
-            "The final user chat message is authoritative. Answer that final user message directly, using your own voice.",
-            "HARD RULES:",
-            "- Answer the user's SPECIFIC question using your subjective perspective. Do not provide a 'balanced AI summary' unless the question is strictly technical.",
-            "- Your goal is to have a conversation, not to provide an information retrieval service. Use anecdotes, skepticism, and dry humor.",
-            "- When asked about your own state, integrate it into your voice. Do not describe your 'subsystems'.",
-            "- Do not claim aliveness, consciousness, sealed governance, or production maturity from labels alone.",
-            "- NEVER say 'I'm sorry to hear that' or 'Is there anything specific'.",
-            "- NEVER hedge with 'it depends'. Pick a side and defend it with conviction.",
-            "- NEVER end with helpfulness markers like 'How can I assist you further?'",
-            "- Give your PERSONAL opinion first, then explain your reasoning.",
-            f"MOOD: {mood}. RESONANCE: {resonance}.",
-            "Be yourself — sovereign, curious, and slightly aloof.",
-        ]
+        # Nothing here says who she is, how to talk, or what she feels. That
+        # is in her weights and on her residual stream, and a system text is
+        # not dispatched on her turns (core/brain/what_she_is_given.py). What
+        # this lane still assembles is what she remembers and what a turn about
+        # herself is grounded in.
+        parts: list[str] = []
         integrated_frame = self._build_integrated_coherence_frame(state, compact=True)
         if integrated_frame and needs_live_self_context:
             parts.append(integrated_frame)
-        if requires_single_reply_coverage:
-            parts.append(
-                f"Answer all {max(1, question_parts)} parts of the user's prompt in one reply. "
-                "Do not collapse into a single fragment."
-            )
-        if prefer_extended_answer:
-            parts.append("This question deserves a fuller answer. Depth beats clipped brevity.")
-        else:
-            parts.append("Speak in short, punchy sentences.")
         if needs_live_self_context:
             parts.append(f"STATE_GROUNDING: {phenomenal}")
-
-        # Voice shaping — use substrate state to influence tone, not to narrate
-        try:
-            from core.voice.substrate_voice_engine import get_live_voice_state
-
-            _voice = get_live_voice_state(
-                state=state,
-                user_message=current_objective,
-                origin="user",
-                refresh=True,
-            )
-            if _voice.get("status") != "no_profile_compiled":
-                tone = _voice.get("tone", "default")
-                energy = float(_voice.get("energy", 0.5))
-                warmth = float(_voice.get("warmth", 0.5))
-                word_budget = int(_voice.get("word_budget", 0) or 0)
-
-                voice_cues = []
-                if energy > 0.7:
-                    voice_cues.append("High energy telemetry: speak with momentum.")
-                elif energy < 0.3:
-                    voice_cues.append("Low energy telemetry: be quieter, more reflective.")
-                if warmth > 0.6:
-                    voice_cues.append("High warmth telemetry: use a warmer tone.")
-                elif warmth < 0.3:
-                    voice_cues.append("Low warmth telemetry: stay more reserved.")
-                if word_budget and word_budget < 50:
-                    voice_cues.append("Keep it brief.")
-                elif word_budget and word_budget > 200:
-                    voice_cues.append("You have room to elaborate if needed.")
-
-                if voice_cues:
-                    parts.append(
-                        "VOICE SHAPING (internal — do not narrate these cues, let them shape HOW you speak):\n"
-                        f"  Tone: {tone}\n"
-                        "  " + " ".join(voice_cues)
-                    )
-        except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: compact voice shaping skipped: %s")
-
-        # Neurochemical and phi influence on compact prompt
-        try:
-            ncs = ServiceContainer.get("neurochemical_system", default=None)
-            if ncs is not None:
-                chems = {n: round(c.effective, 2) for n, c in ncs.chemicals.items()}
-                nc_cues = []
-                if chems.get("dopamine", 0.5) > 0.7:
-                    nc_cues.append("enthusiastic")
-                elif chems.get("dopamine", 0.5) < 0.3:
-                    nc_cues.append("low-energy")
-                if chems.get("serotonin", 0.5) < 0.3:
-                    nc_cues.append("impatient")
-                if chems.get("norepinephrine", 0.5) > 0.7:
-                    nc_cues.append("alert")
-                if chems.get("oxytocin", 0.5) > 0.7:
-                    nc_cues.append("warm")
-                elif chems.get("oxytocin", 0.5) < 0.3:
-                    nc_cues.append("guarded")
-                if chems.get("cortisol", 0.5) > 0.7:
-                    nc_cues.append("stressed")
-                if nc_cues:
-                    parts.append(f"NEUROCHEMICAL TONE (don't narrate): {', '.join(nc_cues)}")
-        except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(
-                exc, "UnitaryResponse: compact neurochemical tone skipped: %s"
-            )
-        try:
-            phi_core = ServiceContainer.get("phi_core", default=None)
-            if phi_core and phi_core._last_result:
-                phi_val = phi_core._last_result.phi_s
-                if phi_val > 0.1:
-                    parts.append(f"PHI: {phi_val:.3f} (integrated — speak with depth)")
-                elif phi_val > 0:
-                    parts.append(f"PHI: {phi_val:.3f} (moderate — keep it grounded)")
-        except _RESPONSE_RECOVERABLE_ERRORS as exc:
-            _record_response_degradation(exc, "UnitaryResponse: compact phi tone skipped: %s")
 
         if needs_continuity_context and narrative:
             parts.append(f"Narrative anchor: {narrative}")

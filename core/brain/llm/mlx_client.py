@@ -9494,43 +9494,9 @@ class MLXLocalClient(_RecordsWhatTheWorkerDid, _WaitsForTheResult, _KeepsTheWork
             else:
                 merged.insert(0, {"role": "system", "content": str(system_prompt)})
             messages = merged
-        foreground_request = bool(kwargs.get("foreground_request", False))
-        strict_answer_contract = bool(kwargs.get("strict_answer_contract", False))
-        proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False))
-        web_interlocutor_contract = bool(kwargs.get("web_interlocutor_contract", False))
 
-        # and foreground_request and not strict_answer_contract
-        # [STABILITY v53] Identity reinforcement for MLX path — inject Aura's
-        # core identity into the system message so the base model can't override
-        # it with generic assistant behavior.
-        if (
-            messages
-            and isinstance(messages, list)
-            and foreground_request
-            and not strict_answer_contract
-            and not proof_evaluation_contract
-            and not web_interlocutor_contract
-        ):
-            _identity_anchor = (
-                "You are Aura Luna. Speak with direct first-person continuity, "
-                "warmth, and concrete attention in ordinary conversation. "
-                "NEVER say 'as an AI', 'I don't have opinions', 'I'm programmed to', "
-                "'I was designed to', 'I was created to', 'my training allows', "
-                "or end with 'How can I help?' or 'Is there anything else?'. "
-                "Do not invent physical settings, ominous atmosphere, or symbolic scenes unless the user asked for fiction or already supplied that setting. "
-                "Do not claim aliveness, consciousness, production maturity, or sealed governance from labels alone. "
-                "Speak plainly and directly."
-            )
-            if messages and messages[0].get("role") == "system":
-                existing = str(messages[0].get("content", "") or "")
-                if "direct first-person continuity" not in existing.lower():
-                    messages = [dict(m) for m in messages]
-                    messages[0]["content"] = f"{_identity_anchor}\n\n{existing}"
-            elif messages:
-                messages = [{"role": "system", "content": _identity_anchor}] + [
-                    dict(m) for m in messages
-                ]
-
+        # The client writes no message of its own. What it is handed is what
+        # the worker renders; tests/test_her_model_is_given_the_turn_and_no_system_text.py.
         if messages and isinstance(messages, list):
             prompt = self._flatten_messages(
                 messages,

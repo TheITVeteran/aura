@@ -35,6 +35,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.agency.a_body_still_expected_when_it_is_unseen import press_in_time as _press_in_time
 from core.agency.a_choice_and_its_reasons import chose_in_play
 from core.agency.acting_on_a_prepared_motion import act_on_prepared_motion
 from core.agency.building_up import builds_up
@@ -82,7 +83,7 @@ from core.agency.naming_what_she_sees import (
 from core.agency.naming_what_she_sees import named_for_its_part as _named
 from core.agency.naming_what_she_sees import shape_name as shape_name
 from core.agency.noticing_in_play import a_key_that_pays, noticed
-from core.agency.pressing_what_is_shown import PRESSED_FOR_S
+from core.agency.pressing_what_is_shown import PRESSED_FOR_S as PRESSED_FOR_S
 from core.agency.reading_while_playing import (  # noqa: F401  (re-exported: they were defined here)
     _as_it_stood,
     _keep_reading,
@@ -370,6 +371,7 @@ class _Run:
     things: dict = field(default_factory=dict)
     #: Where no body answers her keys: what pressing has paid by where the moving things were (when_a_press_pays.py).
     timing: Any = None
+    how: Any = None
     #: What she notices as she plays (core/agency/noticing_in_play.py), and what she sees things as (naming_what_she_sees.py).
     noticing: Any = None
     seeing: Any = None
@@ -1116,6 +1118,7 @@ async def _play_as_it_happens(
                contest=keep.get("contest") or ContestStands(), waits_for_her=waits_for_her,
                in_time=played_in_time(situations), longest_still=float(keep.get("longest_still") or 0.0))
     run.pointer_trigger = rules is not None and rules.a_click_is_a_shot
+    run.how = how
     if _no_body_to_find():
         # Where she understands there is no body of hers in the picture, the pointer is not swept to see what follows
         # it: offline 2026-10-11 a food fight's throws went out between sweeps of the pointer across the room.
@@ -1512,41 +1515,6 @@ def _found_by_her_presses(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: fl
     from core.agency.finding_her_another_way import found_by_press_curves
 
     found_by_press_curves(run, moves, hers, at, old_for=THERE_BEFORE_S)
-
-
-async def _press_in_time(hands: Any, run: _Run, moves: WhatMoves, at: float, say: Any) -> bool:
-    """A press timed to where the things that keep moving will be; whether she is playing by timing presses."""
-    ahead = run.control_timing.ahead(at, time.monotonic()) or 0.
-    if not run.control_timing.deliveries:
-        ahead += RESPONSE_S
-    if run.building_up and not run.timing.pays():
-        # Building up, a press drops the piece: square over the top of what is built, until a press has paid elsewhere.
-        from core.agency.building_up import drop_now
-
-        if not drop_now(moves.things.values(), ahead):
-            return True
-    elif not run.timing.press_now(moves.things.values(), at, ahead):
-        return run.timing.has_something_to_time(moves.things.values())
-    run.timing.credit(run.gains, run.losses)
-    if not run.keys:
-        _say(run, say, "Nothing here follows the mouse; I'm timing each click to where the moving thing is, and keeping "
-             "to the places where a click has paid.", at, once="timing")
-        began = time.monotonic()
-        await hands.click(0.5, 0.5)
-        run.control_timing.delivered(at, began, time.monotonic())
-        run.last_click, run.clicks = at, getattr(run, "clicks", 0) + 1
-    else:
-        key = run.keys[0]
-        _say(run, say, f"Nothing here moves when I press {key}; I'm timing each press to where the moving thing is, "
-             "and keeping to the places where a press has paid.", at, once="timing")
-        began = time.monotonic()
-        await hands.down(key)
-        run.control_timing.delivered(at, began, time.monotonic())
-        run.input_key_downs[key] += 1
-        await asyncio.sleep(PRESSED_FOR_S)
-        await hands.up(key)
-    run.timing.pressed(moves.things.values(), at, ahead)
-    return True
 
 
 async def _let_go_of_presses(hands: Any, run: _Run, at: float) -> None:

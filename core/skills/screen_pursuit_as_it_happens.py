@@ -59,30 +59,20 @@ def _played_in_time(said: str) -> bool:
 
 #: The situations a place's words may put her in that are played neither by turns on a board nor by pieces coming down
 #: a well.
-_NEITHER_A_BOARD_NOR_A_WELL = frozenset({"shooting what comes", "keeping clear of what comes", "a fight at close quarters",
-                                         "keeping something away from whoever is after it"})
-
-
-def _played_neither_by_turns_nor_by_pieces(reflexes: Any) -> bool:
+def _played_neither_by_turns_nor_by_pieces(reflexes: Any, said: str = '') -> bool:
     """Whether the place's words say it is played as one of the situations that is neither a board nor a well: then
     neither is looked for, each a watch of its own. Offline 2026-10-11, timed, a food fight's play began four and a
     half seconds late, spent looking for a board and for a piece coming down a well."""
-    from core.agency.situations_she_knows import situations_in
-
-    said = " ".join([*reflexes.words[-6:], str(reflexes.keep.get("counsel") or "")])
-    if any(situation.name in _NEITHER_A_BOARD_NOR_A_WELL for situation in situations_in(said)):
-        return True
+    said = said or " ".join([*reflexes.words[-6:], str(reflexes.keep.get("counsel") or "")])
     # Nor in a thing for making, as she understands the place: offline 2026-10-12 an alien maker's save screen was taken
     # for three in a row, and three minutes went on searching moves on it, none made.
     from core.cognition.a_guide_to_a_place import THE_GUIDE
 
     guide = THE_GUIDE.get()
-    if guide is None or not hasattr(guide, "controls"):
-        return False
-    from core.agency.how_a_game_works import MAKES, understood
+    from core.agency.how_a_game_works import how_it_works, understood
 
-    how = understood(guide, also=said)
-    return how.me.value == MAKES or how.counts.value == "make"
+    how = understood(guide, also=said) if guide is not None and hasattr(guide, 'controls') else how_it_works(said)
+    return all(how.picture_check_fits(check) is False for check in ('board', 'well'))
 
 
 def worked_by_typing(keep: dict[str, Any], guide: Any, named: Any) -> str:
@@ -587,6 +577,7 @@ class PlayingAsItHappens:
     _canvas: Any = None
     #: Her taps, each let go of a moment after it (core/skills/keys_tapped_as_a_hand_taps.py).
     _taps: Any = None
+    _board_probe: Any = None
 
     # -- eyes ---------------------------------------------------------------
 
@@ -638,6 +629,9 @@ class PlayingAsItHappens:
         """Stop streaming frames, when the run is over, and let go of every key tapped."""
         if self._taps is not None:
             await self._taps.let_go_of_all()
+        if self._board_probe is not None:
+            await self._board_probe.close()
+            self._board_probe = None
         if self._canvas is not None:
             await self._canvas.close()
             self._canvas = None
@@ -1085,7 +1079,7 @@ class PlayingAsItHappens:
         # Many places alike to open against a clock are opened in turn, fast (core/agency/searching_among_places.py).
         if not coming and await _searched_the_places(self, now):
             return
-        otherwise = coming or _played_neither_by_turns_nor_by_pieces(self)
+        otherwise = coming or _played_neither_by_turns_nor_by_pieces(self, said)
         if not otherwise and await _played_a_board(self, now):
             return
         if not otherwise and await _played_a_well(self, now):
@@ -1656,6 +1650,7 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     place has said (core/agency/playing_a_board.py); whether it was. Looked for every few seconds, not every look."""
     from core.agency.playing_a_board import a_board_game, play_a_board
     from core.perception.a_board_seen import a_board_in
+    from core.perception.a_picture_examined_without_holding_the_loop import UNMEASURED, PictureProbe
     from core.perception.visual_probe_cache import VisualProbeMiss, VisualProbeWitness
 
     if now - float(reflexes.keep.get("board_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
@@ -1674,7 +1669,12 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     rejected = reflexes.keep.get("no_board_on")
     if isinstance(rejected, VisualProbeMiss) and rejected.applies(witness, now=now):
         return False
-    board = a_board_in(seen[0]) if seen is not None else None
+    if seen is not None and getattr(reflexes, '_board_probe', None) is None:
+        reflexes._board_probe = PictureProbe()
+    board = await reflexes._board_probe.examine(a_board_in, seen[0]) if seen is not None else None
+    if board is UNMEASURED:
+        reflexes.keep['board_looked_for_at'] = -1e9
+        return False
     if board is None or not a_board_game(board, words):
         reflexes.keep["no_board_on"] = VisualProbeMiss(witness, now) if witness is not None else None
         return False
@@ -1723,6 +1723,7 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
         a_well_with_a_piece_coming_down,
         play_a_well,
     )
+    from core.perception.a_picture_examined_without_holding_the_loop import UNMEASURED
     from core.perception.visual_probe_cache import VisualProbeMiss, VisualProbeWitness
 
     if reflexes.no_well_here or int(reflexes.keep.get("no_well_found", 0)) >= NO_WELL_AFTER \
@@ -1757,6 +1758,9 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
         logger.exception("looking for a well failed")
         record_degradation("playing_a_well", why, action="no well is looked for again this run")
         reflexes.no_well_here = True
+        return False
+    if well is UNMEASURED:
+        reflexes.keep['well_looked_for_at'] = -1e9
         return False
     if well is None:
         waited = time.monotonic() - now

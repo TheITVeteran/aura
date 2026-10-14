@@ -177,7 +177,7 @@ ORDINARY = [
 def _has_talked_before(record, exchanges: int = 45) -> None:
     """Enough ordinary talk behind her for a new subject to stand out against."""
     for turn in range(exchanges):
-        record.about(*ORDINARY[turn % len(ORDINARY)])
+        record.talk.about(*ORDINARY[turn % len(ORDINARY)])
 
 
 TIDE_TALK = (
@@ -190,14 +190,14 @@ TIDE_TALK = (
 
 def test_what_an_exchange_is_about_is_what_it_says_more_than_her_exchanges_have(record):
     _has_talked_before(record)
-    about = record.about(*TIDE_TALK)
+    about = record.talk.about(*TIDE_TALK)
     assert about == ["anemone"]
 
 
 def test_a_word_said_in_passing_is_not_what_the_exchange_is_about(record):
     """The anemone is said four times; the mussel twice and the meat once."""
     _has_talked_before(record)
-    about = record.about(*TIDE_TALK)
+    about = record.talk.about(*TIDE_TALK)
     assert "anemone" in about
     assert not {"mussel", "meat", "shell", "tide pools"} & set(about)
 
@@ -206,8 +206,8 @@ def test_a_word_frequent_in_one_kind_of_talk_is_not_a_subject(record):
     """Spread thin across many exchanges, then used four times in one."""
     _has_talked_before(record)
     for turn in range(30):
-        record.about(f"Its number {turn} came up.", "Noted, and its place is kept.")
-    about = record.about(
+        record.talk.about(f"Its number {turn} came up.", "Noted, and its place is kept.")
+    about = record.talk.about(
         "The limpet left its scar. Its shell fits its scar and the limpet knows its scar.",
         "The limpet finds the scar by fit, and its foot settles in the scar.",
     )
@@ -216,7 +216,7 @@ def test_a_word_frequent_in_one_kind_of_talk_is_not_a_subject(record):
 
 
 def test_with_nothing_to_set_it_against_nothing_is_particular(record):
-    assert record.about(*TIDE_TALK) == []
+    assert record.talk.about(*TIDE_TALK) == []
 
 
 def test_the_things_of_a_turn_are_its_particular_terms_in_place_of_the_topic_label(record):
@@ -238,7 +238,7 @@ def test_what_her_exchanges_have_said_is_kept_across_a_restart(record, tmp_path)
     record.met(["self"], 0.1)
     flush_writes_behind()
     again = WhatSheWants(tmp_path / "wants.json", engine=ConationEngine())
-    assert "anemone" in again.about(*TIDE_TALK)
+    assert "anemone" in again.talk.about(*TIDE_TALK)
 
 
 def test_a_turn_in_which_nothing_was_said_has_no_subject(record):

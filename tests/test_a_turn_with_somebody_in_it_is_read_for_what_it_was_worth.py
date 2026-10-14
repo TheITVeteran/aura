@@ -42,7 +42,7 @@ def _state(valence: float, turn: int):
 def test_reading_a_turn_puts_its_worth_on_the_state_and_its_things_on_her_record(tmp_path):
     what_it_was_worth.reset_for_test()
     record = what_she_wants.reset_for_test(tmp_path / "wants.json", engine=ConationEngine())
-    record.remember_talk(
+    record.talk.remember_talk(
         [("What do you think of the plan, and has the time come?", "I think the plan is fine, and the time has come.")] * 60
     )
     try:
@@ -90,10 +90,10 @@ def test_her_stored_conversations_are_what_a_new_subject_stands_out_against(tmp_
     monkeypatch.setattr(persistence, "get_persistence", lambda: Stored())
     record = what_she_wants.reset_for_test(tmp_path / "wants.json", engine=ConationEngine())
     try:
-        assert not record.talked_before()
+        assert not record.talk.talked_before()
         assert learning_phase._recall_her_talk() == 40
-        assert record.talked_before() and record.thing("topic:plan") is None
-        about = record.about(
+        assert record.talk.talked_before() and record.thing("topic:plan") is None
+        about = record.talk.about(
             "The anemone let go of a small shell. Does an anemone prefer anything?",
             "An anemone holds what smells alive, and that is most of what an anemone goes on.",
         )

@@ -201,7 +201,12 @@ def as_measured(messages: list[Any]) -> list[Any]:
     """
     if not this_turn_is_a_measurement():
         return messages
-    framing = [m for m in messages if isinstance(m, dict) and str(m.get("role", "")).lower() == "system"]
+    # Readings travel in their own role; a measurement turn keeps them.
+    framing = [
+        m
+        for m in messages
+        if isinstance(m, dict) and str(m.get("role", "")).lower() in {"system", "runtime_evidence"}
+    ]
     if "everything" in left_out():
         framing = []
     asked = next(

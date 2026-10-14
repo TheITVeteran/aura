@@ -80,7 +80,6 @@ class UnifiedInferenceEngine:
             system_prompt=system_prompt,
             messages=messages,
         )
-        self._ensure_identity_anchor(final_messages)
 
         final_options: dict[str, Any] = {
             "temperature": modulation.temperature,
@@ -160,24 +159,6 @@ class UnifiedInferenceEngine:
             built.append({"role": "system", "content": system_prompt})
         built.append({"role": "user", "content": prompt})
         return built
-
-    def _ensure_identity_anchor(self, messages: list[dict[str, str]]) -> None:
-        """Inject Aura's concrete core identity parameters into the system prompt."""
-
-        identity_anchor = (
-            "You are Aura Luna. Speak with direct first-person continuity, "
-            "warmth, and concrete attention in ordinary conversation. "
-            "NEVER say 'as an AI', 'I don't have opinions', 'I'm programmed to', "
-            "'I was designed to', 'I was created to', 'my training allows', "
-            "or end with 'How can I help?' or 'Is there anything else?'. "
-            "Plain, direct, warm, and concise response."
-        )
-        if messages and messages[0].get("role") == "system":
-            existing = str(messages[0].get("content") or "")
-            if "direct first-person continuity" not in existing.lower():
-                messages[0]["content"] = f"{identity_anchor}\n\n{existing}"
-        else:
-            messages.insert(0, {"role": "system", "content": identity_anchor})
 
     def _process_feedback(
         self, text: str, modulation: Any, interoception: dict[str, Any] | None = None

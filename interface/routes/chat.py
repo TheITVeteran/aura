@@ -5609,7 +5609,7 @@ def _takes_up_what_was_raised(user_message: str, reply_text: str) -> bool:
         from core.conation.what_she_wants import get_what_she_wants, terms_of
 
         raised = terms_of(user_message)
-        subjects = get_what_she_wants().subjects_of(user_message, reply_text)
+        subjects = get_what_she_wants().talk.subjects_of(user_message, reply_text)
         return any(term in raised for term in subjects)
     except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("what the exchange is about could not be read: %s", exc)

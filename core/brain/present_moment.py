@@ -100,8 +100,8 @@ def _continuity_line() -> str:
         session = getattr(record, "session_count", None)
         gap_text = _humanize(float(gap))
         if session:
-            return f"- This is session {int(session)}; you were down {gap_text} before it."
-        return f"- You were down {gap_text} before this session."
+            return f"- Session {int(session)}; down {gap_text} before it."
+        return f"- Down {gap_text} before this session."
     except _RECOVERABLE as exc:
         record_degradation(
             "present_moment", exc, severity="info", action="omitted continuity from present moment"
@@ -123,25 +123,26 @@ def present_moment_block(*, now: datetime | None = None) -> str:
         )
         return ""
 
+    # Readings only. The block told her to trust it over her impressions and
+    # never to narrate weather she had not seen. An order is not a reading,
+    # and what she may claim to have perceived is checked after she speaks.
     lines = [
         PRESENT_MOMENT_HEADER,
-        "Ground truth for this instant. Trust it over any impression you have.",
-        f"- It is {stamp.strftime('%A %d %B %Y, %H:%M')} local"
+        f"- Clock: {stamp.strftime('%A %d %B %Y, %H:%M')} local"
         f" — {_part_of_day(stamp.hour)} by the clock.",
     ]
 
     uptime = _uptime_seconds()
     if uptime > 0:
-        lines.append(f"- You have been awake {_humanize(uptime)} this session.")
+        lines.append(f"- Awake {_humanize(uptime)} this session.")
 
     continuity = _continuity_line()
     if continuity:
         lines.append(continuity)
 
     lines.append(
-        "- You have no window, camera, thermometer or weather feed. Daylight, "
-        "weather and anything outside this machine are unknown to you unless "
-        "you look them up — never narrate them as if you saw them."
+        "- Senses for daylight and weather: none attached (no window, camera, "
+        "thermometer or weather feed)."
     )
     return "\n".join(lines)
 

@@ -52,7 +52,7 @@ async def test_an_exhausted_predecessor_cannot_spend_the_current_bodys_programme
     else:
         choosing.mine.born = 5.
     assert await _ask(run, hers, choosing, hold, 21.)
-    assert len(actions) == run.facing_trials == 11
+    assert sum(bool(key) for key, _at in actions) == run.facing_trials == 11
     programme = calibration_for_current_body(run, hers, choosing.mine, minimum=10)
     assert programme.issued == 1
 
@@ -64,10 +64,10 @@ async def test_the_final_request_keeps_its_full_time_but_the_same_owner_stays_ex
         assert await _ask(run, hers, choosing, hold, 10. + index)
     final = run.facing_trial
     assert await _ask(run, hers, choosing, hold, final.began + .1)
-    assert run.facing_trial is final and len(actions) == 10
+    assert run.facing_trial is final and sum(bool(key) for key, _at in actions) == 10
     assert not await _ask(run, hers, choosing, hold, final.until + .1)
     assert not await _ask(run, hers, choosing, hold, final.until + 2.)
-    assert len(actions) == run.facing_trials == 10
+    assert sum(bool(key) for key, _at in actions) == run.facing_trials == 10
 
 
 @pytest.mark.asyncio

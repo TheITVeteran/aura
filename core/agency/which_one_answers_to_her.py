@@ -294,9 +294,12 @@ class _Speeds:
         # Doing nothing stays in where fewer than two keys have been tried, being then the only thing to compare with.
         keyed = {key: values for key, values in groups.items() if key} if sum(1 for key in groups if key) >= 2 else groups
         by_pace = _contingency({key: [(math.hypot(*value), 0.0) for value in values] for key, values in keyed.items()})
-        from core.agency.an_input_answers_relative_to_motion import response_in_motion_coordinates
+        from core.agency.an_input_answers_relative_to_motion import (
+            response_by_travel_speed,
+            response_in_motion_coordinates,
+        )
 
-        return max(by_way, by_pace, self.by_push(), response_in_motion_coordinates(self))
+        return max(by_way, by_pace, self.by_push(), response_in_motion_coordinates(self), response_by_travel_speed(self))
 
     def carried(self) -> bool:
         """Whether it answers to her keys by how they push it, more than by the pace it goes under each, and goes on
