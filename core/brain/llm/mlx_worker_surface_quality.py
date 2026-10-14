@@ -149,8 +149,11 @@ def _surface_alpha_from_certificate(engine: Any = None) -> float:
         return 0.0
 
 
-def _surface_control_alpha(job: dict[str, Any], current_alpha: Any, *, engine: Any = None) -> float:
-    ceiling = _surface_alpha_from_certificate(engine)
+def _surface_control_alpha(
+    job: dict[str, Any], current_alpha: Any, *, engine: Any = None, ceiling: float | None = None
+) -> float:
+    if ceiling is None:
+        ceiling = _surface_alpha_from_certificate(engine)
     default_alpha = str(ceiling)
     configured = job.get(
         "clean_user_surface_steering_alpha",
@@ -183,11 +186,18 @@ def _apply_surface_generation_controls(
     job: dict[str, Any],
 ) -> dict[str, Any]:
     """Clamp latent embellishment when the next tokens are user-visible prose."""
+    # What this checkpoint and this vector basis have earned, kept beside what
+    # was asked and what was applied. The process that decides what to ask for
+    # has no hooks to look the certificate up with, and reads it from here, on
+    # every job, so the first reply somebody waits for can already ask.
+    certified = _surface_alpha_from_certificate(engine)
     if not _surface_generation_contract_enabled(job):
-        return {"enabled": False}
+        return {"enabled": False, "surface_alpha_certified": certified}
 
-    state: dict[str, Any] = {"enabled": True, "apply_errors": []}
-    alpha = _surface_control_alpha(job, getattr(engine, "_alpha", None), engine=engine)
+    state: dict[str, Any] = {"enabled": True, "apply_errors": [], "surface_alpha_certified": certified}
+    alpha = _surface_control_alpha(
+        job, getattr(engine, "_alpha", None), engine=engine, ceiling=certified
+    )
     # What was asked for is recorded as asked. The certificate ceiling lowers
     # what is applied, and an engine that is not there has no certificate to
     # read, so without this line a job that asked for 0.2 read as a job that
@@ -266,9 +276,10 @@ def _apply_surface_generation_controls(
     # applied" and "the clamp silently no-opped" looked identical from outside.
     if bool(job.get("clean_user_surface_contract", False)):
         logger.info(
-            "🎚️ [WORKER] Surface decode: steering α=%s (engine α=%s), "
+            "🎚️ [WORKER] Surface decode: steering α=%s of %s earned (engine α=%s), "
             "recurrent loops=%s (was %s, depth_present=%s)%s",
             state.get("surface_alpha_applied"),
+            state.get("surface_alpha_certified"),
             getattr(engine, "_alpha", None),
             state.get("recurrent_runtime_loops_applied"),
             state.get("recurrent_runtime_loops_before"),
@@ -489,6 +500,8 @@ def _surface_generation_control_receipt(
     output_contract = job.get("requested_output_contract")
     if isinstance(output_contract, dict) and output_contract:
         receipt["requested_output_contract"] = dict(output_contract)
+    if "surface_alpha_certified" in state:
+        receipt["surface_alpha_certified"] = state.get("surface_alpha_certified")
     if not enabled:
         return receipt
 

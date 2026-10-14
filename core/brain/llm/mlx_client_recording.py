@@ -221,6 +221,10 @@ class _RecordsWhatTheWorkerDid:
         self._set_task_surface_control_receipt(receipt)
         if receipt:
             self._last_surface_control_receipt = receipt
+            if "surface_alpha_certified" in receipt:
+                from core.consciousness.fusion_certificate import worker_reported
+
+                worker_reported(receipt["surface_alpha_certified"])
             # The worker measures how fast it decodes; this process sizes the
             # deadline. Without carrying the number across, the deadline is
             # derived from the origin and the tier and can be shorter than the

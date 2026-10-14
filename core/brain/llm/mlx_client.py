@@ -3208,6 +3208,7 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         "surface_alpha_requested",
         "surface_alpha_applied",
         "surface_alpha_applied_ok",
+        "surface_alpha_certified",
         "recurrent_runtime_loops_requested",
         "recurrent_depth_present",
         "recurrent_runtime_loops_applied",
