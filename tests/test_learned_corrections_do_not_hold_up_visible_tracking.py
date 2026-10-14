@@ -47,7 +47,7 @@ def test_a_slow_teacher_does_not_block_visible_tracking_or_queue_another_picture
     slots = checked_thread_semaphore('test.learned_point_corrections', 1)
     monkeypatch.setattr(correcting, '_SLOTS', slots)
 
-    def submit(fn, captured, **kwargs):
+    def submit(fn, captured, reset, **kwargs):
         submitted.append(captured)
         return raw
 
@@ -57,7 +57,7 @@ def test_a_slow_teacher_does_not_block_visible_tracking_or_queue_another_picture
     assert points.see_source(first.source, first.working, first.at)
     assert points.see_source(second.source, second.working, second.at)
     assert len(submitted) == 1 and not slots.acquire(blocking=False)
-    raw.set_result(marks(1.))
+    raw.set_result(correcting._Refinement(marks(1.), points._operation.pictures[0]))
     assert slots.acquire(blocking=False)
     slots.release()
 
@@ -70,7 +70,7 @@ def test_a_reset_while_work_is_running_forbids_late_publication(monkeypatch):
     first = picture(1.)
     points.see_source(first.source, first.working, first.at)
     points.clear()
-    raw.set_result(marks(1.))
+    raw.set_result(correcting._Refinement(marks(1.), points._operation.pictures[0]))
     points._receive()
     assert points.correction_status == 'correction expired' and points._transport is None
 

@@ -69,6 +69,7 @@ class CoTrackerBackend:
         self._frames: deque[np.ndarray] = deque()
         self._count = 0
         self._step = 0
+        self.query_window_frames: int | None = None
 
     def _load(self) -> None:
         if self.model is not None:
@@ -109,6 +110,7 @@ class CoTrackerBackend:
         if type(step) is not int or not 1 <= step <= 16 or 2 * step > self.max_history_frames:
             raise ValueError('CoTracker needs a supported online window step')
         self._step = step
+        self.query_window_frames = 2 * step
         video = frame.pixels.transpose(2, 0, 1)[None, None].astype(np.float32)
         queries = np.asarray([[(0., seed.x, seed.y) for seed in seeds]], dtype=np.float32)
         self._call(video, first=True, queries=queries)
