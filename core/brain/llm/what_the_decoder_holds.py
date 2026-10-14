@@ -15,7 +15,20 @@ _SHAPES = {"json": "any", "json_object": "object", "json_array": "array"}
 
 def hold_the_answer(job: Any, tokenizer: Any, native_thinking: Any, logits_processors: list[Any], logger: Any,
                     on_failure: Callable[..., Any]) -> None:
-    """Add to ``logits_processors`` what holds the answer to the job's ``output_shape`` or ``choose_from``."""
+    """Add to ``logits_processors`` what holds the answer to the job's ``output_shape`` or ``choose_from``.
+
+    And, on a reply somebody is waiting for, what keeps it from copying her
+    own earlier replies (core/brain/llm/not_her_own_words_again.py).
+    """
+    if job.get("clean_user_surface_contract"):
+        try:
+            from core.brain.llm.not_her_own_words_again import her_earlier_turns, not_her_own_words_again
+
+            not_again = not_her_own_words_again(tokenizer, her_earlier_turns(job.get("messages")))
+            if not_again is not None:
+                logits_processors.append(not_again)
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as e:
+            on_failure(e, action="continued the reply without the hold on copying her earlier replies", severity="warning")
     shape = str(job.get("output_shape") or "").strip().lower()
     choices = [str(c) for c in (job.get("choose_from") or ()) if str(c or "").strip()]
     if shape not in _SHAPES and not choices:

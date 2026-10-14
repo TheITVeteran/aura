@@ -1,0 +1,113 @@
+"""A reply does not copy her own earlier replies, held by the decoder.
+
+Live, 13 October, three different invitations to watch something were each
+answered "I am ready. I have my eyes closed, but my attention is fully open to
+your narration. Please begin. Is the water still or moving? And where is the
+heron positioned?" Her model, handed a transcript in which it had answered a
+message like this one, wrote its earlier answer out again nearly token for
+token. A penalty on repeated tokens cannot see that: every token of the copy
+is ordinary, and only the run of them is a repeat.
+
+DRY (Weidmann 2024) penalises the run. When the text being written repeats a
+stretch of earlier text, the token that would carry the repeat on is pushed
+down by an amount that grows with the stretch,
+
+    multiplier * base ** (length - allowed_length),
+
+so a shared word or two costs nothing and a copied sentence soon costs more
+than any continuation of it is worth. The three numbers are DRY's own defaults
+as llama.cpp and the other runtimes that adopted it ship them; they were not
+tuned here.
+
+Only her own earlier turns count. Quoting what somebody said to her, a page,
+or the screen is not repeating herself, and her earlier turns are read from
+the job's messages rather than from the token history, because a cached
+prefix never reaches a logits processor at all.
+"""
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable, Sequence
+from typing import Any
+
+logger = logging.getLogger("Aura.Brain.LLM.NotAgain")
+
+__all__ = ["ALLOWED_LENGTH", "BASE", "MULTIPLIER", "her_earlier_turns", "not_her_own_words_again"]
+
+#: DRY's defaults (Weidmann 2024; llama.cpp `--dry-multiplier 0.8 --dry-base
+#: 1.75 --dry-allowed-length 2`).
+MULTIPLIER = 0.8
+BASE = 1.75
+ALLOWED_LENGTH = 2
+
+#: Past this the penalty is far beyond any logit, and the exponent stays finite.
+_LONGEST = 64
+
+
+def her_earlier_turns(messages: Any) -> list[str]:
+    """What she said in the transcript, before the turn being written now."""
+    said: list[str] = []
+    for message in messages if isinstance(messages, list) else []:
+        if isinstance(message, dict) and str(message.get("role") or "").lower() == "assistant":
+            text = str(message.get("content") or "").strip()
+            if text:
+                said.append(text)
+    return said
+
+
+def _encoded(tokenizer: Any, text: str) -> list[int]:
+    try:
+        ids = tokenizer.encode(text, add_special_tokens=False)
+    except TypeError:
+        ids = tokenizer.encode(text)
+    return [int(i) for i in ids]
+
+
+def not_her_own_words_again(tokenizer: Any, earlier: Sequence[str]) -> Callable[[Any, Any], Any] | None:
+    """A logits processor that penalises carrying on a copy of her earlier turns; None with nothing to copy."""
+    try:
+        import mlx.core as mx
+    # not a failure: no MLX here, so there is no decoder to hold.
+    except ImportError:
+        return None
+    turns = [ids for ids in (_encoded(tokenizer, text) for text in earlier) if len(ids) > ALLOWED_LENGTH]
+    if not turns:
+        return None
+    # Where each run of `ALLOWED_LENGTH` tokens occurs, and what came next.
+    after: dict[tuple[int, ...], list[tuple[int, int]]] = {}
+    for turn, ids in enumerate(turns):
+        for end in range(ALLOWED_LENGTH, len(ids)):
+            after.setdefault(tuple(ids[end - ALLOWED_LENGTH:end]), []).append((turn, end))
+    state: dict[str, Any] = {"prompt": None, "penalised": 0}
+
+    def not_again(tokens: Any, logits: Any) -> Any:
+        token_ids = [int(t) for t in (tokens.tolist() if hasattr(tokens, "tolist") else list(tokens))]
+        # The first call carries the prompt, or what of it was not cached.
+        if state["prompt"] is None:
+            state["prompt"] = len(token_ids)
+        written = token_ids[state["prompt"]:]
+        if len(written) < ALLOWED_LENGTH:
+            return logits
+        penalty: dict[int, float] = {}
+        for turn, end in after.get(tuple(written[-ALLOWED_LENGTH:]), ()):
+            ids = turns[turn]
+            # How far back the copy runs, written against what she said before.
+            length = ALLOWED_LENGTH
+            while (
+                length < min(_LONGEST, len(written), end)
+                and written[-length - 1] == ids[end - length - 1]
+            ):
+                length += 1
+            following = ids[end]
+            penalty[following] = max(penalty.get(following, 0.0), MULTIPLIER * BASE ** (length - ALLOWED_LENGTH))
+        width = int(logits.shape[-1])
+        penalty = {token: amount for token, amount in penalty.items() if 0 <= token < width}
+        if not penalty:
+            return logits
+        state["penalised"] += 1
+        down = mx.zeros((width,), dtype=logits.dtype)
+        down[mx.array(sorted(penalty))] = mx.array([penalty[token] for token in sorted(penalty)], dtype=logits.dtype)
+        return logits - down
+
+    not_again.state = state  # type: ignore[attr-defined]
+    return not_again

@@ -810,3 +810,37 @@ def test_what_the_screen_shows_moves_the_withs_field_by_how_much_it_changed(reco
     assert _how_much_changed(held, "a heron stands in the reeds") == 0.0
     assert _how_much_changed(held, "credits roll now") == 1.0
     assert _how_much_changed(held, "credits roll later") == pytest.approx(0.5)
+
+
+def test_what_she_is_unsure_of_is_counted_for_each_side():
+    """The same rule her wants are ranked by: liking plus the root of its variance."""
+    import types
+
+    from core.together import her_answer as answering
+
+    class Held:
+        def __init__(self, key, liking, unsure, contacts=3, under_way=None):
+            self.key, self.liking, self.unsure, self.contacts = key, liking, unsure, contacts
+            self.label, self.under_way, self.open = key, under_way or {}, {}
+            self.during = types.SimpleNamespace(times=0, liking=0.0)
+            self.kind = key.split(":", 1)[0]
+
+    def record_with(person_unsure):
+        things = {
+            INES: Held(INES, 0.0, person_unsure),
+            HERON: Held(HERON, 0.1, 0.0001, under_way={"reading": 1}),
+        }
+        return types.SimpleNamespace(
+            _things=things, thing=things.get, decided=lambda: None, known=lambda key: None,
+        )
+
+    assert answering.her_answer(record_with(0.0001), INES, []).joins is False  # well known: the mean decides
+    assert answering.her_answer(record_with(0.25), INES, []).joins is True  # little known: the doubt counts for her
+
+
+def test_a_thing_she_knows_she_dislikes_is_still_not_now_whatever_she_is_unsure_of(record):
+    for turn in range(40):
+        key, worth = ((FILM, -0.6), (HERON, 0.6))[turn % 2]
+        record.met([key], worth, reachable=[key], labels={key: key.split(":", 1)[1]})
+    record.met([INES], 0.1, reachable=[INES], labels={INES: "ines"})
+    assert her_answer(record, INES, [FILM]).joins is False
