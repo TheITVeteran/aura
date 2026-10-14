@@ -6,8 +6,9 @@ from typing import Any
 
 from core.agency.an_input_answers_relative_to_motion import moving_inputs_in_trials
 from core.agency.response_in_the_body_frame import body_epoch
-from core.agency.which_way_she_faces import MOVING
+from core.agency.which_way_she_faces import MOVING, SETTLE_S
 from core.perception.motion_kept_between_pictures import measured_velocity
+from core.perception.orientation_from_continuing_marks import current_angular_phase
 from core.perception.translation_from_visible_support import motion_was_measured
 from core.verify import invariant
 
@@ -45,6 +46,19 @@ def observe_facing(faces: Any, mine: Any, hers: Any, at: float) -> None:
                 and at >= hers._beside_until)
     vx, vy, _uncertainty = measured_velocity(mine, at)
     faces.saw(vx, vy, key, at, measured=measured, began=began)
+    phase = current_angular_phase(mine, at) if measured else None
+    if phase is not None:
+        direction = None
+        context = identity[0], birth, identity[2], phase.reference_at
+        pair = None
+        if key and began is not None and faces.sign is not None and key not in faces.turning_keys():
+            pair = faces.pose_path.observe((context, key, began), at, phase.angle, phase.uncertainty,
+                phase.position, phase.position_error, ready_after=max(began+SETTLE_S, hers._beside_until))
+        if pair is not None:
+            direction = pair.direction+(math.pi if faces.sign < 0 else 0.)
+        faces.pose_direction.observe(context, at, phase.angle, phase.uncertainty, direction=direction,
+                                     sample_phase=pair.phase if pair is not None else None,
+                                     sample_uncertainty=pair.uncertainty if pair is not None else None)
 
 
 def _current_birth(mine: Any, hers: Any, at: float) -> float | None:

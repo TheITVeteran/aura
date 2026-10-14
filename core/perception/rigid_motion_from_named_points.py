@@ -35,6 +35,19 @@ def _fit(starts: np.ndarray, ends: np.ndarray) -> RigidMotion:
     return RigidMotion(angle, tuple(float(v) for v in offset), (), 0.)
 
 
+def angular_uncertainty(starts: np.ndarray, ends: np.ndarray, fitted: RigidMotion) -> float:
+    """Estimate angular RMS error from the measured consensus and quarter-pixel resolution.
+
+    This estimate does not bound correlated correspondence errors or drift.
+    """
+    inside = np.asarray(starts)[list(fitted.inliers)]
+    observed = np.asarray(ends)[list(fitted.inliers)]
+    span = float(np.sqrt(np.mean(np.sum((inside-inside.mean(axis=0))**2, axis=1))))
+    residual = fitted.apply(inside)-observed
+    error = float(np.sqrt(np.mean(np.sum(residual**2, axis=1))))
+    return math.atan2(.25+error, span)
+
+
 def rigid_motion(starts: np.ndarray, ends: np.ndarray, *, error: float = .75) -> RigidMotion | None:
     """A bounded consensus of at least three noncollinear correspondences.
 
@@ -52,6 +65,10 @@ def rigid_motion(starts: np.ndarray, ends: np.ndarray, *, error: float = .75) ->
         return None
     if np.linalg.svd(starts - starts.mean(axis=0), compute_uv=False)[-1] < 1.:
         return None
+    fitted = _fit(starts, ends)
+    residual = np.linalg.norm(fitted.apply(starts)-ends, axis=1)
+    if residual.max() <= error:
+        return RigidMotion(fitted.angle, fitted.offset, tuple(range(len(starts))), float(residual.max()))
     # Spread a fixed hypothesis budget across the correspondence list.
     selected = np.unique(np.linspace(0, len(starts) - 1, min(len(starts), 16)).round().astype(int))
     best = None

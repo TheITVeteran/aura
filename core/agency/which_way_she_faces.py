@@ -21,6 +21,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.agency.direction_from_a_measured_pose_path import DirectionFromPosePath
+from core.agency.direction_linked_to_observed_pose import DirectionFromPose
 from core.agency.turning_while_travelling import TurningWhileTravelling
 from core.verify import invariant
 
@@ -121,6 +123,8 @@ class WhichWaySheFaces:
     steering_model: Any = None
     steering_basis: bool | None = None
     body_birth: float | None = None
+    pose_direction: DirectionFromPose = field(default_factory=DirectionFromPose)
+    pose_path: DirectionFromPosePath = field(default_factory=DirectionFromPosePath)
 
     def saw(self, vx: float, vy: float, held: str, at: float, *, measured: bool = True,
             began: float | None = None) -> None:
@@ -261,6 +265,8 @@ class WhichWaySheFaces:
         """Where she faces now: where she last went, turned on by what the keys pressed since are known to turn her, the
         one held now for as long as it has been. Seen only while she goes, her facing is otherwise worked out, as a
         sailor's is between sightings: steered by where she last went, she turned and turned (offline 2026-10-11)."""
+        if self.pose_direction.at == self.now and self.pose_direction.current is not None:
+            return self.pose_direction.current
         if self.facing is None:
             return None
         rates = self._stationary_turning_keys()
@@ -334,7 +340,8 @@ class WhichWaySheFaces:
 
     def way_of(self, key: str) -> tuple[float, float] | None:
         """How a key takes her now, where it takes her along her facing; None for a key that turns her or is not known."""
-        if self.facing is None or key in self.turning_keys() or key not in self.along or len(self.along[key]) < PRESSES:
+        heading = self.facing_now()
+        if heading is None or key in self.turning_keys() or key not in self.along or len(self.along[key]) < PRESSES:
             return None
         speed = statistics.median(self.along[key])
-        return speed * math.cos(self.facing), speed * math.sin(self.facing)
+        return speed * math.cos(heading), speed * math.sin(heading)

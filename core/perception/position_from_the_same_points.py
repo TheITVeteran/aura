@@ -8,12 +8,12 @@ new marks cannot silently take over from the ones that started it.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
-from core.perception.rigid_motion_from_named_points import rigid_motion
+from core.perception.rigid_motion_from_named_points import angular_uncertainty, rigid_motion
 from core.verify import invariant
 
 
@@ -25,6 +25,10 @@ class PointPose:
     anchors: dict[int, tuple[float, float]]
     position: tuple[float, float]
     reference_at: float | None = None
+    visible_marks: dict[int, tuple[float, float]] = field(default_factory=dict)
+    angular_reference_at: float | None = None
+    angular_offset: float = 0.
+    angular_error: float = 0.
 
 
 def measured_position(thing: Any) -> tuple[float, float]:
@@ -50,41 +54,21 @@ def position_from_points(thing: Any, blob: dict, motion: Any, at: float) -> tupl
     if current is None:
         return None
     origin = float(blob["x"]), float(blob["y"])
-    seed = PointPose(thing.born, at, origin, current, origin, reference_at=at)
+    seed = PointPose(thing.born, at, origin, current, origin, reference_at=at,
+                     visible_marks=dict(current), angular_reference_at=at)
     if previous is None or previous.born != thing.born or previous.at != thing.seen:
         thing.point_pose = seed
         return None
     names = previous.anchors.keys() & current.keys()
     if len(names) < 3 or len(names) < .6 * len(previous.anchors):
+        _bridge_angular_basis(previous, seed)
         thing.point_pose = seed
         return None
     starts = np.array([previous.anchors[n] for n in names])
     ends = np.array([current[n] for n in names])
-    shifts = ends - starts
-    middle = np.median(shifts, axis=0)
-    coherent = np.linalg.norm(shifts - middle, axis=1) <= 1.
-    if coherent.sum() < 3 or coherent.mean() < .7 or not _spread(starts[coherent]):
-        return _continue_rotating_marks(thing, previous, current, names, starts, ends, motion, at, seed)
-    if getattr(motion, 'rigid', None) is not None:
-        return _continue_rotating_marks(thing, previous, current, names, starts, ends, motion, at, seed)
-    middle = np.median(shifts[coherent], axis=0)
-    position = tuple(float(v) for v in np.asarray(previous.origin) + middle)
-    step = np.subtract(position, previous.position)
-    if math.dist(step, (motion.dx, motion.dy)) > 1.:
-        thing.point_pose = seed
-        return None
-    before = previous.position
-    qualified = [name for name, good in zip(names, coherent, strict=True) if good]
-    anchors = {name: previous.anchors[name] for name in qualified}
-    # Current owned marks join only after three retained marks independently
-    # located the same body. Back-project them into that origin; no new box
-    # centre is substituted. Admissions cannot outnumber the retained marks.
-    for name in sorted(current.keys() - names)[:len(qualified) // 2]:
-        anchors[name] = tuple(float(v) for v in np.asarray(current[name]) - middle)
-    previous.anchors = anchors
-    previous.position, previous.at = position, at
-    thing.point_pose = previous
-    return before, position
+    # The reference can already be rotated when this frame has no measured
+    # local rotation. New marks still need the complete reference transform.
+    return _continue_rotating_marks(thing, previous, current, names, starts, ends, motion, at, seed)
 
 
 def _continue_rotating_marks(thing: Any, previous: PointPose, current: dict, names: set,
@@ -107,8 +91,33 @@ def _continue_rotating_marks(thing: Any, previous: PointPose, current: dict, nam
         anchors[name] = tuple(float(v) for v in fit.inverse(current[name]))
     before = previous.position
     previous.anchors, previous.position, previous.at = anchors, position, at
+    previous.visible_marks = dict(current)
     thing.point_pose = previous
     return before, position
+
+
+def _bridge_angular_basis(previous: PointPose, current: PointPose) -> None:
+    """New anchor sets need measured local rotation; a translated origin cannot supply it."""
+    from core.perception.orientation_from_continuing_marks import _phase_of_pose
+
+    if previous.born != current.born or not 0. < current.at-previous.at <= .35:
+        return
+    phase = _phase_of_pose(previous)
+    before = getattr(previous, 'visible_marks', {})
+    names = sorted(before.keys() & current.visible_marks.keys())
+    if phase is None or len(names) < 3:
+        return
+    starts = np.asarray([before[n] for n in names])
+    ends = np.asarray([current.visible_marks[n] for n in names])
+    fitted = rigid_motion(starts, ends)
+    if fitted is None:
+        return
+    error = math.hypot(phase.uncertainty, angular_uncertainty(starts, ends, fitted))
+    if error > .12:
+        return
+    current.angular_reference_at = phase.reference_at
+    current.angular_offset = (phase.angle+fitted.angle+math.pi) % (2.*math.pi)-math.pi
+    current.angular_error = error
 
 
 def _owned_marks(thing: Any, blob: dict, motion: Any, at: float) -> dict | None:

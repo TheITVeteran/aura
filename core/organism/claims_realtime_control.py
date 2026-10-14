@@ -423,6 +423,7 @@ def _travel_turn_claims() -> tuple:
     )
     from core.agency.a_trial_has_a_physical_end import _physical_trial_deadline_invariant
     from core.agency.calibration_for_a_current_body import _current_body_calibration_invariant
+    from core.agency.direction_linked_to_observed_pose import _pose_direction_invariant
     from core.agency.facing_seen_under_its_input import _fresh_heading_invariant
     from core.agency.response_in_the_body_frame import _body_heading_invariant
     from core.agency.steering_from_a_model import (
@@ -433,9 +434,16 @@ def _travel_turn_claims() -> tuple:
         _travel_segments_invariant,
         _travel_turns_invariant,
     )
+    from core.perception.orientation_from_continuing_marks import _angular_phase_invariant
     from core.runtime.task_ownership import _unstarted_task_cleanup_invariant
 
     return (
+        ("angular_phase_requires_current_material_marks", "core/perception/orientation_from_continuing_marks.py",
+         "tests/test_direction_can_follow_current_material_marks.py", lambda: _angular_phase_invariant() == (),
+         "A current angular phase requires spread proper-rigid correspondence on the same visible point pose; stale, replaced or reflected geometry remains unknown."),
+        ("pose_direction_requires_observed_travel_agreement", "core/agency/direction_linked_to_observed_pose.py",
+         "tests/test_a_pose_path_pairs_direction_at_the_measured_time.py", lambda: _pose_direction_invariant() == (),
+         "A pose phase supplies a facing only after spread direction samples agree within measured uncertainty; changed ownership or pose basis requires new qualification."),
         ("source_turn_roles_only_arm_a_body_hypothesis", "core/agency/steering_from_a_model.py",
          "tests/test_steering_hypotheses_reach_the_actor.py", lambda: _source_turn_role_invariant() == (),
          "A resolved source rotation method on the controlled class can arm a provisional turn; unrelated calls cannot confer a turn role or measured control."),
