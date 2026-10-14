@@ -290,3 +290,43 @@ def test_a_sequence_still_thinking_at_its_budget_has_its_channel_closed_and_writ
     assert records[1]["thinking_closed_by_budget"] and records[1]["public_text"] == "code"
     assert records[1]["termination"] == "stop" and records[1]["generated_tokens"] == 5
     assert records[2]["public_text"] == "codecodecodecode" and not records[2]["thinking_closed_by_budget"]
+
+
+def test_a_sampled_stream_hands_its_sampler_to_each_group_and_seeds_each_group(monkeypatch) -> None:
+    import sys
+    import types
+
+    from tools import g12_batched
+
+    seen: dict[str, list] = {"samplers": [], "seeds": []}
+
+    class FakeGenerator:
+        def __init__(self, model, *, stop_tokens, completion_batch_size, prefill_batch_size, sampler=None):
+            seen["samplers"].append(sampler)
+
+        def insert(self, prompts, max_tokens):
+            self.uids = list(range(len(prompts)))
+            return self.uids
+
+        def next_generated(self):
+            if not self.uids:
+                return []
+            done, self.uids = self.uids, []
+            return [types.SimpleNamespace(uid=u, token=0, finish_reason="stop") for u in done]
+
+        def close(self):
+            pass
+
+    fake_mx = types.SimpleNamespace(random=types.SimpleNamespace(seed=lambda s: seen["seeds"].append(s)),
+                                    synchronize=lambda: None, clear_cache=lambda: None)
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_mx)
+    monkeypatch.setitem(sys.modules, "mlx", types.SimpleNamespace(core=fake_mx))
+    monkeypatch.setitem(sys.modules, "mlx_lm.generate", types.SimpleNamespace(BatchGenerator=FakeGenerator))
+    monkeypatch.setattr(g12_batched, "_evaluate_cache_metadata", lambda generator: None)
+    tokenizer = types.SimpleNamespace(eos_token_ids=[1])
+    marker = object()
+    finished: list[int] = []
+    g12_batched._decode_token_groups(None, tokenizer, [[1]] * 5, max_tokens=4, width=2,
+                                     on_finish=lambda index, *_: finished.append(index), sampler=marker, seed=7)
+    assert seen["samplers"] == [marker] * 3 and seen["seeds"] == [7_000_021, 7_000_023, 7_000_025]
+    assert sorted(finished) == [0, 1, 2, 3, 4]

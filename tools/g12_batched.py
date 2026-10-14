@@ -84,8 +84,8 @@ def render_tokens(tokenizer: Any, conversation: list, *, thinking: bool = True) 
 
 
 def _decode_token_groups(model: Any, tokenizer: Any, prompts: Sequence[list[int]], *, max_tokens: int, width: int,
-                         on_finish: Any) -> None:
-    """Greedy decodes of token prompts in fixed groups of ``width``.
+                         on_finish: Any, sampler: Any = None, seed: int | None = None) -> None:
+    """Decodes of token prompts in fixed groups of ``width``: greedy, or by ``sampler`` from ``seed``.
 
     Each group gets its own generator, prefilled once before any of it
     generates, and nothing new is admitted while it generates; the next group
@@ -96,7 +96,8 @@ def _decode_token_groups(model: Any, tokenizer: Any, prompts: Sequence[list[int]
     released after the GPU has finished with them. ``on_finish(index, tokens,
     finish_reason, seconds, group_size)`` is called as each sequence ends;
     ``tokens`` excludes the stop token and ``seconds`` runs from its first
-    generated token.
+    generated token. A sampled run seeds MLX's generator once per group from
+    ``seed`` and the group's first index, so a resumed run draws the same.
     """
     import gc
 
@@ -105,8 +106,12 @@ def _decode_token_groups(model: Any, tokenizer: Any, prompts: Sequence[list[int]
 
     for first in range(0, len(prompts), max(1, width)):
         group = list(range(first, min(first + max(1, width), len(prompts))))
+        if sampler is not None and seed is not None:
+            mx.random.seed(int(seed) * 1_000_003 + first)
+        # A greedy run calls the generator exactly as before samplers existed here.
+        sampling = {"sampler": sampler} if sampler is not None else {}
         generator = BatchGenerator(model, stop_tokens=[[token] for token in tokenizer.eos_token_ids],
-                                   completion_batch_size=len(group), prefill_batch_size=len(group))
+                                   completion_batch_size=len(group), prefill_batch_size=len(group), **sampling)
         uids = generator.insert([list(prompts[index]) for index in group], [max_tokens] * len(group))
         index_of = {uid: index for uid, index in zip(uids, group, strict=True)}
         tokens: dict[int, list[int]] = {uid: [] for uid in uids}
@@ -140,6 +145,8 @@ def decode_stream(
     width: int,
     on_record: Any,
     thinking: bool = True,
+    sampler: Any = None,
+    seed: int | None = None,
 ) -> None:
     """Decode every conversation in fixed groups of ``width``, handing each record over as it finishes.
 
@@ -165,7 +172,8 @@ def decode_stream(
             "batching": "fixed_groups",
         })
 
-    _decode_token_groups(model, tokenizer, prompts, max_tokens=max_tokens, width=width, on_finish=finished)
+    _decode_token_groups(model, tokenizer, prompts, max_tokens=max_tokens, width=width, on_finish=finished,
+                         sampler=sampler, seed=seed)
 
 
 #: What her chat template writes to close the private channel (chat_template.jinja).
