@@ -11,13 +11,18 @@ domain, with a summary.
 
 Usage:
     g09_requests_to_draft.py --book FILE [--book FILE ...] [--signatures-only FILE ...]
-        --sample KIND=COUNT [...] --seed N --routing-only DOMAIN [...] --output DIR
+        --sample KIND=COUNT [...] [--spread TOTAL:KIND,KIND,...] --seed N --routing-only DOMAIN [...] --output DIR
+
+``--spread`` divides TOTAL test draws as evenly as possible among the listed
+kinds that keep a procedure, the remainder going to the first kinds in the
+seed's order (attempt 3's rule, G09_PROCEDURES_PREREGISTRATION_3_2026-10-14.md).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -26,12 +31,25 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def spread(total: int, kinds: list[str], seed: int) -> dict[str, int]:
+    """``total`` divided as evenly as possible among ``kinds``, the remainder to the first in the seed's order."""
+    kinds = sorted(kinds)
+    if not kinds:
+        return {}
+    base, extra = divmod(total, len(kinds))
+    order = list(kinds)
+    random.Random(seed).shuffle(order)
+    return {kind: base + (kind in order[:extra]) for kind in kinds}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--book", type=Path, action="append", default=[], help="a book whose procedures count")
     parser.add_argument("--signatures-only", type=Path, action="append", default=[],
                         help="a book whose kinds route but whose procedures are left out")
     parser.add_argument("--sample", action="append", default=[], help="KIND=COUNT: a held-out kind's test draw")
+    parser.add_argument("--spread", action="append", default=[],
+                        help="TOTAL:KIND,KIND,...: TOTAL draws over the listed kinds that keep a procedure")
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--routing-only", action="append", default=[], help="a harness domain routed whole")
     parser.add_argument("--output", type=Path, required=True)
@@ -57,6 +75,10 @@ def main() -> int:
                 if book.route(task["request"])[0] in book.procedures
                 and answer_from_kept_procedures(task["request"], book, own_book=False) is not None]
 
+    for spec in args.spread:
+        total, listed = spec.split(":", 1)
+        kept = [kind for kind in listed.split(",") if kind in book.procedures]
+        args.sample += [f"{kind}={count}" for kind, count in spread(int(total), kept, args.seed).items()]
     for spec in args.sample:
         kind, count = spec.split("=")
         allowed = test_ids(kind)
