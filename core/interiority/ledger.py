@@ -347,6 +347,10 @@ class EventNotes:
         #: What she has found a thing or a person to be worth, in [-1, 1],
         #: once she can say she likes or dislikes it.
         self._regards: dict[str, float] = {}
+        #: What a thing's fate is worth to her, in [0, 1], for what she has
+        #: given her own turns to and what comes with it
+        #: (core/conation/what_she_cares_about.py).
+        self._cares: dict[str, float] = {}
         self._undo_costs: dict[str, float] = {}
         self._actions_that_change: dict[str, int] = {}
         self._own_actions_that_change: dict[str, int] = {}
@@ -380,6 +384,26 @@ class EventNotes:
                 if key in self._regards
             ]
         return max(held, key=abs) if held else None
+
+    def note_cares(self, cares: Mapping[str, float]) -> None:
+        """What she has a stake in by caring, replacing the last set."""
+        with self._lock:
+            self._cares = {
+                str(name).strip().lower(): max(0.0, min(1.0, float(stake)))
+                for name, stake in cares.items()
+                if str(name).strip()
+            }
+            self._touch()
+
+    def care(self, *names: str | None) -> float | None:
+        """The largest stake she holds by caring in any of these."""
+        with self._lock:
+            held = [
+                self._cares[key]
+                for key in (str(name).strip().lower() for name in names if name)
+                if key in self._cares
+            ]
+        return max(held) if held else None
 
     def note_goal_delta(self, name: str, delta: float) -> None:
         with self._lock:
@@ -908,6 +932,10 @@ class RelationalLedger:
             regard = self.notes.regard(subject, object_)
             if regard is not None:
                 stakes.append(Stake("regard", subject, abs(regard), object_ or ""))
+            # And one she has given her own turns to concerns her by that much.
+            care = self.notes.care(subject, object_)
+            if care:
+                stakes.append(Stake("care", subject, care, object_ or ""))
             return tuple(stakes)
 
     def attachment(self, entity: str) -> float | None:

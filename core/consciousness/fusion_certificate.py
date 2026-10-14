@@ -390,7 +390,11 @@ def worker_reported(alpha: Any) -> float:
         earned = 0.0
     if isinstance(alpha, bool) or not math.isfinite(earned):
         earned = 0.0
-    _EARNED_ON_THE_WORKER = max(0.0, min(1.0, earned))
+    earned = max(0.0, min(1.0, earned))
+    if earned != _EARNED_ON_THE_WORKER:
+        logger.info("🎚️ The worker reports %.3f of steering earned for a person's turn (was %.3f).",
+                    earned, _EARNED_ON_THE_WORKER)
+    _EARNED_ON_THE_WORKER = earned
     return _EARNED_ON_THE_WORKER
 
 

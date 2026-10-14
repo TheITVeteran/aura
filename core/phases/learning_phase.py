@@ -168,6 +168,32 @@ def _with_the_person(about: list[str], person: str, sent_from: str) -> list[str]
     return [who, *kept]
 
 
+#: Her last read of each person's distress, to set the next against.
+_THEIR_DISTRESS: dict[str, float] = {}
+
+
+def _how_they_are_reaches_her(who: str) -> None:
+    """Her read of the person's distress against her last read of it is how they are faring.
+
+    Falling distress is them doing better and rising is worse; the read is a
+    posterior from the channels she has of them, never a word list
+    (core/interiority/other_minds.py). What she feels of it is her stake in
+    them, and with no stake it is news (core/conation/what_she_cares_about.py).
+    """
+    from core.conation.what_she_wants import get_what_she_wants
+    from core.container import ServiceContainer
+
+    other = getattr(ServiceContainer.get("interiority", default=None), "last_other", None)
+    distress = getattr(other, "distress", None)
+    if distress is None or getattr(getattr(distress, "provenance", None), "name", "ABSENT") == "ABSENT":
+        return
+    now = max(0.0, min(1.0, float(distress.value) * float(distress.confidence)))
+    before = _THEIR_DISTRESS.get(who)
+    _THEIR_DISTRESS[who] = now
+    if before is not None and now != before:
+        get_what_she_wants().care.fared(who, before - now)
+
+
 async def read_what_the_turn_was_worth(state: AuraState, *, person: str = "", sent_from: str = "") -> None:
     """Read the turn that just ended against what she expected, and teach by it.
 
@@ -218,6 +244,7 @@ async def read_what_the_turn_was_worth(state: AuraState, *, person: str = "", se
                 # free again; the turns between their messages are part of it.
                 who = about[0]
                 get_what_she_wants().started(who, "conversation", label=who.split(":", 1)[1])
+                _how_they_are_reaches_her(who)
             met_this_turn(about, reading, said=_said_this_turn(state))
     except _LEARNING_RECOVERABLE_ERRORS as e:
         _record_learning_degradation(

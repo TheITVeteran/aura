@@ -80,6 +80,7 @@ from typing import Any
 
 from core.conation.state import Incentive
 from core.conation.what_her_talk_is_about import WhatHerTalkIsAbout, terms_of
+from core.conation.what_she_cares_about import WhatSheCaresAbout
 from core.runtime.atomic_writer import atomic_write_text_behind
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import checked_lock
@@ -329,6 +330,7 @@ class _WantReadouts:
                 "likes": [thing.key for thing in self.likes()[:8]],
                 "dislikes": [thing.key for thing in self.dislikes()[:8]],
                 "wants": [want.as_dict() for want in self._standing[:8]],
+                "care": self.care.status(),
             }
 
 
@@ -354,6 +356,9 @@ class WhatSheWants(_WantReadouts):
         #: What her exchanges have said so far, and so what a new one is about.
         #: See core/conation/what_her_talk_is_about.py.
         self.talk = WhatHerTalkIsAbout(changed=lambda: _save(self, _held(self)))
+        #: What she gives her own turns to, and whose fate reaches her.
+        #: See core/conation/what_she_cares_about.py.
+        self.care = _care_of(self)
         #: What she has decided to do when she next can, if anything: one of
         #: her wants, as it stood when she decided.
         self._decided: dict[str, Any] | None = None
@@ -384,12 +389,16 @@ class WhatSheWants(_WantReadouts):
         labels: Mapping[str, str] | None = None,
         payoff: Mapping[str, float] | None = None,
         stood_out: Mapping[str, float] | None = None,
+        fated: Iterable[str] = (),
     ) -> dict[str, Any]:
         """One turn's contact with everything it was about.
 
         `reachable` names the present things she could go to herself. A thing
         she went to since the last turn was read is part of this one, with the
-        way she went (see `went`).
+        way she went (see `went`). `fated` names the things she learned the
+        fate of this turn: what the turn was worth is then partly the news,
+        and the news is not what the thing itself is worth to her, so the turn
+        teaches nothing about them.
         """
         if liking is None:
             return {"read": False}
@@ -416,7 +425,12 @@ class WhatSheWants(_WantReadouts):
             self._read += 1
             self._good_turns += liking > 0.0
             self._going += ((1.0 if liking > 0.0 else 0.0) - self._going) / min(self._read, _WINDOW)
-            things = [_touch(self, key, labels.get(key, ""), key in can_reach) for key in keys]
+            everything = [_touch(self, key, labels.get(key, ""), key in can_reach) for key in keys]
+            news_of = {str(key) for key in fated}
+            things = [thing for thing in everything if thing.key not in news_of]
+            for thing in everything:
+                if thing.key in news_of:
+                    thing.last = self._turns
             predicted = max(-1.0, min(1.0, sum(thing.liking for thing in things)))
             error = liking - predicted
             total = sum(thing.unsure for thing in things) + self._noise
@@ -624,7 +638,9 @@ class WhatSheWants(_WantReadouts):
             thing.open.pop(item, None)
             held = _held(self)
         _save(self, held)
-        if not finished:
+        if finished:
+            self.care.fared(key, 1.0)
+        else:
             self.failed(key)
 
     def failed(self, key: str) -> None:
@@ -632,8 +648,9 @@ class WhatSheWants(_WantReadouts):
 
         Failing at something she wants builds up, by how much she wanted it
         (core/conation/dynamics.py), and past the point that file sets she
-        stops wanting it for now.
+        stops wanting it for now. It is also how the thing fared.
         """
+        self.care.fared(key, -1.0)
         try:
             engine = _conation(self)
             record = engine.salience._records.get(key)
@@ -804,7 +821,11 @@ class WhatSheWants(_WantReadouts):
             # in passing leaves little to be curious about (Loewenstein 1994;
             # Silvia 2005). A thing no exchange named is one she went to, and
             # that is a whole foothold.
-            foothold = thing.stood_out if thing.named else 1.0
+            # A stake in a thing is something to go on, however briefly it
+            # was mentioned: she wants to find out about what comes with a
+            # thing she cares about for that thing's sake.
+            stake = self.care.stake(thing.key)
+            foothold = max(thing.stood_out if thing.named else 1.0, stake)
             pictured = self.pictured(thing.key)
             state = engine.appraise(
                 Incentive(
@@ -856,6 +877,7 @@ class WhatSheWants(_WantReadouts):
                         f"her share of their worth {thing.liking:+.3f}, variance {thing.unsure:.4f}; "
                         f"pictured from its company {pictured:.3f}; "
                         f"the doing was worth {thing.during.liking:+.3f} over {thing.during.times} turns; "
+                        f"her stake in how it fares {stake:.3f}; "
                         f"{state.why()}"
                     ),
                     liking=thing.liking,
@@ -893,6 +915,7 @@ class WhatSheWants(_WantReadouts):
             held = _held(self)
             decided = dict(self._decided)
         _save(self, held)
+        self.care.gave(str(decided.get("thing") or ""))
         return decided
 
     def decided(self) -> dict[str, Any] | None:
@@ -955,8 +978,17 @@ def read_turn(
     keys = [key for key in keys if not key.startswith("topic:")]
     stood_out: dict[str, float] = {}
     if words:
-        keys.extend(f"topic:{term}" for term in record.talk.about(*words))
+        about = record.talk.about(*words)
+        keys.extend(f"topic:{term}" for term in about)
         stood_out = {f"topic:{term}": share for term, share in record.talk.shares().items()}
+        # The first thing said is the other party's. A subject their message
+        # named was brought to her; one only her answer names she raised.
+        theirs = set(terms_of(words[0])) if len(words) > 1 else set(about)
+        people = [key for key in keys if key.startswith("person:")]
+        record.care.exchange(
+            [*(f"topic:{term}" for term in about), *people],
+            theirs=[*(f"topic:{term}" for term in about if term in theirs), *people],
+        )
     reachable = [key for key in keys if ":" in key and key.split(":", 1)[0] in REACHABLE_KINDS]
     labels = {key: key.split(":", 1)[1].strip() for key in reachable}
     return record.met(
@@ -966,6 +998,7 @@ def read_turn(
         labels=labels,
         payoff=getattr(reading, "payoff", None),
         stood_out=stood_out,
+        fated=record.care.felt(),
     )
 
 
@@ -1002,6 +1035,7 @@ def _load(self) -> None:
             thing = Thing.from_dict(row)
             self._things[thing.key] = thing
         self.talk = WhatHerTalkIsAbout(stored, changed=lambda: _save(self, _held(self)))
+        self.care = _care_of(self, stored.get("care"))
         decided = stored.get("decided")
         self._decided = dict(decided) if isinstance(decided, dict) and decided.get("thing") else None
         self._forecasts = max(0, int(stored.get("forecasts", 0)))
@@ -1028,10 +1062,25 @@ def _held(self) -> dict[str, Any]:
         "saved_at": time.time(),
         "things": [thing.to_dict() for thing in self._things.values()],
         **self.talk.held(),
+        "care": self.care.held(),
         "decided": self._decided,
         "forecasts": self._forecasts,
         "miss": self._miss,
     }
+
+
+def _care_of(self, stored: Any = None) -> WhatSheCaresAbout:
+    """Her caring, reading each thing's company from this record."""
+
+    def company(key: str) -> tuple[int, Mapping[str, int]]:
+        thing = self._things.get(key)
+        return (thing.contacts, thing.came_with) if thing else (0, {})
+
+    return WhatSheCaresAbout(
+        stored if isinstance(stored, Mapping) else None,
+        company=company,
+        changed=lambda: _save(self, _held(self)),
+    )
 
 
 def _save(self, payload: dict[str, Any]) -> None:

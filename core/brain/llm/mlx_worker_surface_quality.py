@@ -276,9 +276,10 @@ def _apply_surface_generation_controls(
     # applied" and "the clamp silently no-opped" looked identical from outside.
     if bool(job.get("clean_user_surface_contract", False)):
         logger.info(
-            "🎚️ [WORKER] Surface decode: steering α=%s of %s earned (engine α=%s), "
+            "🎚️ [WORKER] Surface decode: steering α=%s, asked %s of %s earned (engine α=%s), "
             "recurrent loops=%s (was %s, depth_present=%s)%s",
             state.get("surface_alpha_applied"),
+            job.get("clean_user_surface_steering_alpha"),
             state.get("surface_alpha_certified"),
             getattr(engine, "_alpha", None),
             state.get("recurrent_runtime_loops_applied"),
