@@ -380,11 +380,18 @@ def induce(
 
 @dataclass
 class ProcedureBook:
-    """Kept procedures, how many known answers each kind's agreed with, and every kind's signature."""
+    """Kept procedures, how many known answers each kind's agreed with, and every kind's signature.
+
+    ``meanings`` holds a kind's direction in her embedding space
+    (core/learning/kinds_by_meaning.py) and ``examples`` a few of its solved
+    problems as shown, which is what a request worded otherwise is restated by.
+    """
 
     signatures: dict[str, Signature]
     procedures: dict[str, list[str]]
     agreed: dict[str, int] = field(default_factory=dict)
+    meanings: dict[str, Any] = field(default_factory=dict)
+    examples: dict[str, list[dict[str, str]]] = field(default_factory=dict)
 
     @classmethod
     def from_families(cls, families: dict[str, Family]) -> ProcedureBook:
@@ -404,6 +411,8 @@ class ProcedureBook:
             out.signatures.update(book.signatures)
             out.procedures.update(book.procedures)
             out.agreed.update(book.agreed)
+            out.meanings.update(book.meanings)
+            out.examples.update(book.examples)
         return out
 
     def route(self, problem: str) -> tuple[str | None, float]:
@@ -415,19 +424,40 @@ class ProcedureBook:
         similarity, name = scored[0]
         return (name if similarity >= self.signatures[name].nearest_required else None), similarity
 
+    def route_by_meaning(self, query: Any) -> tuple[str | None, float, str]:
+        """The kind a request's query vector means (core/learning/kinds_by_meaning.py); None with a reason."""
+        from core.learning.kinds_by_meaning import nearest_kind
+
+        return nearest_kind(query, self.meanings)
+
     def answer(self, problem: str) -> dict[str, Any]:
         """The kept procedures' answer when they apply and agree; otherwise a reason there is none."""
         family, similarity = self.route(problem)
         receipt: dict[str, Any] = {"schema": SOLVED_EXAMPLE_PROCEDURES_SCHEMA, "family": family,
-                                   "similarity": round(similarity, 4), "answer": None}
-        if family is not None:
-            # Laplace's rule of succession over the known answers its procedures all matched.
-            known = int(self.agreed.get(family, 0))
-            receipt["agreed_known"] = known
-            receipt["confidence"] = round((known + 1) / (known + 2), 4)
+                                   "similarity": round(similarity, 4), "answer": None, "form": "words"}
         if family is None:
             receipt["declined"] = "no_kind_near_enough"
             return receipt
+        return self._run_kind(family, problem, receipt)
+
+    def answer_restated(self, family: str, restated: str) -> dict[str, Any]:
+        """The answer of ``family``'s procedures to a request restated in that kind's own form.
+
+        Routing chose the kind by meaning, so no word-share bar applies; the
+        procedures read the restated text, and the receipt says it was restated.
+        """
+        receipt: dict[str, Any] = {"schema": SOLVED_EXAMPLE_PROCEDURES_SCHEMA, "family": family,
+                                   "answer": None, "form": "restated", "restated": restated[:2000]}
+        if family not in self.signatures:
+            receipt["declined"] = "no_such_kind"
+            return receipt
+        return self._run_kind(family, restated, receipt)
+
+    def _run_kind(self, family: str, problem: str, receipt: dict[str, Any]) -> dict[str, Any]:
+        # Laplace's rule of succession over the known answers its procedures all matched.
+        known = int(self.agreed.get(family, 0))
+        receipt["agreed_known"] = known
+        receipt["confidence"] = round((known + 1) / (known + 2), 4)
         codes = self.procedures.get(family) or []
         if not codes:
             receipt["declined"] = "kind_has_no_kept_procedure"
@@ -447,15 +477,20 @@ class ProcedureBook:
     def to_json(self) -> dict[str, Any]:
         return {"schema": SOLVED_EXAMPLE_PROCEDURES_SCHEMA,
                 "signatures": {n: asdict(s) for n, s in self.signatures.items()},
-                "procedures": self.procedures, "agreed": self.agreed}
+                "procedures": self.procedures, "agreed": self.agreed,
+                "meanings": {n: asdict(m) for n, m in self.meanings.items()}, "examples": self.examples}
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> ProcedureBook:
         if value.get("schema") != SOLVED_EXAMPLE_PROCEDURES_SCHEMA:
             raise ValueError("not a procedure book")
+        from core.learning.kinds_by_meaning import KindMeaning
+
         return cls(signatures={n: Signature(**s) for n, s in value["signatures"].items()},
                    procedures={n: list(c) for n, c in value["procedures"].items()},
-                   agreed={n: int(k) for n, k in (value.get("agreed") or {}).items()})
+                   agreed={n: int(k) for n, k in (value.get("agreed") or {}).items()},
+                   meanings={n: KindMeaning(**m) for n, m in (value.get("meanings") or {}).items()},
+                   examples={n: [dict(e) for e in v] for n, v in (value.get("examples") or {}).items()})
 
 
 #: Her own book, under her data directory. Nothing writes it yet but an

@@ -425,6 +425,28 @@ def _judge_the_latent_quality(
     return _seam_early_response, final_latent_quality
 
 
+def _her_query_vector(text: str, task: str) -> Any:
+    """Her embedding of a request, only from an embedding model the runtime already holds; None otherwise."""
+    try:
+        from core.memory.embedding_runtime import (
+            acquire_shared_embedding_engine,
+            shared_embedding_runtime_snapshot,
+        )
+
+        if not shared_embedding_runtime_snapshot().get("engine_live"):
+            return None
+        engine = _HER_EMBEDDER.get("lease")
+        if engine is None:
+            engine = _HER_EMBEDDER["lease"] = acquire_shared_embedding_engine("kinds_by_meaning")
+        return engine.embed_query(text, task=task)
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("no embedding of the request by meaning: %s", exc)
+        return None
+
+
+_HER_EMBEDDER: dict[str, Any] = {}
+
+
 def _states_the_answer(draft: str, answer: str) -> bool:
     """Whether her reply's closing paragraph states the answer a kept procedure computed.
 
@@ -945,15 +967,20 @@ class ResponseGenerationPhase(_RunsTheGenerationSteps, _RunsTheRequiredSearch, B
             "source": "recursive_latent_cortex",
         }
 
-    async def _consult_kept_procedures(self, *, state: AuraState, objective: str) -> bool:
+    async def _consult_kept_procedures(self, *, state: AuraState, objective: str, router: Any = None,
+                                       origin: str = "", tier: str | None = None) -> bool:
         """Put a kept procedure's answer in front of her before she drafts, as a skill's result is put.
 
         A procedure she wrote for a kind of problem, kept because it agreed with
         every answer she knew for that kind, computes the answer in
-        milliseconds (core/learning/procedures_from_solved_examples.py). It goes
-        into her working memory as a stamped skill result, so she drafts her
-        reply in her own words with the computed answer as the fact she builds
-        on; the amplifier step then checks that her reply states it.
+        milliseconds (core/learning/procedures_from_solved_examples.py). A
+        request worded like the kind's problems is answered as it stands. One
+        that means the kind but is worded otherwise is found by her embedding
+        (core/learning/kinds_by_meaning.py), restated in the kind's form by her
+        model, and answered from the restatement; that answer is evidence only,
+        since nothing checked the restatement. Either way it goes into her
+        working memory as a stamped skill result, so she drafts her reply in
+        her own words with the computed answer as the fact she builds on.
         """
         from core.utils.injected_blocks import stamp_grounding
 
@@ -965,22 +992,26 @@ class ResponseGenerationPhase(_RunsTheGenerationSteps, _RunsTheRequiredSearch, B
             )
             return False
         kept = await asyncio.to_thread(answer_from_kept_procedures, objective)
+        form = "words"
+        if kept is None:
+            kept = await self._kept_answer_by_meaning(objective=objective, router=router, origin=origin, tier=tier)
+            form = "restated"
         if kept is None:
             return False
         operation = dict(kept.receipt.cognitive_operations[0]) if kept.receipt.cognitive_operations else {}
         known = int(operation.get("agreed_known") or 0)
         family = str(operation.get("family") or "")
-        payload = {
-            "ok": True,
-            "answer": kept.answer,
-            "summary": (
-                f"computed by the procedure she keeps for problems of the kind {family!r}, "
-                f"which agreed with all {known} answers she knows for that kind"
-            ),
-        }
+        summary = (
+            f"computed by the procedure she keeps for problems of the kind {family!r}, "
+            f"which agreed with all {known} answers she knows for that kind"
+        )
+        if form == "restated":
+            summary += f"; the request was first written in that kind's form, as: {operation.get('restated', '')}"
+        payload = {"ok": True, "answer": kept.answer, "summary": summary}
         state.response_modifiers["kept_procedure"] = {
             "answer": kept.answer,
             "family": family,
+            "form": form,
             "agreed_known": known,
             "confidence": float(kept.confidence),
             "receipt": kept.receipt.to_dict(),
@@ -1001,8 +1032,60 @@ class ResponseGenerationPhase(_RunsTheGenerationSteps, _RunsTheRequiredSearch, B
                 }
             )
         )
-        logger.info("🧠 ResponseGeneration: kept procedure for %s answered before the draft.", family)
+        logger.info("🧠 ResponseGeneration: kept procedure for %s answered before the draft (%s).", family, form)
         return True
+
+    async def _kept_answer_by_meaning(self, *, objective: str, router: Any, origin: str, tier: str | None) -> Any:
+        """A kept procedure's answer to a request that means its kind in other words; None when there is none.
+
+        Her embedding model is used only if the runtime already holds it, so a
+        turn never waits on loading one; the restatement is one short decode of
+        hers with the private channel closed.
+        """
+        from core.brain.reasoning_amplifier_v2 import amplified_from_kept_receipt
+        from core.learning.kinds_by_meaning import TASK, restatement_request
+        from core.learning.procedures_from_solved_examples import kept_procedure_book
+
+        if router is None:
+            return None
+        book = await asyncio.to_thread(kept_procedure_book)
+        if book is None or not book.meanings:
+            return None
+        vector = await asyncio.to_thread(_her_query_vector, objective, TASK)
+        if vector is None:
+            return None
+        kind, similarity, why = book.route_by_meaning(vector)
+        if kind is None or kind not in book.procedures or not book.examples.get(kind):
+            logger.debug("no kept kind meant by this request (%s, %.3f)", why, similarity)
+            return None
+        examples = book.examples[kind]
+        # About as long as the kind's longest shown problem and the request together, at under two
+        # characters a token: room for the problem written out, and no more.
+        cap = (max(len(e["problem"]) for e in examples) + len(objective)) // 2
+        try:
+            out = await router.think(
+                messages=[{"role": "user", "content": restatement_request(objective, examples)}],
+                priority=1.0,
+                origin=f"kept_procedure_restatement_{origin}",
+                purpose="kept_procedure_restatement",
+                prefer_tier=tier or "primary",
+                is_background=False,
+                foreground_request=True,
+                allow_cloud_fallback=False,
+                skip_runtime_payload=True,
+                clean_user_surface_contract=True,
+                temperature=0.0,
+                max_tokens=max(1, cap),
+            )
+        except (OSError, ConnectionError, TimeoutError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_response_generation_degradation(exc, action="drafted without restating the request for its kind")
+            return None
+        restated = str((out.get("content") or out.get("response") or "") if isinstance(out, dict) else (out or ""))
+        if not restated.strip():
+            return None
+        receipt = await asyncio.to_thread(book.answer_restated, kind, restated.strip())
+        receipt["similarity"] = round(similarity, 4)
+        return amplified_from_kept_receipt(receipt)
 
     async def _maybe_amplify_response(
         self,
@@ -1034,7 +1117,8 @@ class ResponseGenerationPhase(_RunsTheGenerationSteps, _RunsTheRequiredSearch, B
         # states that answer; when it does not, the computed answer is served.
         planted = state.response_modifiers.get("kept_procedure")
         if isinstance(planted, dict) and planted.get("answer"):
-            stated = _states_the_answer(draft, str(planted["answer"]))
+            # A restated request's answer rests on a restatement nothing checked, so it never overrides her.
+            stated = _states_the_answer(draft, str(planted["answer"])) or planted.get("form") == "restated"
             receipt = dict(planted.get("receipt") or {})
             self._last_reasoning_receipt = receipt
             state.response_modifiers["reasoning_receipt"] = receipt
@@ -1044,7 +1128,8 @@ class ResponseGenerationPhase(_RunsTheGenerationSteps, _RunsTheRequiredSearch, B
                 "confidence": float(planted.get("confidence") or 0.0),
                 "promotion_authority": "kept_procedure",
                 "adopted": not stated,
-                "voice": "her_reply_states_it" if stated else "computed_answer_served",
+                "voice": ("evidence_for_a_restated_request" if planted.get("form") == "restated"
+                          else "her_reply_states_it" if stated else "computed_answer_served"),
             }
             if stated:
                 return draft
@@ -1613,7 +1698,12 @@ class ResponseGenerationPhase(_RunsTheGenerationSteps, _RunsTheRequiredSearch, B
                         is_user_facing=True,
                     )
                     state.response_modifiers["response_contract"] = contract.to_dict()
-                if await self._consult_kept_procedures(state=state, objective=objective):
+                container = getattr(self, "container", None)
+                if await self._consult_kept_procedures(
+                    state=state, objective=objective,
+                    router=container.get("llm_router") if hasattr(container, "get") else None,
+                    origin=origin, tier=state.response_modifiers.get("model_tier", "primary"),
+                ):
                     messages = _assemble(delivered_history, delivered_note)
             if (
                 contract.reason != "ordinary_dialogue"

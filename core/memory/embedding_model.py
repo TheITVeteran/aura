@@ -138,6 +138,9 @@ TASK_INSTRUCTIONS: dict[str, str] = {
     # A person's request against what each of her capabilities says it does
     # (core/intent/capability_by_meaning.py).
     "capability": ("Given a person's request, retrieve the description of the capability that carries it out"),
+    # A request against the kinds of problem she keeps procedures for
+    # (core/learning/kinds_by_meaning.py).
+    "kind_of_problem": ("Given a problem, retrieve problems of the same kind"),
 }
 
 #: Used when a call site names no task. Deliberately the recall instruction

@@ -283,8 +283,14 @@ def answer_from_kept_procedures(objective: str, book: Any = None, *, own_book: b
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
         record_degradation("amplifier_v2_kept_procedure", exc)
         return None
+    return amplified_from_kept_receipt(kept, started=started)
+
+
+def amplified_from_kept_receipt(kept: dict[str, Any], *, started: float | None = None) -> AmplifiedAnswer | None:
+    """The answer a kept-procedure receipt carries, as the amplifier's own answers are carried; None when none."""
     if not kept.get("answer"):
         return None
+    started = time.monotonic() if started is None else started
     confidence = float(kept.get("confidence") or 0.0)
     receipt = ReasoningReceipt(
         mode="kept_procedure",
