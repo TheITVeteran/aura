@@ -164,3 +164,33 @@ async def test_what_independent_programs_agreed_on_is_noted_once_and_only_as_one
     rows = meets.met_examples()
     assert [(r["problem"], r["answer"], r["source"]) for r in rows] == [
         ("What is 6 times 7?", "42", "independent_programs_agreed")]
+
+
+@pytest.mark.asyncio
+async def test_the_conductor_runs_one_step_in_a_task_of_its_own(her_data, monkeypatch) -> None:
+    import asyncio
+
+    from core.brain import reasoning_background as background
+
+    registered: dict[str, object] = {}
+
+    class Conductor:
+        def register(self, name, interval, fn, **kwargs):
+            registered[name] = (interval, fn, kwargs)
+
+    assert background.register_reasoning_jobs(Conductor())
+    interval, job, kwargs = registered["learn_kinds_she_meets"]
+    assert job is background._job_learn_kinds_she_meets and kwargs["policy"] == "research"
+
+    class Router:
+        async def think(self, **kwargs):
+            raise AssertionError("nothing was met, so nothing is asked")
+
+    monkeypatch.setattr("core.container.ServiceContainer.get", lambda name, default=None: Router()
+                        if name == "llm_router" else default)
+    monkeypatch.setattr(background, "_her_embedder", lambda: (None, None))
+    background._LEARNING.pop("task", None)
+    assert (await job())["status"] == "step_started"
+    assert (await job())["status"] == "step_running"
+    result = await asyncio.wait_for(background._LEARNING["task"], 30)
+    assert result["status"] == "nothing_met"
