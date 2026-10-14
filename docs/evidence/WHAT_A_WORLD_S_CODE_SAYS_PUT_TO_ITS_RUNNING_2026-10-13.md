@@ -260,3 +260,22 @@ The whole of her play from the title screen, 2 minutes asked, seeds 1 to 3
 On every seed and both ways, she splatted the other side less after her first
 two or three games: 5 in 10.8 s early on, 4 in 77.4 s later. That is not yet
 explained.
+
+**Why her throws got worse.** She learned how long her throw takes from what
+came into sight where she aimed. This food fight draws no splat, and what came
+into sight there was the other side's food leaving his hand. She took her
+throws to land in 0.25 to 0.67 s where they fly for 0.83 s, led and held them
+by that, and her clicks fell from 2.7 a second in her first stretch to about
+1.2. A landing now counts only if it stays where she aimed; and the throw
+itself, come into sight after it and going straight at where she aimed, says
+how long it has yet to go. She then learned 0.93 to 1.28 s: the flight, and the
+age of the pictures she sees it in.
+
+The whole of her play, seeds 1 to 3, as she recorded her runs. (The tool reads
+the world's tally from the last page only, and she reloads the page between
+runs, so its game counts above cover only that page where she reloaded.)
+
+| Code | Seed 1 | Seed 2 | Seed 3 |
+|---|---|---|---|
+| Before this fix | not won, stopped as not getting better | not won, time up | not won, stopped as not getting better |
+| After it | won the first run, 0.7 min | lost, then won, 0.8 min | lost, then won, 0.9 min |

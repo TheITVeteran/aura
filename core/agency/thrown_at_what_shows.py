@@ -288,13 +288,26 @@ LANDINGS_KEPT = 8
 LANDS_WITHIN_S = 1.5
 LANDS_NEAR_PX = 14.0
 TAKES_AT_FIRST_S = 0.08
+#: How long after it came into sight a thing where she aimed is judged, in seconds, and how fast it may be going and
+#: still be her throw landing there, in the picture's pixels a second: a splat stays where it was made.
+LANDED_SEEN_FOR_S = 0.1
+STAYS_PX_S = 20.0
+#: How soon after a throw the thing that is the throw itself comes into sight, in seconds, and how nearly straight at
+#: where she aimed it must be going, as the cosine of the angle off.
+SHOT_SEEN_WITHIN_S = 0.4
+SHOT_HEADED = 0.95
 
 
 class HowLongAThrowTakes:
     """How long a throw of hers takes to land where it was aimed, learned by watching where she aimed: what comes into
-    sight there, a moment after the throw, is the throw landing (a splat, a puff, a hole). Offline 2026-10-12 a food
-    fight's opponent ran to and fro; each throw landed where he had been when she threw, a splat a moment later where
-    she clicked, and his bar never went down."""
+    sight there, a moment after the throw, and stays there is the throw landing (a splat, a puff, a hole); or by
+    watching the throw itself, come into sight after it and going at where she aimed, as far as it has yet to go.
+    Offline 2026-10-12 a food fight's opponent ran to and fro; each throw landed where he had been when she threw, a
+    splat a moment later where she clicked, and his bar never went down.
+
+    On 14 October in a food fight that draws no splat, what came into sight where she aimed was the other side's food
+    leaving his hand. Her throws were taken to land in 0.25 to 0.67 s where they took 0.83 s, she led and held them by
+    that, and threw about 1.2 times a second where she had thrown 2.7."""
 
     def __init__(self) -> None:
         self.waiting: list[tuple[float, float, float]] = []
@@ -305,16 +318,46 @@ class HowLongAThrowTakes:
 
     def saw(self, things: Iterable[Any], at: float) -> None:
         """What came into sight, for the throws still waited for."""
+        things = list(things)
         kept = []
-        for thrown_at, x, y in self.waiting:
-            landed = [float(thing.born) - thrown_at for thing in things
-                      if 0.0 < float(getattr(thing, "born", -1e9)) - thrown_at <= LANDS_WITHIN_S
-                      and math.hypot(thing.x - x, thing.y - y) <= LANDS_NEAR_PX]
+        for index, (thrown_at, x, y) in enumerate(self.waiting):
+            next_throw = self.waiting[index + 1][0] if index + 1 < len(self.waiting) else math.inf
+            landed = self._landed(things, thrown_at, x, y, at) + self._on_its_way(things, thrown_at, next_throw, x, y, at)
             if landed:
                 self.landings = [*self.landings[-(LANDINGS_KEPT - 1):], min(landed)]
             elif at - thrown_at <= LANDS_WITHIN_S:
                 kept.append((thrown_at, x, y))
         self.waiting = kept
+
+    @staticmethod
+    def _landed(things: list[Any], thrown_at: float, x: float, y: float, at: float) -> list[float]:
+        """How long the throw took, by what came into sight where it was aimed and has stayed there."""
+        out = []
+        for thing in things:
+            born = float(getattr(thing, "born", -1e9))
+            if not 0.0 < born - thrown_at <= LANDS_WITHIN_S or at - born < LANDED_SEEN_FOR_S:
+                continue
+            going = math.hypot(float(getattr(thing, "vx", 0.0)), float(getattr(thing, "vy", 0.0)))
+            if going <= STAYS_PX_S and math.hypot(thing.x - x, thing.y - y) <= LANDS_NEAR_PX:
+                out.append(born - thrown_at)
+        return out
+
+    @staticmethod
+    def _on_its_way(things: list[Any], thrown_at: float, next_throw: float, x: float, y: float,
+                    at: float) -> list[float]:
+        """How long the throw will have taken, by the throw itself on its way to where it was aimed: come into sight
+        after it and before the next, going straight at that place, and how far it has yet to go."""
+        out = []
+        for thing in things:
+            born = float(getattr(thing, "born", -1e9))
+            if not (thrown_at < born <= min(next_throw, thrown_at + SHOT_SEEN_WITHIN_S)):
+                continue
+            vx, vy = float(getattr(thing, "vx", 0.0)), float(getattr(thing, "vy", 0.0))
+            going, dx, dy = math.hypot(vx, vy), x - thing.x, y - thing.y
+            away = math.hypot(dx, dy)
+            if going >= GOING and away > LANDS_NEAR_PX and (dx * vx + dy * vy) / (going * away) >= SHOT_HEADED:
+                out.append(at - thrown_at + away / going)
+        return out
 
     def seconds(self) -> float:
         """How long a throw takes, as seen: the middle of the landings seen, once there are enough."""

@@ -140,6 +140,12 @@ with a test.
     (`core/agency/thrown_at_what_shows.py`, `WhereHarmLands`). Over seeds 1
     to 3 she won 6 games of 26 and was hit 0.13 to 0.18 times a second.
     With the held taps alone it was 1 of 17, hit 0.40 to 0.46 times a second.
+11. **She learned how long her throw takes from the other side's food.** The
+    food fight draws no splat; what came into sight where she aimed was his
+    food leaving his hand, and her throws were led by 0.25 to 0.67 s where
+    they fly 0.83 s. A landing now has to stay where she aimed, and her throw
+    seen in flight says how long it has to go. Seeds 1 to 3 each ended with
+    her win, by her own record, in 0.7 to 0.9 minutes; before, none did.
 
 After the fixes, from the title screen with nothing remembered: the first
 game was lost at 67% painted in 59 s, the second won in 77 s with no life
@@ -216,6 +222,3 @@ cd ~/.aura/flash-campaign/offline-bundle && git init -b main && git add -A \
    rewrite of the sampling in numpy gave the same numbers and was slower, and
    was taken out.
 4. Survival at two decisions a second.
-5. In the food fight she splats the other side less after her first two or
-   three games, on every seed: 5 in 10.8 s early, 4 in 77.4 s later. Find
-   what she learns that makes her throws worse.

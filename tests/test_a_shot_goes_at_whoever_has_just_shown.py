@@ -188,7 +188,8 @@ def test_how_long_a_throw_takes_is_learned_from_where_it_lands_and_a_runner_is_l
     takes = HowLongAThrowTakes()
     for k, shot in enumerate((1.0, 2.0, 3.0)):
         takes.thrown(shot, 100.0 + k, 60.0)
-        takes.saw([SimpleNamespace(born=shot + 0.4, x=101.0 + k, y=61.0)], shot + 0.5)
+        takes.saw([SimpleNamespace(born=shot + 0.4, x=101.0 + k, y=61.0)], shot + 0.45)
+        takes.saw([SimpleNamespace(born=shot + 0.4, x=101.0 + k, y=61.0)], shot + 0.55)     # and stayed there
     assert takes.seconds() == pytest.approx(0.4)
     run = SimpleNamespace(throw_takes=takes, held_since=None)
     runner = SimpleNamespace(x=100.0, y=60.0, vx=120.0, vy=0.0, size=400.0,
