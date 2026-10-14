@@ -23,6 +23,10 @@ from core.skills.sovereign_browser_drawing import (
 pytestmark = pytest.mark.unit
 
 
+
+async def _reloaded(_page, band):
+    return band
+
 @pytest.mark.parametrize("words", [
     "Your turn to make a move", "Computer's turn", "Your move", "Round is in progress",
     "Waiting for the opponent to move", "Resume the game",
@@ -220,7 +224,7 @@ async def _score_play(monkeypatch, slices, *, conditions=None):
         reflexes = SimpleNamespace(
             keep=keep, words=["Collect as many points as possible."], ending_words=words, ending_parts=[words],
             over_because=item.get("over", "observed terminal"), new_screens=0,
-            stretches=[{"pictures": 20, "counters": {"score": item.get("score", 120)},
+            stretches=[{"pictures": 20, "observations": {"pixels": 20}, "responsive_pictures": 20, "counters": {"score": item.get("score", 120)},
                         "runtime_checks": {"violations": item.get("violations", [])}}],
             what_it_came_to=lambda: "observed play",
         )
@@ -228,6 +232,8 @@ async def _score_play(monkeypatch, slices, *, conditions=None):
 
     monkeypatch.setattr(drawing, "_a_stocktaking", stock)
     monkeypatch.setattr(drawing, "_one_run", one)
+    # Each attempt begins again from the page reloaded, as play now does between attempts.
+    monkeypatch.setattr(drawing, "_from_the_top", _reloaded)
     monkeypatch.setattr(drawing, "_tell", said.append)
     monkeypatch.setattr("core.skills.screen_pursuit_as_it_happens.begin_run", lambda *args: restarted.append(args))
     monkeypatch.setattr("time.monotonic", lambda: clock[0])

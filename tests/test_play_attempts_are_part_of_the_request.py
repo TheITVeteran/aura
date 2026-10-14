@@ -6,6 +6,9 @@ import pytest
 from core.language.how_a_game_ended import requested_attempts
 
 
+async def _reloaded(_page, band):
+    return band
+
 @pytest.mark.parametrize("asked,count", [
     ("Fix the file, then play it for three attempts to show it works.", 3),
     ("Try it two times.", 2), ("Make 4 attempts.", 4),
@@ -31,13 +34,15 @@ async def test_requested_attempts_and_requested_wins_keep_their_own_completion_r
     async def one(page, band, goal, url, deadline, keep):
         seen.append(len(seen))
         return {"moves": [{"key": "observed action"}], "completed": False}, SimpleNamespace(
-            keep=keep, stretches=[{"pictures": 20}], over_because="observed terminal",
+            keep=keep, stretches=[{"pictures": 20, "observations": {"pixels": 20}, "responsive_pictures": 20}], over_because="observed terminal",
             words=["first to seven points wins"])
 
     def ended(reflexes, result):
         return {"ended": endings[len(seen)-1], "words": "observed end", "said": ""}
 
     monkeypatch.setattr(drawing, "_one_run", one)
+    # Each attempt begins again from the page reloaded, as play now does between attempts.
+    monkeypatch.setattr(drawing, "_from_the_top", _reloaded)
     monkeypatch.setattr(drawing, "_how_the_run_went", ended)
     result = await drawing._played(None, (0,0,1,1), goal, "file:///a-general-world.html", {})
     assert len(seen) == len(endings)
