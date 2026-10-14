@@ -154,11 +154,18 @@ def _surface_control_alpha(
 ) -> float:
     if ceiling is None:
         ceiling = _surface_alpha_from_certificate(engine)
-    default_alpha = str(ceiling)
-    configured = job.get(
-        "clean_user_surface_steering_alpha",
-        os.environ.get("AURA_USER_SURFACE_STEERING_ALPHA", default_alpha),
-    )
+    configured = job.get("clean_user_surface_steering_alpha")
+    if configured is None:
+        # Nobody asked. The client sends the key with nothing in it on every
+        # lane that did not set one, and that read as a request for zero:
+        # live, 13 October, "asked None of 0.2 earned" on each of her replies.
+        # A reply gets what the checkpoint has earned, unless what was asked
+        # has one right answer.
+        from core.brain.a_turn_with_one_right_answer import has_one_right_answer
+
+        configured = os.environ.get("AURA_USER_SURFACE_STEERING_ALPHA")
+        if configured is None:
+            configured = 0.0 if has_one_right_answer(_surface_validation_prompt(job)) else ceiling
     requested = max(0.0, min(_safe_float(configured, 0.0), ceiling))
     try:
         current = float(current_alpha)
@@ -192,9 +199,13 @@ def _apply_surface_generation_controls(
     # every job, so the first reply somebody waits for can already ask.
     certified = _surface_alpha_from_certificate(engine)
     if not _surface_generation_contract_enabled(job):
-        return {"enabled": False, "surface_alpha_certified": certified}
+        # A job with no steering engine has nothing to look the certificate up
+        # with, and its zero is not a report.
+        return {"enabled": False, **({} if engine is None else {"surface_alpha_certified": certified})}
 
-    state: dict[str, Any] = {"enabled": True, "apply_errors": [], "surface_alpha_certified": certified}
+    state: dict[str, Any] = {"enabled": True, "apply_errors": []}
+    if engine is not None:
+        state["surface_alpha_certified"] = certified
     alpha = _surface_control_alpha(
         job, getattr(engine, "_alpha", None), engine=engine, ceiling=certified
     )
