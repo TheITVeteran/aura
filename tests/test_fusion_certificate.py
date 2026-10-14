@@ -43,6 +43,8 @@ def _certificate(**overrides) -> FusionCertificate:
         "quality_scale": "forced-choice accuracy over 10 items",
         "prompts": 8,
         "steps": 24,
+        "voice_delta": 0.004,
+        "voice_replies": 12,
     }
     fields.update(overrides)
     return FusionCertificate(**fields)
@@ -176,18 +178,37 @@ def test_symmetric_kl_is_symmetric():
     assert symmetric_kl(left, right) == pytest.approx(symmetric_kl(right, left))
 
 
-def test_the_measured_reflex_certificate_is_on_disk():
-    """The 1.5B was measured, and what it earned is a fact in the repo.
+def test_the_certificates_on_disk_were_measured_and_none_holds_without_her_voice():
+    """What was measured stays a fact in the repo, and it is not yet enough.
 
-    If this file goes, the claim that the channel was ever demonstrated goes
-    with it.
+    Each record on disk met the first four conditions. None carries a reading
+    of her own replies under the steering, so none holds: on 13 October 2026
+    the channel was open on those four and a reply came out in a voice that
+    was not hers.
     """
-    certificates = [item for item in load_certificates().values() if item.holds]
-    assert certificates, "no fusion certificate holds; the channel is shut everywhere"
+    certificates = list(load_certificates().values())
+    assert certificates, "no fusion certificate is on disk"
+    measured = [c for c in certificates if c.arrives and c.carries_content and c.costs_nothing]
+    assert measured, "no record on disk met the first four conditions"
     for certificate in certificates:
-        assert certificate.prompts_that_change * 2 > certificate.prompts
-        assert certificate.state_separation >= MIN_STATE_SEPARATION
-        assert certificate.quality_delta >= 0.0
+        if certificate.voice_delta is None:
+            assert not certificate.holds
+            assert "have not been scored" in certificate.why_not() or not (
+                certificate.arrives and certificate.beats_noise
+                and certificate.carries_content and certificate.costs_nothing
+            )
+
+
+def test_a_certificate_with_no_reading_of_her_voice_does_not_hold():
+    certificate = _certificate(voice_delta=None, voice_replies=0)
+    assert not certificate.holds and not certificate.keeps_her_voice
+    assert "have not been scored" in certificate.why_not()
+
+
+def test_a_direction_that_makes_her_own_words_less_likely_does_not_hold():
+    certificate = _certificate(voice_delta=-0.31)
+    assert not certificate.holds
+    assert "less likely by 0.3100 nats a token" in certificate.why_not()
 
 
 def test_certificates_are_found_from_the_repository_not_the_working_directory(

@@ -46,8 +46,16 @@ this a fusion rather than a perturbation:
    none of her content, and that is the difference between a fusion and a
    constant offset.
 4. **It costs nothing.** The answers do not get worse.
+5. **It keeps her voice.** Her own stored replies are no less likely under the
+   steering than without it. The first four were met on 13 October 2026 and a
+   reply about fledged wrens came out as "The wren brood has successfully
+   completed its operational cycle and exited the designated boot container."
+   Forced-choice accuracy cannot see that. What she has actually said can: a
+   direction that takes her words away from her lowers their likelihood, and
+   one that is hers does not.
 
-Without all four the alpha stays at zero, which is where it is now.
+Without all five the alpha stays at zero. A certificate written before the
+fifth existed carries no reading for it and does not hold.
 """
 
 from __future__ import annotations
@@ -158,6 +166,16 @@ class FusionCertificate:
     note: str = ""
     basis_sha256: str = ""
     measurement_protocol: str = ""
+    #: Mean log-likelihood per token of her own stored replies, steered minus
+    #: unsteered, in nats. None when nobody has measured it.
+    voice_delta: float | None = None
+    #: How many of her replies that reading was taken over.
+    voice_replies: int = 0
+
+    @property
+    def keeps_her_voice(self) -> bool:
+        """Her own words are no less likely with the steering than without it."""
+        return self.voice_delta is not None and self.voice_replies > 0 and self.voice_delta >= 0.0
 
     @property
     def arrives(self) -> bool:
@@ -194,6 +212,7 @@ class FusionCertificate:
     def holds(self) -> bool:
         return (
             self.arrives and self.beats_noise and self.carries_content and self.costs_nothing
+            and self.keeps_her_voice
         )
 
     def why_not(self) -> str:
@@ -222,6 +241,17 @@ class FusionCertificate:
                 f"answers are worse by {abs(self.quality_delta):.4f} on "
                 f"{self.quality_scale}; a no-regression certificate cannot cost answers"
             )
+        if self.voice_delta is None or self.voice_replies <= 0:
+            return (
+                "her own stored replies have not been scored under this steering; "
+                "nothing shows it leaves her voice hers"
+            )
+        if not self.keeps_her_voice:
+            return (
+                f"her own stored replies are less likely by {abs(self.voice_delta):.4f} nats a "
+                f"token under this steering, over {self.voice_replies} of them; it takes her "
+                "words away from her"
+            )
         return ""
 
     def as_json(self) -> dict[str, Any]:
@@ -232,6 +262,7 @@ class FusionCertificate:
                 "beats_noise": self.beats_noise,
                 "carries_content": self.carries_content,
                 "costs_nothing": self.costs_nothing,
+                "keeps_her_voice": self.keeps_her_voice,
                 "holds": self.holds,
                 "why_not": self.why_not(),
             }
@@ -333,6 +364,10 @@ def load_certificates(*, root: Path | None = None,
                 note=str(payload.get("note", "")),
                 basis_sha256=str(payload.get("basis_sha256", "")),
                 measurement_protocol=str(payload.get("measurement_protocol", "")),
+                voice_delta=(
+                    float(payload["voice_delta"]) if payload.get("voice_delta") is not None else None
+                ),
+                voice_replies=int(payload.get("voice_replies", 0) or 0),
             )
             if key not in found or certificate.measured_at >= found[key].measured_at:
                 found[key] = certificate
