@@ -34,6 +34,10 @@ include_rules = [
     "+core.evidence",
     "+core.executive",
     "+core.governance_context",
+    # The rule a request's meaning must meet to choose among kinds of problem
+    # (core/learning/kinds_by_meaning.py) is the one her capabilities are chosen
+    # by (core/intent/capability_by_meaning.py), so it is imported, not copied.
+    "+core.intent.capability_by_meaning",
     "+core.introspection",
     "+core.language",
     "+core.learning",
