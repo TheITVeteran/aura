@@ -51,3 +51,19 @@ def test_accented_names_reach_the_index_and_a_title_search_prefers_the_closest_t
     assert any(hit.title == "Salvador Dalí" for hit in store.search("Dalí uncle", limit=3))
     titles = [hit.title for hit in store.search_titles("Cities Skylines")]
     assert titles == ["Cities: Skylines"]
+
+
+def test_with_her_embedder_the_pool_is_ordered_by_meaning(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    question = "During which years did William Butts Ittner serve as president of the Architectural League of America?"
+    lexical = passages_about(question, store=store, limit=4)
+    assert "1903 to 1904" in lexical[0][1]
+
+    def prefers_the_opening(asked, paragraphs):
+        return [1.0 if "was an American architect" in p else 0.0 for p in paragraphs]
+
+    reranked = passages_about(question, store=store, limit=1, rerank=prefers_the_opening)
+    assert "was an American architect" in reranked[0][1]
+    # Reranking orders the words' candidates; a paragraph sharing only the subject's name is not one.
+    assert all("died" not in p for _t, p in passages_about(question, store=store, limit=4,
+                                                           rerank=lambda a, ps: [float("died" in x) for x in ps]))

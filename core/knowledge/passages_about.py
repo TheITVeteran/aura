@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 __all__ = ["named_spans", "passages_about"]
@@ -99,10 +99,20 @@ def _article_for(store: Any, name: str, deadline_s: float) -> Any:
     return best
 
 
+Rerank = Callable[[str, list[str]], Sequence[float]]
+
+
 def passages_about(question: str, *, store: Any = None, limit: int | None = None,
-                   deadline_s: float | None = None) -> list[tuple[str, str]]:
-    """(title, paragraph) pairs about what ``question`` names, best first; [] when it names nothing found."""
-    from core.knowledge.corpus_grounding import DEFAULT_LIMIT
+                   deadline_s: float | None = None, rerank: Rerank | None = None) -> list[tuple[str, str]]:
+    """(title, paragraph) pairs about what ``question`` names, best first; [] when it names nothing found.
+
+    With ``rerank`` (her embedder's similarity of each paragraph to the
+    question), the best paragraphs by words are a candidate pool, as large as
+    her conversational grounding fetches for the passages it carries, and the
+    pool is ordered by meaning before ``limit`` are taken: an answer is often
+    worded otherwise than its question.
+    """
+    from core.knowledge.corpus_grounding import _CANDIDATE_POOL_FACTOR, DEFAULT_LIMIT
     from core.knowledge.local_corpus import SEARCH_DEADLINE_S
 
     if store is None:
@@ -128,7 +138,12 @@ def passages_about(question: str, *, store: Any = None, limit: int | None = None
             if weight > 0:
                 scored.append((-weight, order * 10**6 + position, article.title, paragraph))
     scored.sort()
-    return [(title, paragraph) for _carried, _where, title, paragraph in scored[:max(1, limit)]]
+    if rerank is None or not scored:
+        return [(title, paragraph) for _carried, _where, title, paragraph in scored[:max(1, limit)]]
+    pool = scored[:max(1, limit) * _CANDIDATE_POOL_FACTOR]
+    similarity = list(rerank(question, [f"{title}: {paragraph}" for _c, _w, title, paragraph in pool]))
+    order = sorted(range(len(pool)), key=lambda i: -similarity[i])
+    return [(pool[i][2], pool[i][3]) for i in order[:max(1, limit)]]
 
 
 def _paragraphs(body: str) -> Sequence[str]:
