@@ -571,6 +571,21 @@ class _ServesTheTurn:
         )
         return max_tokens
 
+    async def _read_what_was_said_first(self, user_facing: bool, said: Any) -> None:
+        """What the person's words ask of her, read before her model is handed the turn.
+
+        Her model is then handed the turn with no system text on it, and with
+        what was read of it among its readings (core/brain/what_she_is_given.py;
+        core/together/taking_it_up.py). Live, 13 October, this was read in the
+        tool step that runs after, and her reply said yes to an invitation her
+        record had answered "not now".
+        """
+        if not user_facing or not str(said or "").strip():
+            return
+        from core.together.taking_it_up import heard_in_a_turn
+
+        await heard_in_a_turn(str(said), getattr(self, "_mlx_client", None))
+
     @staticmethod
     def _generate_with_metadata_sink_part_28(
         max_tokens: Any,

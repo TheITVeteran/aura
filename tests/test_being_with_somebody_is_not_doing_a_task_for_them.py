@@ -582,10 +582,13 @@ def test_a_worker_that_gives_no_scores_leaves_the_turn_as_it_was(record):
     assert withs.current(INES) is None and taking.of_this_turn("Do you want to watch this video with me?") == ""
 
 
-def test_the_request_reading_asks_what_the_words_ask_before_it_looks_anything_up():
-    source = Path("core/brain/her_reading_of_a_request.py").read_text()
-    body = source[source.index("async def her_reading("):]
-    assert body.index("await heard_in_a_turn(text, client)") < body.index("if not worth_reading(text):")
+def test_what_was_said_is_read_before_her_model_is_handed_the_turn():
+    """Live, 13 October: read in the tool step after, her reply said yes to her record's "not now"."""
+    gate = Path("core/brain/inference_gate.py").read_text()
+    reading = gate.index("await self._read_what_was_said_first(_is_user_facing, initial_visible_user_prompt)")
+    assert reading < gate.index("messages, system_prompt = for_her_model(", reading)
+    serving = Path("core/brain/inference_gate_turn_serving.py").read_text()
+    assert 'await heard_in_a_turn(str(said), getattr(self, "_mlx_client", None))' in serving
     worker = Path("core/brain/llm/mlx_worker.py").read_text()
     assert 'if action == "generate" and job.get("expect_next"):' in worker
     assert '"expect_next": [str(c) for c in (kwargs.get("expect_next") or ())]' in Path("core/brain/llm/mlx_client.py").read_text()
