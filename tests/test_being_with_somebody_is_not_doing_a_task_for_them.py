@@ -844,3 +844,105 @@ def test_a_thing_she_knows_she_dislikes_is_still_not_now_whatever_she_is_unsure_
         record.met([key], worth, reachable=[key], labels={key: key.split(":", 1)[1]})
     record.met([INES], 0.1, reachable=[INES], labels={INES: "ines"})
     assert her_answer(record, INES, [FILM]).joins is False
+
+
+# ── remarks while watching together ─────────────────────────────────
+
+
+class _Screen:
+    def __init__(self, capture, source="Safari"):
+        self.capture, self.source = capture, source
+
+
+def _watching_with_ines(monkeypatch, *, said_since=True, interest_of=0.9):
+    from core.conversation import persistence
+    from core.together import remarks
+
+    held = With(who=INES, what=FILM, began=1000.0)
+    _talked(held, start=1000.0)
+    held.remarks, held.taken_up = 6, 6
+    stored = [
+        {"role": "user", "content": "Do you want to watch this with me?", "created_at": 1000.5},
+        {"role": "aura", "content": "Count me in.", "created_at": 1001.0},
+    ] if said_since else []
+
+    class Store:
+        def get_recent_history(self, limit=256):
+            return stored
+
+    monkeypatch.setattr(persistence, "get_persistence", lambda: Store())
+    monkeypatch.setattr(remarks, "_interest", lambda capture, change: (interest_of, HERON))
+    asked: list[dict] = []
+
+    class Router:
+        async def think(self, prompt, **kwargs):
+            asked.append({"prompt": prompt, **kwargs})
+            return (True, "Look at how still it stands before the strike.", {})
+
+    from core.container import ServiceContainer
+
+    monkeypatch.setattr(
+        ServiceContainer, "get",
+        classmethod(lambda cls, name, default=None: Router() if name == "llm_router" else default),
+    )
+    return held, asked
+
+
+def test_in_a_lull_she_says_something_about_what_they_are_watching(monkeypatch):
+    import asyncio
+
+    from core.together.remarks import remark_in_a_with
+    from core.utils.injected_blocks import RUNTIME_EVIDENCE_ROLE
+
+    held, asked = _watching_with_ines(monkeypatch)
+    later = held.turns[-1].until + 60.0
+    said = asyncio.run(remark_in_a_with(held, _Screen("A heron stands in the shallows\n1:12 / 3:10"), now=later))
+    assert said == "Look at how still it stands before the strike."
+    job = asked[0]
+    assert job["system_prompt"] == "" and job["is_background"] is True
+    assert [m["role"] for m in job["messages"]] == ["user", "assistant", RUNTIME_EVIDENCE_ROLE]
+    assert job["messages"][-1]["content"].startswith("## WHAT IS ON THE SCREEN\nSafari\nA heron stands")
+    # The field moved, and her remark is a turn of the with that waits to be taken up.
+    assert held.in_view(later).what == "A heron stands in the shallows"
+    assert held.turns[-1].by == HER and held.remarks == 7
+
+
+def test_she_does_not_talk_over_him_and_the_field_still_moves(monkeypatch):
+    import asyncio
+
+    from core.together.remarks import remark_in_a_with
+
+    held, asked = _watching_with_ines(monkeypatch)
+    now = held.turns[-1].until + 30.0
+    held.said(THEM, now - 1.0)
+    assert asyncio.run(remark_in_a_with(held, _Screen("The heron strikes"), now=now)) == ""
+    assert asked == [] and held.in_view(now).what == "The heron strikes"
+
+
+def test_nothing_of_interest_is_not_said(monkeypatch):
+    import asyncio
+
+    from core.together.remarks import remark_in_a_with
+
+    held, asked = _watching_with_ines(monkeypatch, interest_of=0.0)
+    assert asyncio.run(remark_in_a_with(held, _Screen("Loading..."), now=held.turns[-1].until + 60.0)) == ""
+    assert asked == []
+
+
+def test_with_no_turn_of_theirs_in_the_with_there_is_no_turn_of_hers_to_write(monkeypatch):
+    import asyncio
+
+    from core.together.remarks import remark_in_a_with
+
+    held, asked = _watching_with_ines(monkeypatch, said_since=False)
+    assert asyncio.run(remark_in_a_with(held, _Screen("A heron"), now=held.turns[-1].until + 60.0)) == ""
+    assert asked == []
+
+
+def test_while_a_with_is_open_her_screen_looks_go_to_it():
+    source = Path("core/perception/ambient_presence.py").read_text()
+    body = source[source.index("async def _consider_speaking"):]
+    body = body[:body.index("if thought and self.offer_utterance(thought):")]
+    assert "held = get_together().current()" in body
+    assert "remark_in_a_with(held, latest_screen()) if held is not None else consider_utterance(result)" in body
+    assert "held is None and time.time() - self._last_spoke_at < self._min_speech_gap_s" in body

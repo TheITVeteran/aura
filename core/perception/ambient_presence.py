@@ -928,15 +928,23 @@ class AmbientPresence(_CarriesTheBubble):
           * a message already waiting is not replaced, so a person who has
             not read the last one does not get a stream.
         """
+        from core.together.a_with import get_together
+
+        # Inside a shared activity he asked her into, a remark is part of
+        # what they are doing, and when to make one is the with's own
+        # question (core/together/remarks.py), not the gap between
+        # interruptions of somebody alone.
+        held = get_together().current()
         with self._lock:
             if self._pending_utterance:
                 return
-            if time.time() - self._last_spoke_at < self._min_speech_gap_s:
+            if held is None and time.time() - self._last_spoke_at < self._min_speech_gap_s:
                 return
         try:
-            from core.perception.ambient_utterance import consider_utterance
+            from core.perception.ambient_utterance import consider_utterance, latest_screen
+            from core.together.remarks import remark_in_a_with
 
-            thought = await consider_utterance(result)
+            thought = await (remark_in_a_with(held, latest_screen()) if held is not None else consider_utterance(result))
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "ambient_presence", exc, severity="debug",

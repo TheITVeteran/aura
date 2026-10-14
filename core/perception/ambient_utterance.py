@@ -253,4 +253,9 @@ def _latest_observation() -> Any:
         return None
 
 
-__all__ = ["UTTERANCE_SCHEMA", "consider_utterance"]
+def latest_screen() -> Any:
+    """The newest screen reading her screen sense took, or None."""
+    return _latest_observation()
+
+
+__all__ = ["UTTERANCE_SCHEMA", "consider_utterance", "latest_screen"]
