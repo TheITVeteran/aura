@@ -484,6 +484,7 @@ def _bounded_pixel_claims() -> tuple:
 
 def _control_discovery_claims() -> tuple:
     from core.agency.a_source_motion_model_checked_in_view import _source_motion_agreement_invariant
+    from core.agency.an_effect_contact_cannot_avoid import _nonlocal_countermeasure_invariant
     from core.agency.body_trials_keep_the_world import _control_source_invariant
     from core.agency.how_a_game_works import _motion_and_emission_trials_invariant
     from core.agency.inputs_while_measuring_control import (
@@ -493,6 +494,10 @@ def _control_discovery_claims() -> tuple:
     from core.perception.a_world_as_its_code_makes_it import _saved_world_effects_invariant
 
     return (
+        ("nonlocal_cost_keeps_a_known_countermeasure_available", "core/agency/an_effect_contact_cannot_avoid.py",
+         "tests/test_an_unavoidable_cost_is_not_hidden_by_an_appearance.py",
+         lambda: _nonlocal_countermeasure_invariant() == (),
+         "An effect that avoiding contact cannot prevent retains a known countermeasure; missing actions and measured beneficial meetings preserve uncertainty."),
         ("source_motion_needs_current_observed_agreement", "core/agency/a_source_motion_model_checked_in_view.py",
          "tests/test_a_source_motion_model_is_checked_in_current_view.py",
          lambda: _source_motion_agreement_invariant() == (),

@@ -272,6 +272,9 @@ class _Choosing:
     def stance(self, thing: Any) -> str:
         if thing.kind in self.ground_marks:
             return IGNORE
+        from core.agency.an_effect_contact_cannot_avoid import needs_a_countermeasure
+        if needs_a_countermeasure(self.meeting, thing.kind, self.shot):
+            return SHOOT
         # What she has found to be in her way is nothing to go and meet (core/agency/who_is_who.py): a wall she was
         # stopped by is not worth a detour to touch again. Not what is only taken for the place, never met (a door is
         # big and still, and is what she is to go to), nor what has not come near her yet (a foe high above is on its
