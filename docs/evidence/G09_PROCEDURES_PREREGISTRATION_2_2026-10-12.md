@@ -75,3 +75,12 @@ As in the first attempt:
 ## What this does not show
 
 * Anything yet: this page is the plan.
+
+## Amendment, 14 October 2026, 00:40, before the development run's rounds 1 to 3
+
+Rounds and lines are fixed now instead of after the development run: the
+held-out run gets the development run's own four rounds and one line. At
+this time only round 0 of the development run is known (six of its eight
+proposals wrote a function, none agreed with its shown pool, and two ran to
+the cap). Fixing the rounds before the rest is seen leaves the development
+run nothing to choose, so the held-out run can start the moment it ends.
