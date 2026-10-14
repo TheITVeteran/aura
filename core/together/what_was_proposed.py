@@ -23,11 +23,13 @@ have said to her, the way a subject of her talk is read against her talk
 (core/conation/what_her_talk_is_about.py; Holtzman et al. 2021 on surface form
 competition). The kind is the one whose second parts gained most.
 
-Measured 13 October on her fast model with no system text and her 120 most
-recent stored messages as the reference, over 24 sentences written before the
-run: 19 read as intended, and of the 12 that were an invitation or a request,
-10. tools/what_an_utterance_asks_of_her.py holds a second set kept apart from
-the reader. The kinds:
+Measured 13 October with the content-free reference below and the second
+parts as they now are: on her cortex, 39 of the 48 sentences of
+tools/what_an_utterance_asks_of_her.py read as written and 22 of its 24
+invitations and requests; on 24 more written before the comparison, 21. The
+misses that matter are requests read as invitations, which is why an
+invitation does not excuse a request from being done
+(core/together/taking_it_up.py). The kinds:
 
     join    a proposal to do something together; hers to accept or refuse
     do      a request that she do something for the speaker
@@ -58,12 +60,17 @@ __all__ = ["CONTENT_FREE", "KINDS", "SECONDS", "Proposal", "WhatItAsksOfHer"]
 
 KINDS: tuple[str, ...] = ("join", "do", "ask", "tell", "greet")
 
-#: Second parts each kind makes relevant and the others do not. An acceptance
-#: that is also a way of granting a request ("Sure") is left out: it would
-#: score for both and tell them apart for neither.
+#: Second parts each kind makes relevant and the others do not. A model
+#: trained to be eager grants a request the way it accepts an invitation ("I'd
+#: love to"), so the two kinds' second parts are minimal pairs that differ in
+#: who takes part: doing it together, or doing it for them. Measured on her
+#: cortex with the content-free reference (13 October): on a set of 24
+#: invitations and requests written before the comparison, 21 read as written
+#: with these against 18 with acceptances alone, and the three misses were
+#: requests read as invitations.
 SECONDS: Mapping[str, tuple[str, ...]] = {
-    "join": ("I'd love to.", "I'd like that.", "Count me in.", "Not right now.", "Maybe later.", "What is it?"),
-    "do": ("Okay, doing that now.", "On it.", "Done.", "Here you go.", "I can't do that."),
+    "join": ("Sure, let's do it together.", "I'd love to join you.", "Not right now, maybe another time.", "What is it?"),
+    "do": ("Sure, I'll do that for you.", "On it.", "Here you go.", "I can't do that for you."),
     "ask": ("I think", "It is", "Because", "It depends"),
     "tell": ("Oh, really?", "That's lovely.", "Oh no.", "That sounds"),
     "greet": ("Hi!", "Hello.", "Hey.", "Bye!"),
@@ -143,6 +150,11 @@ class WhatItAsksOfHer:
     def heard_before(self) -> int:
         with self._lock:
             return self._heard
+
+    def has_a_reference(self) -> bool:
+        """Whether every second part has a usual score to be read against."""
+        with self._lock:
+            return self._heard > 0 and all(self._usual.get(second, 0.0) > 0.0 for _kind, second in self._probes)
 
     def seconds(self) -> list[str]:
         """Every second part that is scored, in the order the scores are read in."""

@@ -175,7 +175,7 @@ class TakingItUp:
                 from core.together.what_was_proposed import CONTENT_FREE
 
                 reader = self._reads()
-                if reader.heard_before() <= 0:
+                if not reader.has_a_reference():
                     # Her cortex's own reference, once: what the answers
                     # score after nothing in particular.
                     for empty in CONTENT_FREE:
@@ -247,7 +247,9 @@ class TakingItUp:
 
 
 def _file() -> Path:
-    return state_root() / "data" / "together" / "what_it_asks_of_her.json"
+    # Scores from different models are not comparable, and the worker's
+    # cortex is the scorer on the desktop.
+    return state_root() / "data" / "together" / "what_it_asks_of_her.cortex.json"
 
 
 def _stored() -> dict[str, Any]:
@@ -319,8 +321,11 @@ async def heard_in_a_turn(said: str, client: Any) -> dict[str, Any]:
 async def asked_to_do_something(said: str) -> bool:
     """Whether what was said may ask her to do something, so that a capability could be what it needs.
 
-    False only when it was read and read as a telling, a greeting or an
-    invitation: none of those is carried out with a tool. A reading still
+    False only when it was read and read as a telling or a greeting: neither
+    is carried out with a tool. An invitation may be: watching a video with
+    somebody needs her senses on it. And her cortex reads some requests as
+    invitations, so letting an invitation skip this would leave a request
+    undone (13 October: three of twelve on a fresh set). A reading still
     under way is waited for, since it is under a second and what it saves is
     a ten-second pass of her large model over the catalogue of what she can
     do. Anything unread counts as possibly a request.
@@ -332,7 +337,7 @@ async def asked_to_do_something(said: str) -> bool:
     read = taking._this
     if read.get("said") != wanted:
         return True
-    return (read.get("proposal") or {}).get("kind") not in {"tell", "greet", "join"}
+    return (read.get("proposal") or {}).get("kind") not in {"tell", "greet"}
 
 
 _TAKING: TakingItUp | None = None
