@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from core.verify import invariant
+
 __all__ = ["Board", "a_board_in", "the_lattice"]
 
 #: The fewest squares a side of a board has, and the most.
@@ -71,26 +73,46 @@ NEARLY = 0.85
 
 
 def _period(profile: np.ndarray, least: int, most: int) -> tuple[int, int, float]:
-    """The spacing at which a profile of edge strengths peaks most regularly, its phase, and how much it stands out:
-    the smallest spacing that scores nearly as well as the best."""
+    """The smallest spacing whose edge score is nearly the best, with its phase and score."""
     overall = float(profile.mean()) or 1.0
+    # Keep the last pixel's zero neighbor and the original float64 promotion.
+    near = np.maximum(profile, np.concatenate([profile[1:], np.zeros(1)])[:profile.size])
     found: list[tuple[int, int, float]] = []
     for spacing in range(max(4, least), max(5, most) + 1):
-        best = (spacing, 0, 0.0)
-        for phase in range(spacing):
-            teeth = profile[phase::spacing]
-            if teeth.size < FEWEST:
-                continue
-            # Each tooth is the stronger of a pixel either side: an edge drawn on the pixel boundary falls on one of two.
-            near = np.maximum(teeth, np.concatenate([profile[phase + 1::spacing], np.zeros(1)])[: teeth.size])
-            score = float(np.median(near)) / overall
-            if score > best[2]:
-                best = (spacing, phase, score)
-        found.append(best)
+        scores = _phase_scores(near, spacing, overall)
+        # The first strictly positive maximum wins; NaNs and negative scores never did.
+        accepted = np.where(scores > 0.0, scores, 0.0)
+        phase = int(accepted.argmax())
+        found.append((spacing, phase, float(accepted[phase])))
     if not found:
         return (0, 0, 0.0)
     top = max(score for _s, _p, score in found)
     return next(one for one in found if one[2] >= NEARLY * top)
+
+
+def _phase_scores(near: np.ndarray, spacing: int, overall: float) -> np.ndarray:
+    """Score phases together where they have the same number of observed teeth."""
+    rows, extra = divmod(near.size, spacing)
+    scores = np.zeros(spacing, dtype=np.float64)
+    full = near[:rows * spacing].reshape(rows, spacing)
+    if extra and rows + 1 >= FEWEST:
+        taller = np.concatenate([full[:, :extra], near[rows * spacing:][None, :]], axis=0)
+        scores[:extra] = np.asarray(np.median(taller, axis=0), dtype=np.float64) / overall
+    if rows >= FEWEST:
+        scores[extra:] = np.asarray(np.median(full[:, extra:], axis=0), dtype=np.float64) / overall
+    return scores
+
+
+@invariant("perception.lattice_phases_keep_their_observed_teeth", scope="perception",
+           owner="core/perception/a_board_seen.py", observational=False)
+def _lattice_phase_invariant() -> tuple:
+    """Grouping phases keeps tooth counts, neighbor pixels, ties, and the smallest spacing."""
+    assert _period(np.ones(31, np.float32), 4, 12) == (4, 0, 1.0)
+    assert _period(np.ones(7, np.float32), 4, 12) == (4, 0, 0.0)
+    assert _period(np.array([5., 0., 0., 0.] * 12), 4, 16) == (4, 0, 4.0)
+    tail = np.array([-1., -1., -5., -5., -2., -2., -5., -5., -3.], np.float32)
+    assert _period(tail, 4, 4) == (4, 0, -1. / float(tail.mean()))
+    return ()
 
 
 #: How near two edges must be to be one line's two sides, and how nearly evenly spaced a chain of lines must be.

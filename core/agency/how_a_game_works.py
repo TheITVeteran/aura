@@ -125,6 +125,8 @@ class HowItWorks:
     inputs: dict[str, str] = field(default_factory=dict)
     #: Current source bindings qualify experiments; they do not identify a visible body.
     body_keys_from_code: tuple[str, ...] = ()
+    #: Which optional geometric checks agree with the described activity; absent entries remain unresolved.
+    picture_checks: dict[str, Answer] = field(default_factory=dict)
 
     # -- what follows from it ---------------------------------------------------------------------------------------
 
@@ -167,6 +169,13 @@ class HowItWorks:
         """Whether every moment she spends looking or thinking is a moment the game goes on: a move is not waited on to
         come to rest, nor a screen of play looked over at leisure."""
         return self.tempo.known(SAID_SURE) and self.tempo.value == RUNS
+
+    def picture_check_fits(self, check: str) -> bool | None:
+        """An unresolved check remains available; a known different activity gets control first."""
+        if self.me.known() and self.me.value == MAKES or self.counts.known() and self.counts.value == 'make':
+            return False
+        answer = self.picture_checks.get(check)
+        return answer.value == 'yes' if answer is not None and answer.known() else None
 
     # -- said -------------------------------------------------------------------------------------------------------
 
@@ -227,7 +236,7 @@ def understood(guide: Any, also: str = "") -> HowItWorks:
     Worked out again only when there is more to go on."""
     read = getattr(guide, "_read", ()) or ()
     controls = getattr(guide, "controls", None) or {}
-    key = (len(read), also, tuple((k, getattr(c, "act", "")) for k, c in controls.items()),
+    key = (tuple(sorted(read)), also, tuple((k, getattr(c, "act", "")) for k, c in controls.items()),
            tuple((getattr(guide, "pointer", None) or {}).items()))
     kept = getattr(guide, "how", None)
     if not (isinstance(kept, tuple) and kept[0] == key):
@@ -318,7 +327,45 @@ def how_it_works(said: str, guide: Any = None, rules: Any = None) -> HowItWorks:
     _who_else(how, said)
     _what_i_am(how, said, guide, rules)
     _whether_it_waits(how, said)
+    _which_picture_checks_fit(how, said)
     return how
+
+
+_CONTINUOUS_WORLD = frozenset({'shooting what comes', 'keeping clear of what comes', 'a fight at close quarters',
+                             'keeping something away from whoever is after it', 'steering something somewhere',
+                             'catching what falls'})
+_IN_TURNS = re.compile(r'\b(?:your (?:turn|move)|take turns|in turns|board game|capture (?:the |your )?opponent)', re.I)
+
+
+def _which_picture_checks_fit(how: HowItWorks, said: str) -> None:
+    """Specific activity evidence outweighs a grid or a key that several activities share.
+
+    Offline 2026-10-13 optional board and well scans took two seconds before
+    control of a moving world began. Arrows, gravity and real time alone
+    cannot exclude falling pieces. Their explicit rules keep that check.
+    """
+    from core.agency.mechanics_she_knows import known
+    from core.agency.situations_she_knows import situations_in
+
+    world = any(situation.name in _CONTINUOUS_WORLD for situation in situations_in(said))
+    falling = bool(known('falling pieces').said_in(said))
+    turns = bool(_IN_TURNS.search(said))
+    for check, supports in (('board', turns), ('well', falling)):
+        if supports or world:
+            how.picture_checks[check] = Answer('yes' if supports else 'no', SAID_SURE,
+                ['its words describe this activity' if supports else 'its words describe continuous movement in a world'])
+
+
+@invariant('agency.picture_checks_follow_the_activity', scope='agency',
+           owner='core/agency/how_a_game_works.py', observational=False)
+def _picture_checks_invariant() -> tuple:
+    how = how_it_works('Use the keys to guide your craft safely onto a platform.')
+    assert how.picture_check_fits('board') is False and how.picture_check_fits('well') is False
+    how = how_it_works('Use the arrow keys to move falling blocks and clear the rows.')
+    assert how.picture_check_fits('well') is True
+    assert how_it_works('Use the arrow keys. Gravity pulls things down.').picture_check_fits('well') is None
+    assert how_it_works('YOUR TURN: move a piece.').picture_check_fits('board') is True
+    return ()
 
 
 #: Keys said together as one control where they do one thing.

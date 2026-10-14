@@ -513,7 +513,7 @@ def _visual_motion_claims() -> tuple:
     from core.agency.controls_that_take_time_to_build import _stored_response_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
     from core.agency.following_a_prepared_path import _prepared_path_invariant
-    from core.agency.how_a_game_works import _parsed_body_trial_invariant
+    from core.agency.how_a_game_works import _parsed_body_trial_invariant, _picture_checks_invariant
     from core.agency.inputs_while_measuring_control import _single_input_interval_invariant
     from core.agency.room_to_finish_a_required_motion import _preparation_room_invariant
     from core.agency.solving_for_a_required_state import _required_state_invariant
@@ -526,7 +526,11 @@ def _visual_motion_claims() -> tuple:
         _motion_segments_invariant,
     )
     from core.cognition.what_its_code_says import _parsed_control_priority_invariant
+    from core.perception.a_board_seen import _lattice_phase_invariant
     from core.perception.a_clock_for_drawn_frames import _drawing_clock_invariant
+    from core.perception.a_picture_examined_without_holding_the_loop import (
+        _picture_probe_inputs_invariant,
+    )
     from core.perception.a_reading_before_more_detail import _finished_reading_invariant
     from core.perception.a_reference_kept_by_visible_support import _reference_bridge_invariant
     from core.perception.activity_in_the_picture import _picture_activity_invariant
@@ -585,6 +589,15 @@ def _visual_motion_claims() -> tuple:
         ("travel_keeps_its_speed_when_it_changes_direction", "core/agency/an_input_answers_relative_to_motion.py",
          "tests/test_travel_speed_can_answer_without_one_direction.py", lambda: _travel_speed_invariant() == (),
          "Repeated active and neutral trials compare measured travel speed before averaging directions; a closed curve does not become stationary."),
+        ("picture_checks_follow_the_activity", "core/agency/how_a_game_works.py",
+         "tests/test_picture_checks_follow_the_activity.py", lambda: _picture_checks_invariant() == (),
+         "Known continuous movement reaches control before incompatible board and well discovery; shared keys and grids keep discovery unresolved."),
+        ("lattice_phases_keep_their_observed_teeth", "core/perception/a_board_seen.py",
+         "tests/test_lattice_period_can_be_measured_without_phase_loops.py", lambda: _lattice_phase_invariant() == (),
+         "Lattice phase grouping preserves observed neighbor pixels, tooth counts, phase ties and the smallest nearly best spacing."),
+        ("picture_probes_own_detached_inputs", "core/perception/a_picture_examined_without_holding_the_loop.py",
+         "tests/test_optional_picture_probes_keep_the_loop_free.py", lambda: _picture_probe_inputs_invariant() == (),
+         "Optional picture workers use copied arguments and detached answers; timeouts remain unmeasured and preserve ownership until actual completion."),
         ("an_ending_after_reset_needs_new_activity", "core/skills/a_new_attempt_must_be_seen.py",
          "tests/test_a_retry_restarts_the_page_and_observes_a_new_attempt.py", lambda: _new_attempt_invariant() == (),
          "A new attempt requires current activity after reset; an old capture or another reading of its ending supplies no completed run."),
