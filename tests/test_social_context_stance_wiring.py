@@ -71,35 +71,44 @@ def _state_with_mods(mods: dict):
     return types.SimpleNamespace(cognition=types.SimpleNamespace(modifiers=mods))
 
 
-def test_stance_directive_sarcasm_is_causal():
+HOW_IT_WAS_MEANT = "## HOW WHAT WAS SAID WAS MEANT"
+
+
+def _meant(mods: dict) -> str:
     from core.phases.response_generation_unitary import UnitaryResponsePhase
 
-    d = UnitaryResponsePhase._stance_directive(_state_with_mods({"communicative_stance": "sarcastic"}))
-    assert "sarcastic" in d.lower()
-    assert d.startswith("COMMUNICATIVE STANCE")
+    return UnitaryResponsePhase._stance_directive(_state_with_mods(mods))
 
 
-def test_stance_directive_sincere_is_silent():
-    from core.phases.response_generation_unitary import UnitaryResponsePhase
-
-    d = UnitaryResponsePhase._stance_directive(_state_with_mods({"communicative_stance": "sincere"}))
-    assert d == ""
+def test_a_stance_read_of_the_turn_reaches_her_as_a_reading():
+    read = _meant({"communicative_stance": "sarcastic"})
+    assert read == f"{HOW_IT_WAS_MEANT}\n- Read as: sarcastic."
 
 
-def test_stance_directive_false_claim_surfaces_discrepancy():
-    from core.phases.response_generation_unitary import UnitaryResponsePhase
-
-    d = UnitaryResponsePhase._stance_directive(
-        _state_with_mods({"communicative_stance": "sincere", "flagged_false_claim": "claim negates known fact: X"})
-    )
-    assert "conflicts with what I know" in d
+def test_a_sincere_turn_sends_no_reading():
+    assert _meant({"communicative_stance": "sincere"}) == ""
+    assert _meant({}) == ""
 
 
-def test_stance_directive_mistaken_includes_detail():
-    from core.phases.response_generation_unitary import UnitaryResponsePhase
+def test_a_claim_at_odds_with_what_she_holds_is_named_whatever_the_stance():
+    read = _meant({"communicative_stance": "sincere", "flagged_false_claim": "claim negates known fact: X"})
+    assert read == f"{HOW_IT_WAS_MEANT}\n- It conflicts with what you hold: claim negates known fact: X."
+    both = _meant({"communicative_stance": "mistaken", "flagged_false_claim": "claim negates known fact: Y"})
+    assert "- Read as: mistaken." in both and "known fact: Y" in both
 
-    d = UnitaryResponsePhase._stance_directive(
-        _state_with_mods({"communicative_stance": "mistaken", "flagged_false_claim": "claim negates known fact: Y"})
-    )
-    assert "correct it" in d.lower()
-    assert "Y" in d
+
+def test_the_reading_tells_her_nothing_to_do():
+    """It was a line of instruction per stance. What is read of a turn is not an order about it."""
+    for stance in ("joking", "sarcastic", "hypothesizing", "mistaken", "deceptive"):
+        read = _meant({"communicative_stance": stance, "flagged_false_claim": "a claim"}).lower()
+        for told in ("don't", "do not", "respond", "play along", "correct it", "treat ", "engage", "verify"):
+            assert told not in read, (stance, told)
+
+
+def test_the_reading_is_one_her_model_is_handed():
+    from core.brain.what_she_is_given import _READINGS, readings_in
+
+    assert HOW_IT_WAS_MEANT in _READINGS
+    read = _meant({"communicative_stance": "joking"})
+    told = "Narrative anchor: something\n" + read
+    assert readings_in(told, _READINGS) == [read]

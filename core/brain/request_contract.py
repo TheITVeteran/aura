@@ -182,6 +182,8 @@ REQUEST_FIELDS: dict[str, Field_] = {
     "output_shape": Field_(Kind.STRING),
     # The choices on offer the decoder holds an answer to (core/brain/llm/a_choice_the_decoder_enforces.py).
     "choose_from": Field_(Kind.STRING_LIST),
+    # What was said, then candidate next turns to score (core/brain/llm/what_she_expects_next.py).
+    "expect_next": Field_(Kind.STRING_LIST),
     # A token count: the most the caller's output shape may ever use.
     "hard_output_token_ceiling": Field_(Kind.POSITIVE_INT),
     "internal_inference": Field_(Kind.BOOL),

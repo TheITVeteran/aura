@@ -51,8 +51,6 @@ include_rules = [
     "+core.senses",
     "+core.somatic",
     "+core.state",
-    # A person's message is read for what it asks of her as its tick begins.
-    "+core.together",
     "+core.utils",
 
     # Everything else.

@@ -27,6 +27,7 @@ from core.brain.llm.token_budget_evidence import CALIBRATION_SCHEMA
 from core.brain.llm.user_surface_recurrence import (
     user_surface_recurrent_ceiling,
 )
+from core.brain.llm.what_she_expects_next import as_a_job_of_the_worker
 from core.brain.llm.where_calls_share import where_calls_stop_sharing
 from core.runtime.desktop_boot_safety import compute_mlx_cache_limit, compute_mlx_memory_limit
 from core.runtime.errors import record_degradation
@@ -6592,7 +6593,10 @@ def _mlx_worker_loop(
                 continue
 
             action = job.get("action")
-            if action == "generate":
+            if action == "generate" and job.get("expect_next"):
+                # A pass that scores candidate next turns and writes nothing.
+                ipc_writer.put(as_a_job_of_the_worker(job, model, tokenizer, engine, metal_semaphore))
+            elif action == "generate":
                 # Bound before any path that can build the response, so a
                 # generation that never reached the processor stage still
                 # reports why rather than raising NameError on the receipt.

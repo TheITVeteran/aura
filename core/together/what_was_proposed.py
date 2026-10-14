@@ -137,9 +137,13 @@ class WhatItAsksOfHer:
         with self._lock:
             return self._heard
 
-    def _scores(self, said: str) -> dict[str, float] | None:
-        seconds = [second for _kind, second in self._probes]
-        scored = list(self._scorer(said, seconds))
+    def seconds(self) -> list[str]:
+        """Every second part that is scored, in the order the scores are read in."""
+        return [second for _kind, second in self._probes]
+
+    def _scores(self, said: str, scored: Sequence[float] | None = None) -> dict[str, float] | None:
+        seconds = self.seconds()
+        scored = list(self._scorer(said, seconds)) if scored is None else list(scored)
         if len(scored) != len(seconds) or not all(math.isfinite(float(s)) for s in scored):
             return None
         return {second: float(score) for second, score in zip(seconds, scored)}
@@ -151,24 +155,28 @@ class WhatItAsksOfHer:
             held = self._usual.get(second, 0.0)
             self._usual[second] = held + (math.exp(score) - held) * rate
 
-    def remember(self, said: str) -> bool:
+    def remember(self, said: str, *, scored: Sequence[float] | None = None) -> bool:
         """Fold one earlier utterance into what the second parts usually score."""
         said = " ".join(str(said or "").split())
         if not said:
             return False
-        scores = self._scores(said)
+        scores = self._scores(said, scored)
         if scores is None:
             return False
         with self._lock:
             self._fold(scores)
         return True
 
-    def heard(self, said: str) -> Proposal:
-        """Read what `said` asks of her, then count it among what she has heard."""
+    def heard(self, said: str, *, scored: Sequence[float] | None = None) -> Proposal:
+        """Read what `said` asks of her, then count it among what she has heard.
+
+        `scored` is the scores when somebody else took them, in the order of
+        `seconds()`: on the desktop the worker that owns the model does.
+        """
         said = " ".join(str(said or "").split())
         if not said:
             return Proposal(said=said)
-        scores = self._scores(said)
+        scores = self._scores(said, scored)
         if scores is None:
             return Proposal(said=said, heard_before=self.heard_before())
         with self._lock:

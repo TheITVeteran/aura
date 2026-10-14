@@ -36,6 +36,7 @@ from .mlx_client_artifacts import (  # noqa: F401  (re-exported: they were defin
 )
 from .mlx_client_recording import _RecordsWhatTheWorkerDid
 from .mlx_client_waiting import _WaitsForTheResult
+from .what_she_expects_next import _AsksWhatSheExpectsNext
 
 if TYPE_CHECKING:
     from core.brain.lane_admission import ActiveLane
@@ -4853,6 +4854,7 @@ def _build_the_generation_request(
         # The shape the caller will parse, held by the decoder in the worker.
         "output_shape": _the_shape_named(kwargs),
         "choose_from": [str(c) for c in (kwargs.get("choose_from") or ())],
+        "expect_next": [str(c) for c in (kwargs.get("expect_next") or ())],
         "serving_lane": str(
             kwargs.get("serving_lane") or "foreground_standard"
         ).strip().lower(),
@@ -4983,7 +4985,7 @@ def _is_internal_inference(cognitive_context: Any) -> bool:
 
 
 
-class MLXLocalClient(_RecordsWhatTheWorkerDid, _WaitsForTheResult, _KeepsTheWorkerAlive, _KnowsWhichWorkerItIsTalkingTo, _WarmsUpAndSwapsAdapters, _ReasonsInLatentSpace, _RunsTheUnifiedRecurrentLane):
+class MLXLocalClient(_RecordsWhatTheWorkerDid, _WaitsForTheResult, _KeepsTheWorkerAlive, _KnowsWhichWorkerItIsTalkingTo, _WarmsUpAndSwapsAdapters, _ReasonsInLatentSpace, _RunsTheUnifiedRecurrentLane, _AsksWhatSheExpectsNext):
     """
     Parent-process client for the isolated MLX worker.
     Manages the lifecycle, health, and communication with the ForkServer process.

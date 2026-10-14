@@ -98,7 +98,14 @@ _OF_HERSELF = (
 logger = logging.getLogger("Aura.WhatSheIsGiven")
 
 #: The blocks her instruments write that are not in the observable registry.
-_READINGS = ("## PRESENT MOMENT", "## YOUR OWN INSTRUMENTS", "## WHAT YOU ACTUALLY JUST DID")
+_READINGS = (
+    "## PRESENT MOMENT",
+    "## YOUR OWN INSTRUMENTS",
+    "## WHAT YOU ACTUALLY JUST DID",
+    # How the social phase read what was said: joking, sarcastic, at odds
+    # with something she holds (core/phases/social_context_phase.py).
+    "## HOW WHAT WAS SAID WAS MEANT",
+)
 
 #: What her memory and her skills return. These are readings of her own
 #: stores and of what she just did, and they are not in the observable

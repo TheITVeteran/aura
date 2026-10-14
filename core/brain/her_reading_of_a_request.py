@@ -58,6 +58,11 @@ async def her_reading(text: str, required: list[str], ceiling: str, scopes: Any,
         worth_reading,
     )
 
+    # What the words ask of her is read first, by the worker this turn holds:
+    # an invitation is hers to answer and is not looked up as a request.
+    from core.together.taking_it_up import heard_in_a_turn
+
+    await heard_in_a_turn(text, client)
     if required and the_one_asked_for(text, {required[0]: {}}) is not None:
         return required, ceiling, scopes
     if not worth_reading(text):

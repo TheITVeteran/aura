@@ -426,11 +426,169 @@ def test_a_turn_with_no_name_on_it_is_from_whoever_she_is_with(record):
     assert who_she_is_with(record) == INES  # whoever she is in the middle of talking with
 
 
-def test_the_kernels_tick_starts_the_reading_of_a_persons_message():
-    source = Path("core/kernel/aura_kernel_lifecycle.py").read_text()
-    start = source.index("Unitary Tick Initiated")
-    assert "hear_in_the_background(objective)" in source[start:start + 600]
-    assert "if priority and objective:" in source[start:start + 300]
+def test_a_turn_hands_over_the_same_words_twice_and_they_are_read_once(record):
+    _lived(record, {INES: 0.5})
+    taking, withs = _taking(record)
+    said = "Do you want to watch this video with me?"
+    first = taking.read(said, who=INES, at=20.0)
+    again = taking.read(said, who=INES, at=21.0)
+    assert again is first
+    assert len(withs.current(INES).turns) == 1
+
+
+# ── on the desktop the worker that owns the model takes the scores ──
+
+
+class _TinyTokenizer:
+    def encode(self, text, add_special_tokens=False):
+        return [ord(char) % 50 for char in str(text)]
+
+
+def _tiny_model(batch):
+    """Likes later token ids better, whatever came before them."""
+    import mlx.core as mx
+
+    rows, length = batch.shape
+    return mx.broadcast_to(mx.arange(50).astype(mx.float32), (rows, length, 50))
+
+
+class _Steering:
+    def __init__(self) -> None:
+        self.alpha, self.during = 5.4, []
+
+    def controlled_measurement(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def held():
+            before = self.alpha
+            try:
+                yield
+            finally:
+                self.alpha = before
+
+        return held()
+
+    def set_alpha(self, alpha: float) -> None:
+        self.alpha = alpha
+        self.during.append(alpha)
+
+
+def test_the_worker_scores_candidates_unsteered_and_writes_nothing():
+    import json
+    import threading
+
+    from core.brain.llm.what_she_expects_next import as_a_job_of_the_worker, score_next_turns
+
+    steering = _Steering()
+    # "a" is token 47 and "y" is token 21.
+    job = {"id": "j1", "action": "generate", "expect_next": ["watch this with me?", "a", "y", "aaa"]}
+    answer = as_a_job_of_the_worker(job, _tiny_model, _TinyTokenizer(), steering, threading.Lock())
+    scores = json.loads(answer["text"])
+    assert answer["status"] == "ok" and answer["id"] == "j1" and answer["tokens_used"] == 0
+    assert scores == pytest.approx(score_next_turns(_tiny_model, _TinyTokenizer(), "watch this with me?", ["a", "y", "aaa"]))
+    # Later ids are likelier, and a longer candidate is the sum over its tokens,
+    # with the padding beside a shorter one counted for nothing.
+    assert scores[0] > scores[1]
+    assert scores[2] == pytest.approx(3 * scores[0])
+    assert steering.during == [0.0] and steering.alpha == 5.4  # stood down for the pass, and back
+
+
+def test_a_job_with_nothing_to_score_and_a_pass_that_fails_are_both_answered():
+    import threading
+
+    from core.brain.llm.what_she_expects_next import as_a_job_of_the_worker
+
+    assert as_a_job_of_the_worker({"id": "j", "expect_next": ["only what was said"]}, _tiny_model, _TinyTokenizer(), None, threading.Lock())["text"] == "[]"
+
+    def broken(batch):
+        raise RuntimeError("no room")
+
+    failed = as_a_job_of_the_worker({"id": "j", "expect_next": ["said", "Aa"]}, broken, _TinyTokenizer(), None, threading.Lock())
+    assert failed["status"] == "error" and "no room" in failed["message"]
+
+
+class _TurnsClient:
+    """The client a turn holds: answers a scoring job the way the worker does."""
+
+    def __init__(self, kind_of: dict[str, str]) -> None:
+        self.asked: list[dict] = []
+        self._scorer = _a_model_that_expects(kind_of)
+
+    async def expect_next(self, said, candidates):
+        self.asked.append({"said": said, "candidates": list(candidates)})
+        return list(self._scorer(said, candidates))
+
+
+def test_inside_a_turn_the_scores_are_asked_of_the_turns_own_worker(record, monkeypatch):
+    import asyncio
+
+    from core.brain import what_she_is_given
+    from core.together import taking_it_up
+
+    _lived(record, {INES: 0.5})
+    record.started(INES, "conversation", label="ines")
+    reader = _reader()
+    reader._scorer = lambda said, seconds: (_ for _ in ()).throw(AssertionError("the parent must not score"))
+    taking = TakingItUp(reader, record=record, together=Together())
+    monkeypatch.setattr(taking_it_up, "_TAKING", taking)
+    client = _TurnsClient(SAID)
+    said = "Do you want to watch this video with me?"
+    try:
+        read = asyncio.run(taking_it_up.heard_in_a_turn(said, client))
+    finally:
+        if taking.of_this_turn in what_she_is_given.OF_THIS_TURN:
+            what_she_is_given.OF_THIS_TURN.remove(taking.of_this_turn)
+    assert read["proposal"]["kind"] == "join" and read["who"] == INES
+    assert client.asked == [{"said": said, "candidates": reader.seconds()}]
+    assert taking.of_this_turn(said).startswith(HEADER)
+
+
+def test_the_real_client_asks_its_worker_with_one_job_that_writes_nothing():
+    import asyncio
+    import json
+
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = object.__new__(MLXLocalClient)
+    sent: list[dict] = []
+
+    async def generate_text_async(prompt, **kwargs):
+        sent.append({"prompt": prompt, **kwargs})
+        return json.dumps([-3.5, -9.25])
+
+    client.generate_text_async = generate_text_async
+    assert asyncio.run(client.expect_next("want to watch this?", ["I'd love to.", "Done."])) == [-3.5, -9.25]
+    job = sent[0]
+    assert job["expect_next"] == ["want to watch this?", "I'd love to.", "Done."]
+    assert job["internal_inference"] is True and job["max_tokens"] == 1 and job["temperature"] == 0.0
+
+    async def gave_the_wrong_count(prompt, **kwargs):
+        return json.dumps([-3.5])
+
+    client.generate_text_async = gave_the_wrong_count
+    assert asyncio.run(client.expect_next("want to watch this?", ["I'd love to.", "Done."])) == []
+
+
+def test_a_worker_that_gives_no_scores_leaves_the_turn_as_it_was(record):
+    import asyncio
+
+    class Silent:
+        async def expect_next(self, said, candidates):
+            return []
+
+    taking, withs = _taking(record)
+    assert asyncio.run(taking.heard("Do you want to watch this video with me?", who=INES, client=Silent())) == {}
+    assert withs.current(INES) is None and taking.of_this_turn("Do you want to watch this video with me?") == ""
+
+
+def test_the_request_reading_asks_what_the_words_ask_before_it_looks_anything_up():
+    source = Path("core/brain/her_reading_of_a_request.py").read_text()
+    body = source[source.index("async def her_reading("):]
+    assert body.index("await heard_in_a_turn(text, client)") < body.index("if not worth_reading(text):")
+    worker = Path("core/brain/llm/mlx_worker.py").read_text()
+    assert 'if action == "generate" and job.get("expect_next"):' in worker
+    assert '"expect_next": [str(c) for c in (kwargs.get("expect_next") or ())]' in Path("core/brain/llm/mlx_client.py").read_text()
 
 
 def test_the_reading_started_from_a_turn_reaches_the_with_and_her_model(record, monkeypatch):

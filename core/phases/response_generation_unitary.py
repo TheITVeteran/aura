@@ -1180,42 +1180,19 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
 
     @staticmethod
     def _stance_directive(state: AuraState) -> str:
-        """Turn the inferred communicative stance into a response directive.
+        """How what was said was meant, as the social phase read it, and nothing she is told to do about it.
 
-        This is what makes stance inference *causal*: if the user is joking,
-        sarcastic, hypothesizing or role-playing, Aura must not respond as if the
-        message were a literal factual assertion; if they stated something that
-        conflicts with what she knows, she should gently surface that rather than
-        agree. Read from the modifiers the social phase wrote this turn."""
-        try:
-            mods = getattr(state.cognition, "modifiers", {}) or {}
-        except AttributeError:
-            return ""
+        This was a line of instruction for each stance ("play along; don't
+        earnestly correct a joke"). An instruction is not dispatched on her
+        turns; what was read of the turn is (core/brain/what_she_is_given.py).
+        """
+        mods = getattr(getattr(state, "cognition", None), "modifiers", None) or {}
         stance = str(mods.get("communicative_stance", "") or "")
-        if not stance or stance == "sincere":
-            if mods.get("flagged_false_claim"):
-                return (
-                    "EPISTEMIC NOTE: the user just stated something that conflicts with what I "
-                    f"know ({mods['flagged_false_claim']}). Gently surface the discrepancy "
-                    "instead of agreeing; check before accepting it as fact."
-                )
-            return ""
-        directives = {
-            "joking": "The user is joking — read the humor, play along; don't earnestly correct a joke as if it were a claim.",
-            "sarcastic": "The user is being sarcastic — their literal words invert their meaning; respond to what they actually mean, not the surface text.",
-            "facetious": "The user is being facetious — not fully serious; match the register, don't treat it as a literal request.",
-            "flippant": "The user is being flippant/dismissive — acknowledge lightly; don't over-invest in a literal reading.",
-            "unsure": "The user is unsure/hedging — treat this as a tentative guess, not settled fact; help them firm it up rather than echoing it as certain.",
-            "hypothesizing": "The user is reasoning hypothetically — engage the 'what if' on its own terms; don't assert the premise is real.",
-            "pretending": "The user is framing role-play / a counterfactual — stay in the bit they set up while keeping my own footing.",
-            "rhetorical": "The user's question is rhetorical — they're making a point, not requesting a literal answer.",
-            "mistaken": "The user appears to have stated something factually off — correct it kindly and concretely rather than agreeing.",
-            "deceptive": "The user's claim conflicts with what I know and shows signs of not being straight — don't simply accept it; verify and hold my own read honestly.",
-        }
-        line = directives.get(stance, "")
-        if mods.get("flagged_false_claim") and stance in {"mistaken", "deceptive"}:
-            line += f" (Specifically: {mods['flagged_false_claim']}.)"
-        return f"COMMUNICATIVE STANCE — {line}" if line else ""
+        flagged = str(mods.get("flagged_false_claim", "") or "")
+        lines = [f"- Read as: {stance}."] if stance and stance != "sincere" else []
+        if flagged:
+            lines.append(f"- It conflicts with what you hold: {flagged}.")
+        return "\n".join(["## HOW WHAT WAS SAID WAS MEANT", *lines]) if lines else ""
 
     def _build_compact_router_system_prompt(self, state: AuraState) -> str:
         phenomenal = self._integrated_phenomenal_claim(state, limit=220)
@@ -1294,9 +1271,6 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
             )
         if needs_continuity_context and user_model and "balanced" not in user_model.lower():
             parts.append(f"User context: {user_model}")
-        stance_directive = self._stance_directive(state)
-        if stance_directive:
-            parts.append(stance_directive)
         try:
             from core.runtime.conversation_support import build_conversational_context_blocks
 
@@ -1315,6 +1289,10 @@ class UnitaryResponsePhase(_ShapesTheReply, _AmplifiesTheDraft, _AnswersFromWhat
                 severity="error",
             )
             logger.debug("UnitaryResponse: compact conversational context skipped: %s", exc)
+        # Last, so nothing after it is taken for part of the reading.
+        stance_directive = self._stance_directive(state)
+        if stance_directive:
+            parts.append(stance_directive)
         # A turn that measures what these lines do leaves some of them out.
         # See core/brain/aura_persona.py.
         from core.brain.aura_persona import compact_lines_kept

@@ -112,17 +112,25 @@ class TakingItUp:
 
     # ── an utterance of theirs ────────────────────────────────────────
 
-    def read(self, said: str, *, who: str, at: float | None = None) -> dict[str, Any]:
+    def read(
+        self, said: str, *, who: str, at: float | None = None, scored: Any = None
+    ) -> dict[str, Any]:
         """Read what `said` asks of her, answer it if it is hers to answer, and keep the with in step.
 
-        Waits on her fast model. Call it off the event loop.
+        With `scored` the scores were taken by the worker that owns the model.
+        Without, her fast model takes them here: call it off the event loop.
+        A turn's own retries hand over the same words again, and what was
+        already read of them is what comes back.
         """
         at = time.time() if at is None else at
         said = " ".join(str(said or "").split())
         if not said:
             return {}
-        self._seed()
-        proposal: Proposal = self._reads().heard(said)
+        if self._this.get("said") == said and self._this.get("who") == who:
+            return self._this
+        if scored is None:
+            self._seed()
+        proposal: Proposal = self._reads().heard(said, scored=scored)
         self._keep()
         record = self._her_record()
         about = [f"topic:{term}" for term in record.talk.subjects_of(said)]
@@ -155,10 +163,20 @@ class TakingItUp:
         )
         return read
 
-    async def heard(self, said: str, *, who: str, at: float | None = None) -> dict[str, Any]:
-        """`read`, off the event loop. Never raises: an utterance not read is answered as it would have been."""
+    async def heard(self, said: str, *, who: str, at: float | None = None, client: Any = None) -> dict[str, Any]:
+        """`read`, off the event loop. Never raises: an utterance not read is answered as it would have been.
+
+        With the client a turn holds, the scores are asked of its worker.
+        """
         try:
-            return await asyncio.to_thread(self.read, said, who=who, at=at)
+            scored = None
+            if client is not None:
+                from core.brain.llm.what_she_expects_next import asked_of_the_worker
+
+                scored = await asked_of_the_worker(client, said, self._reads().seconds())
+                if not scored:
+                    return {}
+            return await asyncio.to_thread(self.read, said, who=who, at=at, scored=scored)
         except (ImportError, ArithmeticError, LookupError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "together", exc, severity="warning",
@@ -278,6 +296,17 @@ def hear_in_the_background(said: str, *, person: str = "", sent_from: str = "") 
         return
     _HEARING.add(task)
     task.add_done_callback(_HEARING.discard)
+
+
+async def heard_in_a_turn(said: str, client: Any) -> dict[str, Any]:
+    """Read what a person said, inside the turn that answers it, with the client that turn holds.
+
+    This is the door on the desktop. The turn's client is the only one its
+    worker will answer while the turn runs, and the reading is taken before
+    anything is looked up or written for the reply.
+    """
+    taking = install()
+    return await taking.heard(said, who=who_she_is_with(taking._her_record()), client=client)
 
 
 async def asked_to_do_something(said: str) -> bool:
