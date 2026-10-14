@@ -644,6 +644,8 @@ def main() -> int:
     parser.add_argument("--split", choices=("all", "test"), default="all",
                         help="test: only problems no procedure was ever written or checked from "
                              "(tools/induce_g09_procedures.py)")
+    parser.add_argument("--ids", type=Path,
+                        help="a file of task ids, one a line: exactly these tasks, in that order (--tasks/--seed unused)")
     args = parser.parse_args()
 
     excluded: set[str] = set()
@@ -655,7 +657,15 @@ def main() -> int:
 
         allowed = test_ids(args.domain)
         pool = [task for task in pool if task["id"] in allowed]
-    tasks = sample(pool, args.tasks, args.seed, excluded)
+    if args.ids:
+        wanted = [line.strip() for line in args.ids.expanduser().read_text().splitlines() if line.strip()]
+        by_id = {task["id"]: task for task in pool}
+        missing = [task_id for task_id in wanted if task_id not in by_id]
+        if missing:
+            raise SystemExit(f"{len(missing)} ids are not tasks of {args.domain}: {missing[:3]}")
+        tasks = [by_id[task_id] for task_id in wanted if task_id not in excluded]
+    else:
+        tasks = sample(pool, args.tasks, args.seed, excluded)
     output = args.output.expanduser()
     arms = {arm.strip() for arm in args.arms.split(",")}
     if not arms or not arms <= {"ordinary", "organ"}:
