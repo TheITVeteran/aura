@@ -68,6 +68,7 @@ def test_every_stage_runs_and_the_arms_are_scored_on_the_same_requests(tmp_path,
     monkeypatch.setattr("core.runtime.model_lane_control.standalone_model_lane", Lane)
     monkeypatch.setattr("core.knowledge.corpus_grounding.corpus_grounding_for",
                         lambda q: types.SimpleNamespace(passages=()))
+    monkeypatch.setattr("core.knowledge.passages_about.passages_about", lambda q, **k: [])
     model = tmp_path / "model"
     model.mkdir()
     out = tmp_path / "run"

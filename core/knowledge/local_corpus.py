@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
 from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.Knowledge.LocalCorpus")
@@ -40,8 +41,10 @@ _SCHEMA_VERSION = 1
 
 # Terms: words of 2+ chars, plus standalone single digits/letters —
 # dropping them loses real discriminators ("Apollo 11" retrieval
-# regression pinned by tests; "vitamin C" is the same class).
-_TERM_RE = re.compile(r"[A-Za-z0-9_'-]{2,}|\b[A-Za-z0-9]\b")
+# regression pinned by tests; "vitamin C" is the same class). Letters are
+# any script's: an ASCII-only class cut "Dalí" to "Dal" and "al-Rifāʽī" to
+# "al-Rif", and the index (unicode61, diacritics removed) holds "dali".
+_TERM_RE = re.compile(r"[\w'-]{2,}|\b\w\b")
 
 
 def default_corpus_db_path() -> Path:
@@ -360,6 +363,29 @@ class LocalCorpusStore:
             # that survived sanitization — a miss, never a crash.
             logger.debug("Corpus search degraded to empty: %s", exc)
             return []
+
+    def search_titles(self, name: str, limit: int = 5, *, deadline_s: float = SEARCH_DEADLINE_S) -> list[CorpusHit]:
+        """Documents whose TITLE holds every term of ``name``, best BM25 first; [] when none or unreadable.
+
+        For finding the article a name refers to: the full-text search ranks
+        by the whole body, where "Cities Skylines" ranks "Skylines" above the
+        game's own page, "Cities: Skylines".
+        """
+        terms = _TERM_RE.findall(name or "")[:16]
+        if not terms or not self.db_path.exists():
+            return []
+        try:
+            conn = self._connect_ro()
+        except sqlite3.OperationalError:
+            return []
+        expires_at = time.monotonic() + max(0.01, float(deadline_s))
+        conn.set_progress_handler(lambda: 1 if time.monotonic() > expires_at else 0, 2000)
+        match = "title:(" + " ".join('"' + t.replace('"', '""') + '"' for t in terms) + ")"
+        try:
+            return self._search_conn(conn, match, limit)
+        finally:
+            conn.set_progress_handler(None, 0)
+            conn.close()
 
     def body(self, doc_id: int, *, max_chars: int = 20000) -> str:
         """The text of one document, or "" when it cannot be read."""

@@ -21,9 +21,10 @@ is decoded for every question that reaches it, in fixed groups
    for her engine (core/reasoning/written_as_constraints.py), run in the
    sandbox, with one repair round; a unique solution that is one
    derivation's answer settles the point for that side.
-6. reading: for each crux still open, the passages her live lookup finds for
-   the settling question (core/knowledge/corpus_grounding.py), read for the
-   side they support.
+6. reading: for each crux still open, the paragraphs of her corpus about what
+   the settling question names (core/knowledge/passages_about.py; her
+   conversational lookup when that finds nothing), read for the side they
+   support.
 7. alone: for each crux still open, the settling question derived greedy and
    sampled on its own; each reply read for its side; both must agree.
 8. final: the whole question again, greedy, with the settled claim given to
@@ -404,14 +405,16 @@ def main() -> int:  # noqa: C901 - one stage after another, each short
 
         if last >= STAGES.index("reading"):
             from core.knowledge.corpus_grounding import corpus_grounding_for
+            from core.knowledge.passages_about import passages_about
 
             open_keys = [k for k, c in cruxes.items() if not c.settled]
             asked = []
             for key in open_keys:
                 found = rows.get("lookup", key)
                 if found is None:
-                    grounding = corpus_grounding_for(cruxes[key].question)
-                    found = {"passages": [f"{title}: {text}" for title, text in grounding.passages]}
+                    question = cruxes[key].question
+                    pairs = passages_about(question) or list(corpus_grounding_for(question).passages)
+                    found = {"passages": [f"{title}: {text}" for title, text in pairs]}
                     rows.put("lookup", key, found)
                 if found["passages"]:
                     asked.append((key, user(reading_request(found["passages"], cruxes[key]))))
