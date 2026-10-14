@@ -85,3 +85,26 @@ At a 5% draft error rate, 300 requests give about 15 expected gains.
 ## What this does not show
 
 * Anything yet: this page is the plan.
+
+## Amendment, 14 October 2026, before the prefill run has started
+
+A planning domain is added. Seen when this was written, from attempt 2's
+drafts: her ordinary answers were right on 149 of 150 Blocksworld test
+problems and on all 68 linear-equation problems drafted so far, so a kept
+procedure gains little where her drafts are already near perfect. Attempt 3's
+math kinds come from the same generated family, and its transfer domain is
+BBH alone. Mystery Blocksworld's drafts have not been decoded.
+
+* Held out, planning: PlanBench's plan generation in Logistics, Depots and
+  Obfuscated Deceptive Logistics (tools/planbench_restated.py, f608c5b94).
+  No decision so far has used them. Their restated parsers are checked by
+  every gold plan reaching its goal through text (1,070 of 1,070) and every
+  plan with its first step dropped failing; no VAL verdicts exist for them
+  here.
+* The prefill run induces them with the other kinds, from their development
+  halves, at the commit this amendment is committed with.
+* Requests: 300 for planning as for the other domains, divided among its
+  kinds that keep a procedure.
+* Breadth: at least two of math, transfer and planning, counting held-out
+  kinds only, gain more than they lose at two-sided alpha 0.0167. Primary
+  and no harm are unchanged.
