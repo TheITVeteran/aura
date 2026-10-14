@@ -18,7 +18,8 @@ from typing import Any
 
 logger = logging.getLogger("Aura.ThrownAtWhatShows")
 
-__all__ = ["A_FIGURE", "HOLD_FOR_A_STOP_S", "JUST_SHOWN_S", "HowLongAThrowTakes", "how_long_throws_take", "led", "comes_at_her", "what_the_shot_goes_at", "where_the_one_thrown_at_is"]
+__all__ = ["A_FIGURE", "HOLD_FOR_A_STOP_S", "JUST_SHOWN_S", "HowLongAThrowTakes", "WhereHarmLands", "how_long_throws_take", "led", "comes_at_her",
+           "comes_at_her_where_harm_lands", "what_the_shot_goes_at", "where_the_one_thrown_at_is"]
 
 #: How long after it comes into sight a thing is one that has just shown, in seconds: about as long as one stays up.
 JUST_SHOWN_S = 1.5
@@ -175,6 +176,108 @@ def comes_at_her(things: Iterable[Any], within_s: float = ARRIVES_WITHIN_S) -> b
         if len(sizes) >= OVER and sizes[-OVER] > 0.0 and sizes[-1] >= GROWN * sizes[-OVER] and sizes[-1] >= sizes[-2]:
             return True
     return False
+
+
+#: How long before a loss is read a thing that went may be what landed on her, in seconds: a counter is read a picture
+#: or two after the hit that changed it.
+LANDED_WITHIN_S = 0.8
+#: How many landings tell where harm lands, and how many are kept.
+LANDINGS_TELL = 2
+LANDINGS_REMEMBERED = 12
+#: How soon a thing must be coming to where harm lands for the key that gets her out of the way to be pressed, in
+#: seconds: a duck or a dodge lasts a moment, and pressed long before it lands is over by then.
+DUCK_AHEAD_S = 0.45
+
+
+class WhereHarmLands:
+    """Where what costs her lands, in a place where nothing of hers is seen: the place a thing that went was last seen
+    the moment she lost something. A food fight seen over a table puts her this side of it; the food thrown at her is
+    gone where it hits her, and that is where she is. Offline 2026-10-13 a food fight's thrower hit her with five throws
+    of six, every game, and she ducked by what grew in the picture, which food going down a table does not.
+
+    Only a thing that was going lands: a counter's figure or a life's mark goes when she loses one, and stays where it
+    was. A thing whose going had taken it out of the picture by the time it was missed left; it did not land. Her own
+    throws went out of the top of that food fight's picture as losses were read, and put where harm lands up there.
+    """
+
+    def __init__(self) -> None:
+        self.last: dict[int, tuple[float, float, float, float, float, float, float]] = {}
+        self.gone: list[tuple[float, float, float, float]] = []
+        self.landings: list[tuple[float, float, float]] = []
+        self.losses = 0
+
+    def saw(self, things: Iterable[Any], losses: int, at: float, shape: tuple[int, int] | None = None) -> None:
+        """One picture: the things in it, how many losses have been read so far, and the picture's height and width."""
+        seen = {int(t.number): t for t in things}
+        for number, (when, x, y, w, h, vx, vy) in list(self.last.items()):
+            if number in seen:
+                continue
+            del self.last[number]
+            ahead_x, ahead_y = x + vx * (at - when), y + vy * (at - when)
+            left = shape is not None and not (0.0 <= ahead_x <= shape[1] and 0.0 <= ahead_y <= shape[0])
+            if math.hypot(vx, vy) >= GOING and not left:
+                self.gone.append((when, x, y, max(w, h)))
+        for number, thing in seen.items():
+            across = math.sqrt(max(0.0, float(getattr(thing, "size", 0.0) or 0.0)))
+            self.last[number] = (at, float(thing.x), float(thing.y), float(getattr(thing, "w", across)),
+                                 float(getattr(thing, "h", across)), float(getattr(thing, "vx", 0.0)),
+                                 float(getattr(thing, "vy", 0.0)))
+        self.gone = [g for g in self.gone if at - g[0] <= LANDED_WITHIN_S]
+        self.losses = min(self.losses, losses)           # a new stretch counts its losses from none
+        while self.losses < losses:
+            self.losses += 1
+            if self.gone:
+                landed = self._the_one_that_landed()
+                self.landings.append(landed[1:])
+                self.gone.remove(landed)
+                del self.landings[:-LANDINGS_REMEMBERED]
+
+    def _the_one_that_landed(self) -> tuple[float, float, float, float]:
+        """Of the things gone a moment before a loss, the one gone where harm has landed before; else the last gone."""
+        known = self.where()
+        if known is not None:
+            near = [g for g in self.gone if math.hypot(g[1] - known[0], g[2] - known[1]) <= known[2]]
+            if near:
+                return max(near, key=lambda g: g[0])
+        return max(self.gone, key=lambda g: g[0])
+
+    def where(self) -> tuple[float, float, float] | None:
+        """Where harm has landed, and how far about it: None until it has landed in one place more than once."""
+        if len(self.landings) < LANDINGS_TELL:
+            return None
+        xs, ys = sorted(p[0] for p in self.landings), sorted(p[1] for p in self.landings)
+        x, y = xs[len(xs) // 2], ys[len(ys) // 2]
+        near = sorted(math.hypot(p[0] - x, p[1] - y) for p in self.landings)[len(self.landings) // 2]
+        return x, y, max(near, max(p[2] for p in self.landings))
+
+    def coming(self, things: Iterable[Any], within_s: float = DUCK_AHEAD_S) -> bool:
+        """Whether something going is on its way to where harm lands, and will be there within ``within_s``."""
+        landing = self.where()
+        if landing is None:
+            return False
+        x, y, about = landing
+        for thing in things:
+            vx, vy = float(getattr(thing, "vx", 0.0)), float(getattr(thing, "vy", 0.0))
+            speed = vx * vx + vy * vy
+            if speed < GOING * GOING:
+                continue
+            dx, dy = x - float(thing.x), y - float(thing.y)
+            when = (dx * vx + dy * vy) / speed
+            if 0.0 < when <= within_s and math.hypot(dx - vx * when, dy - vy * when) <= about:
+                return True
+        return False
+
+
+def comes_at_her_where_harm_lands(run: Any, things: Iterable[Any], at: float, within_s: float = ARRIVES_WITHIN_S,
+                                  shape: tuple[int, int] | None = None) -> bool:
+    """Whether something is coming at her: growing as it comes out of the picture (``comes_at_her``), or, where nothing
+    of hers is seen, on its way to where what costs her has landed (``WhereHarmLands``), kept on ``run``."""
+    things = list(things)
+    lands = getattr(run, "harm_lands", None)
+    if lands is None:
+        lands = run.harm_lands = WhereHarmLands()
+    lands.saw(things, int(getattr(run, "losses", 0) or 0), at, shape)
+    return comes_at_her(things, within_s) or lands.coming(things, min(within_s, DUCK_AHEAD_S))
 
 
 #: The fewest landings seen before how long a throw takes is known, the most kept, and the longest a throw is waited

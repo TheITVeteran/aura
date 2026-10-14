@@ -218,3 +218,45 @@ Attack's "'Up' arrow key ... 'Space' bar" as four arrows and no space; Mini Golf
 arrow; Battle Bowlers' "hit 1", "hit 2" as no key. Each is fixed. Four games' words
 name keys the code reading missed (Z, X, WASD, number keys), which the words say
 plainly.
+
+## The food fight, 14 October: a duck that dodged nothing, and taps no frame saw
+
+**The world was wrong.** In `tests/fixtures/worlds_that_move/foodfight.html` the
+food thrown at her fell on through the low shape she takes when ducking. Run
+from its own code, one who ducked each throw as it came lost all five lives in
+10.5 s, the same as one who never ducked. Food Bash says "Dodge food by
+pressing the space bar". The food now splats at the height it was aimed at,
+on her or past her where she has ducked under it. Ducking each throw 10 to 40
+pixels before it reached her, she had 2 lives left after 30 s.
+
+**Her taps were not seen.** Her hands sent a tapped key down and up together.
+A page that asks at each of its frames which keys are down, as Flash's
+Key.isDown does, sees a key only if it is down when the frame comes. In
+Chromium on the food fight: let go at once, 0 taps of 10 reached it; held 20,
+40 or 80 ms, 10 of 10. A tap is now held 90 ms, past one frame at Flash's
+default of 12 a second, and let go of while she plays on
+(`core/skills/keys_tapped_as_a_hand_taps.py`). Held for none, the test of it in
+Chromium saw 4 ducks of 6. Shooter, doors and timing read space the same way.
+
+**Where harm lands.** With no body of hers to follow, she ducks when something
+going is on its way to where the things that cost her were last seen
+(`core/agency/thrown_at_what_shows.py`, `WhereHarmLands`). On its first run it
+was put at the top of the picture, by her own throws leaving it as losses
+were read, and it was looked at only on pictures she might duck on. Now every
+picture is taken in. A thing that was not going, or whose going had taken it
+out of the picture, did not land. Of things gone at one loss, the one gone
+where harm landed before is taken. What she learned is kept from one stretch
+to the next.
+
+The whole of her play from the title screen, 2 minutes asked, seeds 1 to 3
+(the tool plays on until a game ends):
+
+| Code | Games | Won | Hit a second of play | Longest game |
+|---|---|---|---|---|
+| Before, seed 1 only | 1 | 0 | 0.44 | 11.5 s |
+| Taps held | 17 | 1 | 0.40 to 0.46 | 14.9 s |
+| Taps held, and where harm lands | 26 | 6 | 0.13 to 0.18 | 77.4 s |
+
+On every seed and both ways, she splatted the other side less after her first
+two or three games: 5 in 10.8 s early on, 4 in 77.4 s later. That is not yet
+explained.

@@ -243,7 +243,10 @@ class OnAPage:
                 # In a game, a key is held a moment and watched, the way a person tries one.
                 await reflexes.pressed(name)
             else:
-                await self.page.keyboard.press(_KEY_NAMES.get(name, name))
+                from core.skills.keys_tapped_as_a_hand_taps import TAP_HELD_S
+
+                # Held a moment, as a hand presses one: a page that asks each frame which keys are down sees it.
+                await self.page.keyboard.press(_KEY_NAMES.get(name, name), delay=TAP_HELD_S * 1000.0)
             delivered = True
         except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
             return False

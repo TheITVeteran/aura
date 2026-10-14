@@ -128,6 +128,18 @@ with a test.
 8. **Four games' words were misread for their keys**: a key named in quotes,
    "Enter" as a verb, "pick it up Press", and number keys
    (`core/agency/the_controls_a_game_names.py`).
+9. **Her taps went unseen by any game that reads its held keys each frame.**
+   A tap was a key sent down and up together. Flash's Key.isDown works this
+   way, and so do the shooter, doors, timing and food fight worlds. In
+   Chromium 0 taps of 10 reached the food fight; held 20 ms or more, 10 of
+   10. A tap is now held 90 ms, let go of while she plays on
+   (`core/skills/keys_tapped_as_a_hand_taps.py`).
+10. **In the food fight, a duck dodged nothing**, because the world let food
+    fall through her ducked shape. With the world fixed, she ducks what is
+    on its way to where the things that cost her were last seen
+    (`core/agency/thrown_at_what_shows.py`, `WhereHarmLands`). Over seeds 1
+    to 3 she won 6 games of 26 and was hit 0.13 to 0.18 times a second.
+    With the held taps alone it was 1 of 17, hit 0.40 to 0.46 times a second.
 
 After the fixes, from the title screen with nothing remembered: the first
 game was lost at 67% painted in 59 s, the second won in 77 s with no life
@@ -204,3 +216,6 @@ cd ~/.aura/flash-campaign/offline-bundle && git init -b main && git add -A \
    rewrite of the sampling in numpy gave the same numbers and was slower, and
    was taken out.
 4. Survival at two decisions a second.
+5. In the food fight she splats the other side less after her first two or
+   three games, on every seed: 5 in 10.8 s early, 4 in 77.4 s later. Find
+   what she learns that makes her throws worse.

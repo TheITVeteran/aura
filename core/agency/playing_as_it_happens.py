@@ -1198,7 +1198,7 @@ async def _play_as_it_happens(
     run.supply = keep.get("supply") or SpendingASupply()
     from core.agency.pushing_a_thing import Pushing
 
-    run.pushing = keep.get("pushing") or Pushing()
+    run.pushing, run.harm_lands = keep.get("pushing") or Pushing(), keep.get("harm_lands")
     run.presses_told = sum(run.input_key_downs.values()) + run.taps
     if keep.get("meeting_with"):
         run.meeting_with = {float(part): list(counts) for part, counts in keep["meeting_with"].items()}
@@ -1323,7 +1323,7 @@ async def _play_as_it_happens(
                  "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
                  "plays_for": run.plays_for, "who": run.who, "touches_told": run.touches_told,
                  "sounds_heard": run.sounds, "allies": run.allies,
-                 "supply": run.supply, "pushing": run.pushing})
+                 "supply": run.supply, "pushing": run.pushing, "harm_lands": getattr(run, "harm_lands", None)})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
     after_the_stretch(run.settings, run.gains, run.losses)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
@@ -1729,7 +1729,8 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     shooter holding one arrow at a time to see what moved, and never fired. A press of the fire key moves nothing, so
     the finding goes on as before, and what each press brings out beside her is how she learns it fires.
     """
-    from core.agency.thrown_at_what_shows import comes_at_her, how_long_throws_take
+    from core.agency import thrown_at_what_shows as thrown
+    from core.agency.settings_that_paid import setting
 
     if rules is None or (not _no_body_to_find() and body_probe_is_active(run, hers, pointer_steps=2 * len(_POINTER_TRIAL), at=at)):
         return
@@ -1744,11 +1745,10 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
         hers.tapped(fire, time.monotonic(), began=began)
         run.last_trigger_began, run.taps = began, run.taps + 1
         return
-    from core.agency.settings_that_paid import setting
-    from core.agency.thrown_at_what_shows import ARRIVES_WITHIN_S
-
+    # Each picture is taken in for where harm lands: seen only when she might duck, throws landed where they never were.
+    coming = bool(away) and thrown.comes_at_her_where_harm_lands(run, moves.things.values(), at, setting(run, "arriving within", thrown.ARRIVES_WITHIN_S), moves.shape)
     if away and at - run.last_trigger_began >= setting(run, "duck every", GOT_OUT_OF_THE_WAY_EVERY_S) and (
-            comes_at_her(moves.things.values(), setting(run, "arriving within", ARRIVES_WITHIN_S)) or getattr(run, "signs", None) is not None and run.signs.just_shown(at)):
+            coming or getattr(run, "signs", None) is not None and run.signs.just_shown(at)):
         # With no body of hers in the place, what comes at her grows, or someone shows what comes before harm: the key
         # for getting out of the way is pressed.
         run.last_trigger_began = time.monotonic()
@@ -1760,7 +1760,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     every = setting(run, "throw every", THROW_AT_SOMEONE_S) if against else THROW_WHILE_FINDING_S
     if not rules.a_click_is_a_shot or not hasattr(hands, "click") or at - run.last_click < every:
         return
-    takes = how_long_throws_take(run, moves, at)
+    takes = thrown.how_long_throws_take(run, moves, at)
     aimed = _where_to_throw(run, moves, hers, at, against)
     if aimed is None:
         return

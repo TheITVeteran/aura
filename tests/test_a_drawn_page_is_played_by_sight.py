@@ -70,7 +70,7 @@ class _Keys:
     def __init__(self, page):
         self.page = page
 
-    async def press(self, key):
+    async def press(self, key, **_held):
         self.page.pressed.append(key)
         if self.page.playing:
             self.page.score += 1

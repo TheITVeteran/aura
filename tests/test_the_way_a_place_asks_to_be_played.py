@@ -247,10 +247,14 @@ def test_a_key_is_pressed_by_the_browsers_name_for_it_and_one_it_does_not_know_d
     pressed = []
 
     class _Keyboard:
-        async def press(self, key):
+        async def down(self, key):
             if key not in {"Backspace", "ArrowUp", "x", "F2"}:
-                raise RuntimeError(f'Keyboard.press: Unknown key: "{key}"')
+                raise RuntimeError(f'Keyboard.down: Unknown key: "{key}"')
             pressed.append(key)
+
+        async def up(self, key):
+            if key not in {"Backspace", "ArrowUp", "x", "F2"}:
+                raise RuntimeError(f'Keyboard.up: Unknown key: "{key}"')
 
     class _Page:
         keyboard = _Keyboard()

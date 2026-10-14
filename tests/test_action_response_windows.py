@@ -176,7 +176,7 @@ async def test_a_fast_response_during_input_is_owned(input_kind, monkeypatch):
     clock = SimpleNamespace(at=12.05)
     monkeypatch.setattr(watching_it_happen.time, "monotonic", lambda: clock.at)
 
-    async def responds(*_args):
+    async def responds(*_args, **_held):
         assert watching.answer_window()["finished"] is None
         clock.at += .075
         watching.saw(_picture(190), clock.at)

@@ -585,6 +585,8 @@ class PlayingAsItHappens:
     _focused: bool = False
     _frames: Any = None
     _canvas: Any = None
+    #: Her taps, each let go of a moment after it (core/skills/keys_tapped_as_a_hand_taps.py).
+    _taps: Any = None
 
     # -- eyes ---------------------------------------------------------------
 
@@ -633,7 +635,9 @@ class PlayingAsItHappens:
         return picture, at
 
     async def close(self) -> None:
-        """Stop streaming frames, when the run is over."""
+        """Stop streaming frames, when the run is over, and let go of every key tapped."""
+        if self._taps is not None:
+            await self._taps.let_go_of_all()
         if self._canvas is not None:
             await self._canvas.close()
             self._canvas = None
@@ -687,12 +691,16 @@ class PlayingAsItHappens:
             return
         await self._focus()
         context.check()
+        if self._taps is not None:
+            self._taps.held(key)
         await self._keyed(self.page.keyboard.down, key)
 
     async def up(self, key: str) -> None:
         if key == MOUSE_BUTTON:
             await self.page.mouse.up()
             return
+        if self._taps is not None:
+            self._taps.held(key)
         await self._keyed(self.page.keyboard.up, key)
 
     async def tap(self, key: str) -> None:
@@ -703,7 +711,12 @@ class PlayingAsItHappens:
             return
         await self._focus()
         context.check()
-        await self._keyed(self.page.keyboard.press, key)
+        if self._taps is None:
+            from core.skills.keys_tapped_as_a_hand_taps import KeysTapped
+
+            self._taps = KeysTapped(lambda name: self._keyed(self.page.keyboard.down, name),
+                                    lambda name: self._keyed(self.page.keyboard.up, name))
+        await self._taps.tap(key)
 
     async def pressed(self, key: str) -> None:
         """A key pressed for the pursuit the way a person presses one to see what it does: held a moment, watched."""

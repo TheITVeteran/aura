@@ -6,7 +6,7 @@
 // so a walker is hit by a throw made where it is going. Space ducks under what comes, for a moment. The first to be
 // splatted five times loses. As Cartoon Network's Food Bash: "Take aim with your mouse and click to throw. Dodge food by
 // pressing the space bar. The first to splat the other five times wins!"
-const SPEED = 240, THEIRS = 150, DUCK_S = 0.55;
+const SPEED = 240, THEIRS = 150, DUCK_S = 0.55, AIMED_AT_Y = 288;
 const game = {
   title: "FOOD FIGHT", lives: 5,
   rules: ["Take aim with your mouse and click to throw.", "Dodge food by pressing the space bar.",
@@ -32,8 +32,8 @@ const game = {
     this.throwIn -= dt;
     if (this.throwIn <= 0) {
       const toX = this.me.x + 18 + (world.rand() - 0.5) * 30, fromX = t.x + 18, fromY = t.y + 36;
-      const d = Math.hypot(toX - fromX, 288 - fromY);
-      this.theirs.push({ x: fromX, y: fromY, vx: ((toX - fromX) / d) * THEIRS, vy: ((288 - fromY) / d) * THEIRS });
+      const d = Math.hypot(toX - fromX, AIMED_AT_Y - fromY);
+      this.theirs.push({ x: fromX, y: fromY, vx: ((toX - fromX) / d) * THEIRS, vy: ((AIMED_AT_Y - fromY) / d) * THEIRS });
       this.throwIn = 1.3 + world.rand() * 1.2;
     }
     for (const f of this.mine) {
@@ -41,11 +41,14 @@ const game = {
       if (hits({ x: f.x - 6, y: f.y - 6, w: 12, h: 12 }, t)) { f.gone = true; world.score += 1; world.mine += 1; }
       if (f.y < 0 || f.x < 0 || f.x > world.W || f.y > world.H) f.gone = true;
     }
-    const me = this.ducked > 0 ? { x: this.me.x, y: this.me.y + 22, w: 36, h: 14 } : this.me;
+    // What is thrown at her flies at the height it was aimed at and splats there: on her, or past her where she has
+    // ducked under it. Until 14 October 2026 it fell on through the low shape of her ducking, and a duck dodged nothing.
     for (const f of this.theirs) {
       f.x += f.vx * dt; f.y += f.vy * dt;
-      if (hits({ x: f.x - 7, y: f.y - 7, w: 14, h: 14 }, me)) { f.gone = true; world.theirs += 1; world.lose(); }
-      if (f.y > world.H) f.gone = true;
+      if (this.ducked <= 0 && hits({ x: f.x - 7, y: f.y - 7, w: 14, h: 14 }, this.me)) {
+        f.gone = true; world.theirs += 1; world.lose();
+      }
+      if (f.y >= AIMED_AT_Y || f.y > world.H) f.gone = true;
     }
     this.mine = this.mine.filter((f) => !f.gone); this.theirs = this.theirs.filter((f) => !f.gone);
     if (world.mine >= 5 && world.state === "play") world.over("won");

@@ -87,7 +87,12 @@ class _Page:
         if key == "mouse":
             await self.click(0.5, 0.6)
             return
-        await self.page.keyboard.press(_KEY.get(key, key))
+        # As her own hands tap (core/skills/keys_tapped_as_a_hand_taps.py): held a moment, let go of while she goes on.
+        if getattr(self, "_taps", None) is None:
+            from core.skills.keys_tapped_as_a_hand_taps import KeysTapped
+
+            self._taps = KeysTapped(self.page.keyboard.down, self.page.keyboard.up)
+        await self._taps.tap(_KEY.get(key, key))
 
     async def click(self, x, y):
         await self.page.mouse.click(self.box[0] + x * self.box[2], self.box[1] + y * self.box[3])
