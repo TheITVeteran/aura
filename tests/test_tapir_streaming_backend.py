@@ -41,6 +41,18 @@ class InventedCausalModel(torch.nn.Module):
         self.calls.append(("reset", num_points))
         return [{"past": torch.zeros((1, num_points, 2, 4))}] * 4
 
+    def update_query_features(self, query_features, new_query_features, idx_to_update, causal_state=None):
+        query_features.queries[:, idx_to_update] = new_query_features.queries
+        self.calls.append(('replace', tuple(idx_to_update)))
+        if causal_state is None:
+            return query_features
+        updated = []
+        for part in causal_state:
+            past = part['past'].clone()
+            past[:, idx_to_update] = 0.
+            updated.append({'past': past})
+        return query_features, updated
+
     def estimate_trajectories(self, video_size, *, is_training, feature_grids, query_features,
                               query_points_in_video, query_chunk_size, causal_context, get_causal_context):
         assert not is_training and not torch.is_grad_enabled()
@@ -104,6 +116,32 @@ def test_each_later_frame_advances_the_causal_state_once_and_keeps_seed_order():
     assert [point.number for point in third.tracks] == [91, 4]
     assert [result.tracks[0].x for result in (first, second, third)] == [6., 7., 8.]
     assert [second.at, third.at] == [10.1, 10.2]
+
+
+def test_new_texture_can_replace_one_slot_without_erasing_other_causal_history():
+    model = InventedCausalModel()
+    observer = backend(model)
+    observer.start(frame(), SEEDS)
+    observer.track(frame(number=2, at=10.1))
+    result = observer.track(frame(number=3, at=10.2), replacements={1: PointSeed(300, 20., 7.)})
+    assert [point.number for point in result.tracks] == [91, 300]
+    assert observer._causal[0]['past'][0, 0].eq(3.).all()
+    assert observer._causal[0]['past'][0, 1].eq(1.).all()
+    assert [value for kind, value in model.calls if kind == 'reset'] == [2, 1]
+    assert ('replace', (1,)) in model.calls
+
+
+@pytest.mark.parametrize('replacements', [{-1: PointSeed(300, 4., 5.)}, {2: PointSeed(300, 4., 5.)},
+                                         {1: PointSeed(91, 4., 5.)}, {1: PointSeed(300, 45., 5.)}])
+def test_invalid_query_replacement_cannot_advance_an_existing_session(replacements):
+    model = InventedCausalModel()
+    observer = backend(model)
+    observer.start(frame(), SEEDS)
+    with pytest.raises(ValueError):
+        observer.track(frame(number=2, at=10.1), replacements=replacements)
+    assert not any(kind == 'replace' for kind, _ in model.calls)
+    with pytest.raises(RuntimeError):
+        observer.track(frame(number=3, at=10.2))
 
 
 def test_starting_a_new_basis_discards_old_features_and_causal_history():

@@ -422,10 +422,10 @@ class WhatMoves:
     whole screen changed.
     """
 
-    def __init__(self, *, width: int = WORKING_WIDTH, kinds: list[Kind] | None = None) -> None:
+    def __init__(self, *, width: int = WORKING_WIDTH, kinds: list[Kind] | None = None, points: Any = None) -> None:
         from core.perception.points_before_the_picture_is_reduced import PointsBeforeReduction
 
-        self.points = PointsBeforeReduction()
+        self.points = points if points is not None else PointsBeforeReduction()
         self._point_motion: dict = {}
         from core.perception.what_the_points_on_a_thing_say import WhatThePointsSay
 

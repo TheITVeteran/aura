@@ -356,8 +356,16 @@ def eyes_for_play(kinds: list[Any] | None = None) -> Any:
     """Her eyes for a stretch of play: in a process of their own where this one keeps her waiting for the interpreter,
     else here. Seen elsewhere, a picture costs a few milliseconds more in passing to and fro, and that is all it costs
     where nothing else wants the interpreter; where other work does, seeing here costs many times over."""
+    from core.perception.learned_tracking.selection import (
+        learned_points_requested,
+        selected_motion_eyes,
+    )
     from core.perception.what_moves_in_the_picture import WhatMoves
 
+    if learned_points_requested():
+        # Numerical GPU state belongs to the owned observation worker. The
+        # existing child declares no accelerator, so it cannot host this model.
+        return selected_motion_eyes(kinds=kinds)
     if bool(_IN_THIS_PROCESS.value()):
         return WhatMoves(kinds=kinds)
     waiting = kept_waiting()

@@ -542,6 +542,9 @@ def _visual_motion_claims() -> tuple:
         _frame_time_invariant,
     )
     from core.perception.learned_tracking.contracts import _tracking_visibility_invariant
+    from core.perception.learned_tracking.points_for_the_motion_eyes import (
+        _learned_point_capture_invariant,
+    )
     from core.perception.motion_kept_between_pictures import (
         _motion_belief_invariant,
         _motion_proposal_invariant,
@@ -606,6 +609,9 @@ def _visual_motion_claims() -> tuple:
         ("occluded_tracking_is_not_a_visible_measurement", "core/perception/learned_tracking/contracts.py",
          "tests/test_learned_tracking_capture_contract.py", lambda: _tracking_visibility_invariant() == (),
          "Tracking results keep capture identity and geometry; hidden coordinates and seeded masks cannot supply visible observations."),
+        ("learned_points_keep_their_capture", "core/perception/learned_tracking/points_for_the_motion_eyes.py",
+         "tests/test_learned_points_reach_the_motion_eyes.py", lambda: _learned_point_capture_invariant() == (),
+         "Learned point measurements reach actual motion support in working coordinates; other captures and hidden predictions cannot extend a visible path."),
         ("an_ending_after_reset_needs_new_activity", "core/skills/a_new_attempt_must_be_seen.py",
          "tests/test_a_retry_restarts_the_page_and_observes_a_new_attempt.py", lambda: _new_attempt_invariant() == (),
          "A new attempt requires current activity after reset; an old capture or another reading of its ending supplies no completed run."),

@@ -145,7 +145,7 @@ class OnlineTapirBackend:
             self._clear()
             raise
 
-    def track(self, frame: TrackingFrame) -> PointResult:
+    def track(self, frame: TrackingFrame, *, replacements: dict[int, PointSeed] | None = None) -> PointResult:
         """Advance once on a later captured frame in the same picture basis."""
         began = time.monotonic()
         if self._features is None or self._causal is None:
@@ -153,10 +153,36 @@ class OnlineTapirBackend:
         try:
             following_frame(self._previous, frame)
             with self._torch.inference_mode():
-                return self._predict(frame, self._grids(self._video(frame)), began)
+                video = self._video(frame)
+                grids = self._grids(video)
+                if replacements:
+                    self._replace_queries(frame, video, grids, replacements)
+                return self._predict(frame, grids, began)
         except BaseException:
             self._clear()
             raise
+
+    def _replace_queries(self, frame: TrackingFrame, video: Any, grids: Any,
+                         replacements: dict[int, PointSeed]) -> None:
+        """Newly exposed texture gets query slots without erasing continuing point history."""
+        indexes = tuple(sorted(replacements))
+        if any(type(index) is not int or not 0 <= index < len(self._seeds) for index in indexes):
+            raise ValueError('query replacement needs existing point slots')
+        updated = tuple(replacements.get(index, seed) for index, seed in enumerate(self._seeds))
+        validate_points(frame, updated)
+        new = tuple(replacements[index] for index in indexes)
+        queries = self._torch.tensor([[0., seed.y, seed.x] for seed in new],
+                                     dtype=self._torch.float32, device=self._device)[None]
+        features = self._model.get_query_features(video, is_training=False, query_points=queries, feature_grids=grids)
+        self._features = self._model.update_query_features(self._features, features, indexes)
+        fresh = self._on_device(self._model.construct_initial_causal_state(
+            len(new), len(self._features.resolutions) - 1))
+        # Upstream resets are CPU tensors. Reset only these slots on the
+        # worker's device; the other points keep their causal history.
+        slots = self._torch.tensor(indexes, dtype=self._torch.long, device=self._device)
+        self._causal = [{key: value.clone().index_copy_(1, slots, replacement[key]) for key, value in part.items()}
+                        for part, replacement in zip(self._causal, fresh, strict=True)]
+        self._seeds = updated
 
     def close(self) -> None:
         """Drop session features and its loaded model when its worker leaves."""
